@@ -159,9 +159,11 @@ struct SettingsView: View {
 
     private var aboutSettings: some View {
         VStack(spacing: 14) {
-            Image(systemName: "chart.bar.xaxis")
-                .font(.system(size: 44))
-                .foregroundColor(.accentColor)
+            Image("AboutLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 112, height: 104)
+                .accessibilityLabel("TokChan Logo")
 
             Text("TokChan!")
                 .font(.title2.weight(.semibold))

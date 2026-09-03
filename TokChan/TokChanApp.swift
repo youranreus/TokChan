@@ -45,7 +45,7 @@ struct TokChanApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("TokChan", systemImage: "chart.bar.xaxis") {
+        MenuBarExtra("TokChan", image: "MenuBarIcon") {
             DashboardView(viewModel: viewModel)
                 .environment(\.locale, Locale(identifier: "zh_CN"))
         }

@@ -42,6 +42,21 @@ Resources and entitlements should only be added when the app gains assets, local
 - Keep app resources in `Resources/` or the Xcode-generated asset/string catalogs.
 - Keep macOS entitlements and app-sandbox capability files in `SupportingFiles/` or the Xcode project’s conventional location.
 
+## Asset catalogs and branded images
+
+Keep branded app resources in `TokChan/Assets.xcassets` and separate assets by rendering contract:
+
+- `AppIcon.appiconset` owns the complete macOS 1x/2x icon matrix. Set `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon` in both Debug and Release app-target configurations; verify that the built app contains `AppIcon.icns` and that `CFBundleIconName` resolves to `AppIcon`.
+- Menu-bar artwork must use its own image set with `template-rendering-intent` set to `template`. Supply 1x and 2x PNGs with transparent backgrounds and monochrome visible pixels so macOS can tint normal, dark, and selected states.
+- Full-color transparent artwork belongs in a separate image set for in-app presentation such as the About page. Render it with `resizable()` and `scaledToFit()` plus a bounded frame to preserve aspect ratio.
+- Do not reuse a full-color app icon directly as a menu-bar image; color-only detail and a filled square canvas do not survive template rendering at menu-bar size.
+
+Required checks:
+
+- Build the macOS 13 target and reject asset-catalog missing-slot, unreadable-resource, or unresolved-name warnings.
+- Confirm every AppIcon output has the declared pixel dimensions and transparent corners.
+- Confirm menu-bar outputs are monochrome, retain alpha-antialiased edges, and include visible padding at 18 × 18 and 36 × 36 pixels.
+
 ## Avoid
 
 - Do not create `frontend/` or `backend/` directories for this project unless a real server or web client is introduced.
