@@ -4,7 +4,7 @@
 
 ## Project shape
 
-This repository currently contains Trellis setup only; the app source has not been created yet. Until real source exists, these guidelines define the baseline conventions for the first SwiftUI implementation. After the initial app skeleton lands, update these files with concrete file paths and examples from the codebase.
+TokChan is a dependency-free macOS 13 SwiftUI menu-bar app. `TokChanApp.swift` creates a window-style `MenuBarExtra`; feature UI lives under `TokChan/Features`, and external Tokscale/API/preferences boundaries live under `TokChan/Shared`.
 
 ## Guidelines Index
 
@@ -13,10 +13,11 @@ This repository currently contains Trellis setup only; the app source has not be
 | [Directory Structure](./directory-structure.md) | Xcode project layout, app entry, feature folders, shared code | Baseline |
 | [SwiftUI Guidelines](./swiftui-guidelines.md) | View composition, reusable components, previews, navigation | Baseline |
 | [State Management](./state-management.md) | Local view state, observable models, environment, app services | Baseline |
-| [Data Persistence](./data-persistence.md) | UserDefaults, local files, SwiftData/Core Data decision points | Baseline |
+| [Data Persistence](./data-persistence.md) | Preferences and stale-while-refresh dashboard snapshot cache | Active |
 | [Networking Guidelines](./networking-guidelines.md) | API clients, async/await, decoding, offline boundaries | Baseline |
 | [Quality Guidelines](./quality-guidelines.md) | Swift style, concurrency safety, accessibility, error handling | Baseline |
 | [Testing Guidelines](./testing-guidelines.md) | Unit, view-model, and UI test expectations | Baseline |
+| [Tokscale Integration](./tokscale-integration.md) | Public profile API, versioned npx commands, autosubmit, GUI PATH behavior | Active |
 
 ## Default technology choices
 

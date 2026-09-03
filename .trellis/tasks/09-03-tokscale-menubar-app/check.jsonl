@@ -1,0 +1,9 @@
+{"file":".trellis/spec/macos/index.md","reason":"verify project-wide macOS defaults"}
+{"file":".trellis/spec/macos/swiftui-guidelines.md","reason":"verify native panel UX, previews, and accessibility"}
+{"file":".trellis/spec/macos/state-management.md","reason":"verify main-actor state and service injection"}
+{"file":".trellis/spec/macos/networking-guidelines.md","reason":"verify API decoding and transport error handling"}
+{"file":".trellis/spec/macos/data-persistence.md","reason":"verify preferences exclude secrets"}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"verify safe process execution, concurrency, and errors"}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"verify required automated coverage and commands"}
+{"file":".trellis/tasks/09-03-tokscale-menubar-app/research/tokscale-contract.md","reason":"verify implementation against actual Tokscale contracts"}
+{"file": ".trellis/spec/macos/tokscale-integration.md", "reason": "verify external integration contract and NVM GUI PATH behavior"}

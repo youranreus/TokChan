@@ -1,0 +1,10 @@
+{"file":".trellis/spec/macos/index.md","reason":"macOS project defaults and required guideline index"}
+{"file":".trellis/spec/macos/directory-structure.md","reason":"initial native Xcode project layout"}
+{"file":".trellis/spec/macos/swiftui-guidelines.md","reason":"MenuBarExtra panel composition and accessibility"}
+{"file":".trellis/spec/macos/state-management.md","reason":"macOS 13-compatible observable view-model boundaries"}
+{"file":".trellis/spec/macos/networking-guidelines.md","reason":"public profile API client and Codable mapping"}
+{"file":".trellis/spec/macos/data-persistence.md","reason":"small non-sensitive preferences in UserDefaults"}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"safe errors, concurrency, and dependency constraints"}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"unit and UI test baseline plus xcodebuild validation"}
+{"file":".trellis/tasks/09-03-tokscale-menubar-app/research/tokscale-contract.md","reason":"verified Tokscale CLI, autosubmit, and public API contract"}
+{"file": ".trellis/spec/macos/tokscale-integration.md", "reason": "concrete Tokscale API, CLI, PATH, validation, and test contract"}

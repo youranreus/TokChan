@@ -1,0 +1,307 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		A10000000000000000000001 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000000000000000000001;
+			proxyType = 1;
+			remoteGlobalIDString = A00000000000000000000101;
+			remoteInfo = TokChan;
+		};
+		A10000000000000000000002 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000000000000000000001;
+			proxyType = 1;
+			remoteGlobalIDString = A00000000000000000000101;
+			remoteInfo = TokChan;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A00000000000000000000201 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TokChan.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000000000000000000202 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TokChanTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000000000000000000203 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TokChanUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		A00000000000000000000301 = {isa = PBXFileSystemSynchronizedRootGroup; path = TokChan; sourceTree = "<group>"; };
+		A00000000000000000000302 = {isa = PBXFileSystemSynchronizedRootGroup; path = TokChanTests; sourceTree = "<group>"; };
+		A00000000000000000000303 = {isa = PBXFileSystemSynchronizedRootGroup; path = TokChanUITests; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A00000000000000000000401 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000402 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000403 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A00000000000000000000501 = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000301,
+				A00000000000000000000302,
+				A00000000000000000000303,
+				A00000000000000000000502,
+			);
+			sourceTree = "<group>";
+		};
+		A00000000000000000000502 = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000201,
+				A00000000000000000000202,
+				A00000000000000000000203,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A00000000000000000000101 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00000000000000000000602;
+			buildPhases = (
+				A00000000000000000000411,
+				A00000000000000000000401,
+				A00000000000000000000421,
+			);
+			buildRules = ();
+			dependencies = ();
+			fileSystemSynchronizedGroups = (A00000000000000000000301,);
+			name = TokChan;
+			packageProductDependencies = ();
+			productName = TokChan;
+			productReference = A00000000000000000000201;
+			productType = "com.apple.product-type.application";
+		};
+		A00000000000000000000102 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00000000000000000000603;
+			buildPhases = (
+				A00000000000000000000412,
+				A00000000000000000000402,
+				A00000000000000000000422,
+			);
+			buildRules = ();
+			dependencies = (A10000000000000000000011,);
+			fileSystemSynchronizedGroups = (A00000000000000000000302,);
+			name = TokChanTests;
+			packageProductDependencies = ();
+			productName = TokChanTests;
+			productReference = A00000000000000000000202;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		A00000000000000000000103 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00000000000000000000604;
+			buildPhases = (
+				A00000000000000000000413,
+				A00000000000000000000403,
+				A00000000000000000000423,
+			);
+			buildRules = ();
+			dependencies = (A10000000000000000000012,);
+			fileSystemSynchronizedGroups = (A00000000000000000000303,);
+			name = TokChanUITests;
+			packageProductDependencies = ();
+			productName = TokChanUITests;
+			productReference = A00000000000000000000203;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A00000000000000000000001 = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					A00000000000000000000101 = {CreatedOnToolsVersion = 26.0; };
+					A00000000000000000000102 = {CreatedOnToolsVersion = 26.0; TestTargetID = A00000000000000000000101; };
+					A00000000000000000000103 = {CreatedOnToolsVersion = 26.0; TestTargetID = A00000000000000000000101; };
+				};
+			};
+			buildConfigurationList = A00000000000000000000601;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base,);
+			mainGroup = A00000000000000000000501;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A00000000000000000000502;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A00000000000000000000101,
+				A00000000000000000000102,
+				A00000000000000000000103,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A00000000000000000000421 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000422 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000423 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A00000000000000000000411 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000412 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000413 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A10000000000000000000011 = {isa = PBXTargetDependency; target = A00000000000000000000101; targetProxy = A10000000000000000000001; };
+		A10000000000000000000012 = {isa = PBXTargetDependency; target = A00000000000000000000101; targetProxy = A10000000000000000000002; };
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A00000000000000000000701 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)",);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A00000000000000000000702 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+		};
+			name = Release;
+		};
+		A00000000000000000000711 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_LSUIElement = YES;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.youranreus.TokChan;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A00000000000000000000712 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_LSUIElement = YES;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.youranreus.TokChan;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A00000000000000000000721 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.youranreus.TokChanTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TokChan.app/Contents/MacOS/TokChan";
+			};
+			name = Debug;
+		};
+		A00000000000000000000722 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.youranreus.TokChanTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TokChan.app/Contents/MacOS/TokChan";
+			};
+			name = Release;
+		};
+		A00000000000000000000731 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.youranreus.TokChanUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = TokChan;
+			};
+			name = Debug;
+		};
+		A00000000000000000000732 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.youranreus.TokChanUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = TokChan;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A00000000000000000000601 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000701, A00000000000000000000702,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A00000000000000000000602 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000711, A00000000000000000000712,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A00000000000000000000603 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000721, A00000000000000000000722,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A00000000000000000000604 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000731, A00000000000000000000732,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = A00000000000000000000001;
+}

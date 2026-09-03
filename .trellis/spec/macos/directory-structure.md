@@ -2,7 +2,7 @@
 
 ## Current state
 
-No SwiftUI source exists yet. The first implementation should create a small, conventional macOS Xcode project rather than web-style `frontend` / `backend` folders.
+The repository contains one conventional Xcode project with three targets: `TokChan`, `TokChanTests`, and `TokChanUITests`.
 
 ## Recommended initial layout
 
@@ -12,23 +12,23 @@ Use one macOS app target directory named after the app, for example:
 TokChan/
   TokChanApp.swift
   Features/
-    Home/
-      HomeView.swift
-      HomeViewModel.swift
+    Dashboard/
+      DashboardView.swift
+      DashboardViewModel.swift
+      DashboardView+Preview.swift
+    Settings/
+      SettingsView.swift
   Shared/
     Components/
     Models/
     Services/
     Utilities/
-  Resources/
-    Assets.xcassets
-    Localizable.xcstrings
-  SupportingFiles/
-    TokChan.entitlements
 TokChanTests/
 TokChanUITests/
 TokChan.xcodeproj/
 ```
+
+Resources and entitlements should only be added when the app gains assets, localization, or capabilities that require them. The current agent-style app uses generated Info.plist keys and intentionally has no App Sandbox entitlement because it must execute Tokscale and manage its LaunchAgent through the official CLI.
 
 ## Placement rules
 
