@@ -127,7 +127,7 @@ struct DashboardView: View {
         case let .failed(message):
             panelCard {
                 ErrorStateView(title: "自动提交状态不可用", message: message) {
-                    openSettingsWindowOnLegacySystem()
+                    openSettingsWindow()
                 }
             }
         case let .loaded(status):
@@ -267,14 +267,10 @@ struct DashboardView: View {
     @ViewBuilder
     private var settingsButton: some View {
         if #available(macOS 14.0, *) {
-            SettingsLink {
-                Label("设置", systemImage: "gearshape")
-            }
-            .buttonStyle(.borderless)
-            .accessibilityIdentifier("settings-button")
+            NativeSettingsButton()
         } else {
             Button {
-                openSettingsWindowOnLegacySystem()
+                openLegacySettingsWindow()
             } label: {
                 Label("设置", systemImage: "gearshape")
             }
@@ -283,7 +279,20 @@ struct DashboardView: View {
         }
     }
 
-    private func openSettingsWindowOnLegacySystem() {
+    private func openSettingsWindow() {
+        if #available(macOS 14.0, *) {
+            NSApplication.shared.sendAction(
+                Selector(("showSettingsWindow:")),
+                to: nil,
+                from: nil
+            )
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        } else {
+            openLegacySettingsWindow()
+        }
+    }
+
+    private func openLegacySettingsWindow() {
         NSApplication.shared.activate(ignoringOtherApps: true)
         let didOpen = NSApplication.shared.sendAction(
             Selector(("showSettingsWindow:")),
@@ -298,11 +307,26 @@ struct DashboardView: View {
             )
         }
     }
-
     private func panelCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         content()
             .padding(10)
             .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+    }
+}
+
+@available(macOS 14.0, *)
+private struct NativeSettingsButton: View {
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Button {
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            openSettings()
+        } label: {
+            Label("设置", systemImage: "gearshape")
+        }
+        .buttonStyle(.borderless)
+        .accessibilityIdentifier("settings-button")
     }
 }
 

@@ -4,11 +4,7 @@ import XCTest
 
 @MainActor
 final class SettingsWindowActionTests: XCTestCase {
-    func testDashboardUsesNativeSettingsLinkOnSupportedSystems() throws {
-        guard #available(macOS 14.0, *) else {
-            throw XCTSkip("macOS 13 uses the legacy settings action")
-        }
-
+    func testDashboardUsesNativeSettingsAction() {
         let view = DashboardView(
             viewModel: DashboardViewModel(
                 api: PreviewAPIService(),
@@ -20,8 +16,8 @@ final class SettingsWindowActionTests: XCTestCase {
         )
 
         XCTAssertTrue(
-            containsType(named: "SettingsLink", in: view.body),
-            "The dashboard settings control must use SwiftUI.SettingsLink"
+            containsType(named: "Button", in: view.body),
+            "The dashboard settings control must expose a native Settings action"
         )
     }
 
