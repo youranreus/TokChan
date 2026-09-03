@@ -2,16 +2,16 @@
   "id": "00-bootstrap-guidelines",
   "name": "00-bootstrap-guidelines",
   "title": "Bootstrap Guidelines",
-  "description": "Fill in project development guidelines for AI agents",
-  "status": "in_progress",
+  "description": "Fill in project development guidelines for AI agents, scoped to a planned simple macOS SwiftUI app",
+  "status": "completed",
   "dev_type": "docs",
-  "scope": null,
+  "scope": "macos-swiftui",
   "package": null,
   "priority": "P1",
   "creator": "季悠然",
   "assignee": "季悠然",
   "createdAt": "2026-09-03",
-  "completedAt": null,
+  "completedAt": "2026-09-03",
   "branch": null,
   "base_branch": null,
   "worktree_path": null,
@@ -21,9 +21,9 @@
   "children": [],
   "parent": null,
   "relatedFiles": [
-    ".trellis/spec/backend/",
-    ".trellis/spec/frontend/"
+    ".trellis/spec/macos/",
+    ".trellis/spec/guides/"
   ],
-  "notes": "First-time setup task created by trellis init (fullstack project)",
+  "notes": "First-time setup task created by trellis init; reshaped from generated fullstack scaffold to planned macOS SwiftUI app conventions.",
   "meta": {}
 }
