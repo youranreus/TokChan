@@ -131,3 +131,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: 兼容常见 Node 版本管理器探测
+
+**Date**: 2026-09-04
+**Task**: 兼容常见 Node 版本管理器探测
+**Branch**: `master`
+
+### Summary
+
+扩展 NpxLocator，支持 fnm、Volta、asdf、mise、nodenv、n 与 nvm 的安全文件系统探测，保留确定性优先级并排除不安全 shim；补充完整路径、安全和回退测试，随后发布 v0.1.6。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dda32f7` | (see git log) |
+
+### Status
+
+[OK] **Completed**

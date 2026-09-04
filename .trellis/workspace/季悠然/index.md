@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
+- **Total Sessions**: 6
 - **Last Active**: 2026-09-04
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~133 | Active |
+| `journal-1.md` | ~154 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-09-04 | 兼容常见 Node 版本管理器探测 | `dda32f7` | `master` |
 | 5 | 2026-09-04 | 自动探测 npx 路径 | `7c917b1` | `master` |
 | 4 | 2026-09-04 | 优化发布脚本版本更新 | `4f65b27` | `master` |
 | 3 | 2026-09-04 | 实现构建与发布流程 | `03e7752`, `00407bb` | `master` |
