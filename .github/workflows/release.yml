@@ -89,7 +89,10 @@ jobs:
           test -f "$zip"
           test -f "$checksum"
           [[ "$(find dist -maxdepth 1 -type f -print | sort)" == "$(printf '%s\n%s\n' "$checksum" "$zip" | sort)" ]]
-          shasum -a 256 -c "$checksum"
+          (
+            cd "$(dirname "$checksum")"
+            shasum -a 256 -c "$(basename "$checksum")"
+          )
           echo "zip=$zip" >> "$GITHUB_OUTPUT"
           echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
 

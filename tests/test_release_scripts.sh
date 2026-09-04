@@ -121,6 +121,10 @@ checksum="$zip.sha256"
   shasum -a 256 -c "$(basename "$checksum")" >/dev/null
 )
 pass "build script produces the canonical ZIP/checksum pair"
+grep -F 'cd "$(dirname "$checksum")"' "$root/.github/workflows/release.yml" >/dev/null
+grep -F 'shasum -a 256 -c "$(basename "$checksum")"' \
+  "$root/.github/workflows/release.yml" >/dev/null
+pass "release workflow verifies the basename checksum from its asset directory"
 
 expect_failure "refusing to overwrite existing asset" env PATH="$fixture/mock-bin:$PATH" \
   "$fixture/scripts/build-release.sh" --skip-tests --output output
