@@ -1,0 +1,5 @@
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"复核脚本失败语义、可维护性、敏感信息与完整质量门禁"}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"复核单元测试门禁、脚本测试及端到端发布演练覆盖"}
+{"file":".trellis/tasks/09-04-build-release-workflow/research/repository-current-state.md","reason":"核对实现没有偏离仓库已确认的工程与签名事实"}
+{"file":".trellis/tasks/09-04-build-release-workflow/research/recommended-release-design.md","reason":"核对 Tag、权限、draft Release、防重复与回滚设计完整性"}
+{"file": ".trellis/spec/macos/release-workflow.md", "reason": "复核版本、资产、权限、失败恢复和不可变发布契约"}

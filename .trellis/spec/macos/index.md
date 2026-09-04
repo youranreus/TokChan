@@ -18,6 +18,7 @@ TokChan is a dependency-free macOS 13 SwiftUI menu-bar app. `TokChanApp.swift` c
 | [Quality Guidelines](./quality-guidelines.md) | Swift style, concurrency safety, accessibility, error handling | Baseline |
 | [Testing Guidelines](./testing-guidelines.md) | Unit, view-model, and UI test expectations | Baseline |
 | [Tokscale Integration](./tokscale-integration.md) | Public profile API, versioned npx commands, autosubmit, GUI PATH behavior | Active |
+| [Build and Release Workflow](./release-workflow.md) | Version, universal ZIP, Tag, GitHub Release, validation, and rollback contracts | Active |
 
 ## Default technology choices
 
