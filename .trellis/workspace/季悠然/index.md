@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 3
+- **Total Sessions**: 4
 - **Last Active**: 2026-09-04
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~91 | Active |
+| `journal-1.md` | ~112 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 4 | 2026-09-04 | 优化发布脚本版本更新 | `4f65b27` | `master` |
 | 3 | 2026-09-04 | 实现构建与发布流程 | `03e7752`, `00407bb` | `master` |
 | 2 | 2026-09-04 | Dashboard usage periods and persistent cache | `c12c275` | `master` |
 | 1 | 2026-09-03 | 更新 TokChan 品牌图标 | `145b000` | `master` |

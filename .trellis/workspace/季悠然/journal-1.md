@@ -89,3 +89,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: 优化发布脚本版本更新
+
+**Date**: 2026-09-04
+**Task**: 优化发布脚本版本更新
+**Branch**: `master`
+
+### Summary
+
+发布脚本新增 patch、minor、major 语义化版本递增，移除本地 gh 依赖并保留 CI 的 GitHub Release API 发布职责；同步更新测试、README 与发布规范，22 项脚本检查通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4f65b27` | (see git log) |
+
+### Status
+
+[OK] **Completed**
