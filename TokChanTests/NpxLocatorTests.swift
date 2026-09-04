@@ -13,12 +13,35 @@ final class NpxLocatorTests: XCTestCase {
         try makeExecutable(at: older)
         try makeExecutable(at: newer)
 
-        let locator = NpxLocator(environment: [:], homeDirectory: root)
+        let locator = NpxLocator(
+            environment: [:],
+            homeDirectory: root,
+            systemCandidates: []
+        )
 
         XCTAssertEqual(
             locator.locate(preferredPath: nil)?.resolvingSymlinksInPath(),
             newer.resolvingSymlinksInPath()
         )
+    }
+
+    func testSystemFallbackPrecedesNVM() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TokChanNpxLocatorTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let systemNpx = root.appendingPathComponent("homebrew/bin/npx")
+        let nvmNpx = root.appendingPathComponent(".nvm/versions/node/v99.0.0/bin/npx")
+        try makeExecutable(at: systemNpx)
+        try makeExecutable(at: nvmNpx)
+
+        let locator = NpxLocator(
+            environment: [:],
+            homeDirectory: root,
+            systemCandidates: [systemNpx]
+        )
+
+        XCTAssertEqual(locator.locate(preferredPath: nil), systemNpx)
     }
 
     func testIgnoresRelativePreferredPath() throws {

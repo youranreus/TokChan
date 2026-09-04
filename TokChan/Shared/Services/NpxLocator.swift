@@ -8,15 +8,22 @@ struct NpxLocator: NpxLocating {
     private let fileManager: FileManager
     private let environment: [String: String]
     private let homeDirectory: URL
+    private let systemCandidates: [URL]
 
     init(
         fileManager: FileManager = .default,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        systemCandidates: [URL] = [
+            URL(fileURLWithPath: "/opt/homebrew/bin/npx"),
+            URL(fileURLWithPath: "/usr/local/bin/npx"),
+            URL(fileURLWithPath: "/usr/bin/npx")
+        ]
     ) {
         self.fileManager = fileManager
         self.environment = environment
         self.homeDirectory = homeDirectory
+        self.systemCandidates = systemCandidates
     }
 
     func locate(preferredPath: String?) -> URL? {
@@ -34,11 +41,7 @@ struct NpxLocator: NpxLocating {
             }
         }
 
-        candidates += [
-            URL(fileURLWithPath: "/opt/homebrew/bin/npx"),
-            URL(fileURLWithPath: "/usr/local/bin/npx"),
-            URL(fileURLWithPath: "/usr/bin/npx")
-        ]
+        candidates += systemCandidates
 
         let nodeVersions = homeDirectory
             .appendingPathComponent(".nvm/versions/node", isDirectory: true)

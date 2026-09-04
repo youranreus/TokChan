@@ -108,6 +108,7 @@ if #available(macOS 14.0, *) {
 - Decode current and sparse autosubmit JSON; assert defaults and date summary.
 - Assert every command's exact argument suffix and rejection of invalid version, client, interval, and dates.
 - Execute a fixture `npx` with an `/usr/bin/env` shebang; assert sibling runtime resolution through the prepended child `PATH`.
+- Locator unit tests must inject or clear fixed system candidates; an empty `PATH` alone does not isolate Homebrew or `/usr/local` tools installed on CI runners. Preserve production precedence: explicit override, inherited `PATH`, fixed system candidates, then numerically newest NVM version.
 - With fake services, assert panel load performs only `fetch` and `status`; manual refresh orders `submit` before `fetch`; run-now orders `run` before profile/status reload.
 - UI smoke tests must use `--ui-testing` fixture dependencies and never access the network, `npx`, or `launchd`.
 
