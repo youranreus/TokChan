@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-26
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Select and report Xcode 26
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcode_path=$(python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          candidates = []
+          for path in Path("/Applications").glob("Xcode_26*.app"):
+              match = re.fullmatch(r"Xcode_(26(?:\.\d+)*)\.app", path.name)
+              if match:
+                  candidates.append((tuple(map(int, match.group(1).split("."))), path))
+          if candidates:
+              print(max(candidates)[1])
+          PY
+          )
+          test -n "$xcode_path" || { echo 'Xcode 26 is not installed on this runner' >&2; exit 1; }
+          sudo xcode-select --switch "$xcode_path/Contents/Developer"
+          sw_vers
+          uname -m
+          xcodebuild -version
+          [[ "$(xcodebuild -version | head -n 1)" == Xcode\ 26* ]] || exit 1
+
+      - name: Validate Tag and source version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=${GITHUB_REF_NAME}
+          [[ "${GITHUB_REF_TYPE}" == tag ]]
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Invalid release Tag: $tag" >&2
+            exit 1
+          }
+          read -r version build < <(
+            python3 scripts/lib/project-version.py TokChan.xcodeproj/project.pbxproj get
+          )
+          [[ "$tag" == "v$version" ]] || {
+            echo "Tag $tag does not match MARKETING_VERSION $version" >&2
+            exit 1
+          }
+          git fetch --no-tags origin master
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master || {
+            echo "Tagged commit is not reachable from origin/master" >&2
+            exit 1
+          }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
+      - name: Test, build, and package unsigned universal app
+        shell: bash
+        run: scripts/build-release.sh
+
+      - name: Verify exact local assets
+        id: assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          version='${{ steps.version.outputs.version }}'
+          zip="dist/TokChan-v${version}-macos-universal.zip"
+          checksum="${zip}.sha256"
+          test -f "$zip"
+          test -f "$checksum"
+          [[ "$(find dist -maxdepth 1 -type f -print | sort)" == "$(printf '%s\n%s\n' "$checksum" "$zip" | sort)" ]]
+          shasum -a 256 -c "$checksum"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
+
+      - name: Create or resume draft Release
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          ZIP: ${{ steps.assets.outputs.zip }}
+          CHECKSUM: ${{ steps.assets.outputs.checksum }}
+        run: |
+          set -euo pipefail
+          set +e
+          release_state=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .draft 2>&1)
+          release_status=$?
+          set -e
+
+          if [[ $release_status -eq 0 ]]; then
+            [[ "$release_state" == true ]] || {
+              echo "Release $TAG is already published; assets are immutable" >&2
+              exit 1
+            }
+            echo "Resuming existing draft Release $TAG"
+          elif [[ "$release_state" == *"(HTTP 404)"* ]]; then
+            printf -v warning '%s\n%s' \
+              '> [!WARNING]' \
+              "> This ZIP is unsigned and not Apple-notarized. It is intended for the maintainer's personal use only. Gatekeeper may block or warn on first launch. Verify the SHA-256 checksum before use. It is not ready for ordinary public distribution."
+            gh release create "$TAG" \
+              --verify-tag \
+              --draft \
+              --title "TokChan $TAG" \
+              --generate-notes \
+              --notes "$warning"
+          else
+            echo "Could not determine Release state: $release_state" >&2
+            exit 1
+          fi
+
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .body |
+            grep -F "unsigned and not Apple-notarized" >/dev/null || {
+              echo "Draft Release is missing the required unsigned/unnotarized warning" >&2
+              exit 1
+            }
+
+          [[ "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .draft)" == true ]] || {
+            echo "Release $TAG left draft state before asset upload; refusing to overwrite assets" >&2
+            exit 1
+          }
+          gh release upload "$TAG" "$ZIP" "$CHECKSUM" --clobber
+
+          [[ "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .draft)" == true ]] || {
+            echo "Release $TAG left draft state during asset upload; refusing to publish" >&2
+            exit 1
+          }
+          expected=$(printf '%s\n%s\n' "$(basename "$ZIP")" "$(basename "$CHECKSUM")" | sort)
+          actual=$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)
+          [[ "$actual" == "$expected" ]] || {
+            echo "Release assets do not exactly match the expected pair" >&2
+            printf 'Expected:\n%s\nActual:\n%s\n' "$expected" "$actual" >&2
+            exit 1
+          }
+
+          gh release edit "$TAG" --draft=false
+          [[ "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .draft)" == false ]]

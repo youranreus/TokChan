@@ -5,7 +5,7 @@ TokChan is a compact native macOS menu-bar companion for [Tokscale](https://toks
 ## Requirements
 
 - macOS 13 or later
-- Xcode 15 or later
+- Xcode 26 (the project uses Xcode 26 project format)
 - Node.js with an executable `npx`
 - An existing Tokscale login for submission and autosubmit operations
 
@@ -18,6 +18,58 @@ xcodebuild -project TokChan.xcodeproj -scheme TokChan -destination 'platform=mac
 ```
 
 TokChan is an agent-style app, so it appears in the menu bar and does not create a Dock icon. The first panel load discovers the current Tokscale username with `whoami` when no override is saved.
+
+## Build a personal-use release
+
+The shared release entry point runs `TokChanTests`, performs an explicitly unsigned Release build for both Apple Silicon and Intel, validates the app bundle, and creates a ZIP plus SHA-256 checksum:
+
+```bash
+scripts/build-release.sh
+# Local iteration only; never use this for a Tag release:
+scripts/build-release.sh --skip-tests --output dist-local
+```
+
+The default assets are:
+
+```text
+dist/TokChan-vX.Y.Z-macos-universal.zip
+dist/TokChan-vX.Y.Z-macos-universal.zip.sha256
+```
+
+Existing final-named assets are never overwritten. Verify a downloaded pair from the directory containing both files with:
+
+```bash
+shasum -a 256 -c TokChan-vX.Y.Z-macos-universal.zip.sha256
+unzip -t TokChan-vX.Y.Z-macos-universal.zip
+```
+
+> **Warning:** this first release format is not signed as an app bundle with a Developer ID identity and is not Apple-notarized. `codesign --verify TokChan.app` reports the packaged bundle as unsigned. The main Mach-O may still show linker-generated ad-hoc signature metadata; that does not provide bundle signing, a developer identity, or notarization. This format is intended only for the maintainer's personal use. Gatekeeper may block or warn on first launch, and the artifact is not suitable for ordinary public distribution.
+
+## Prepare and publish a patch release
+
+Versions are source-controlled in `TokChan.xcodeproj/project.pbxproj`. The app uses stable `X.Y.Z` marketing versions, positive integer build numbers, and annotated Tags named exactly `vX.Y.Z`.
+
+Start from a clean `master` checkout whose `HEAD` exactly matches `origin/master`, with `gh` installed and authenticated:
+
+```bash
+scripts/release.sh patch
+```
+
+The command fetches Tags, checks local/remote Tag and GitHub Release availability, increments both the patch version and build number, runs the complete release build, shows the project diff, and asks before creating `chore(release): vX.Y.Z` plus its annotated Tag. By default it does not push. After review, use the exact atomic push command printed by the script, or opt into the second push confirmation from the start:
+
+```bash
+scripts/release.sh patch --push
+```
+
+Pushing the Tag triggers `.github/workflows/release.yml`. The workflow validates the Tag against the project version and `origin/master`, runs the same tested build script, creates or resumes a draft GitHub Release, verifies its exact two assets, and only then publishes it. A published Release is immutable to the workflow; source or artifact corrections require a new patch version. Infrastructure-only failures may rerun the same workflow while its Release remains a draft.
+
+### GitHub repository setup
+
+- In **Settings → Actions → General**, allow workflows effective read/write access so the ephemeral `GITHUB_TOKEN` can receive `contents: write`. No personal access token or Apple credential is used by this first-phase workflow.
+- Add a Tag ruleset for `v*` that limits Tag creation, update, and deletion to maintainers. Published Tags must never be moved.
+- Consider GitHub immutable Releases after rehearsing the workflow in a disposable repository.
+
+Before distributing TokChan to ordinary users, complete a separate hardening effort covering Developer ID Application signing, Hardened Runtime compatibility, Xcode archive/export, App Store Connect API-key notarization, stapling, `spctl`/Gatekeeper validation, credential rotation, and incident recovery. DMG/PKG packaging and in-app updates are also outside this personal-use release flow.
 
 ## Integration behavior
 
