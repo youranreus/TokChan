@@ -110,3 +110,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: 自动探测 npx 路径
+
+**Date**: 2026-09-04
+**Task**: 自动探测 npx 路径
+**Branch**: `master`
+
+### Summary
+
+让设置页默认展示自动探测到的 npx，手动覆盖按需展开并支持无效路径回退与清除；补充定位器及设置状态测试，完整 Xcode 测试通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7c917b1` | (see git log) |
+
+### Status
+
+[OK] **Completed**
