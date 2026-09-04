@@ -67,3 +67,25 @@
 ### Next Steps
 
 - 最新构建位于 /private/tmp/TokChan-cache-first-release/Build/Products/Release/TokChan.app。
+
+
+## Session 3: 实现构建与发布流程
+
+**Date**: 2026-09-04
+**Task**: 实现构建与发布流程
+**Branch**: `master`
+
+### Summary
+
+完成 TokChan 本地 universal ZIP 构建、patch 版本与 annotated Tag 脚本、Tag 驱动的 GitHub draft Release 工作流、脚本测试、README 与发布契约；本地单元测试、双架构 Release 构建、ZIP 和 SHA-256 校验通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `03e7752` | (see git log) |
+| `00407bb` | (see git log) |
+
+### Status
+
+[OK] **Completed**
