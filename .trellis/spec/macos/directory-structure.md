@@ -62,3 +62,9 @@ Required checks:
 - Do not create `frontend/` or `backend/` directories for this project unless a real server or web client is introduced.
 - Do not split every view into many files before the feature has real complexity.
 - Do not place network or persistence calls directly inside SwiftUI view bodies.
+
+## Client brand resources
+
+ClientIcon maps canonical API IDs to bundled client-* image sets; codex maps to openai and kilo to kilocode. Unknown IDs use the generic terminal fallback. Keep original upstream files and commit provenance under Resources/ClientOriginals and include the upstream license. Asset catalogs use original rendering; the Zed WebP has a PNG presentation copy because actool requires a supported format. Add every upstream client image, not only clients currently present in an account.
+
+TokenBreakdownTests must load all known image names from the app bundle. Network image loading is reserved for the user avatar, never client logos.

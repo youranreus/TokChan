@@ -77,6 +77,7 @@ struct SettingsView: View {
         }
         .frame(width: 560, height: 600)
         .navigationTitle("TokChan! 设置")
+        .task { await viewModel.load() }
     }
 
     private func settingsPage<Content: View>(
@@ -87,12 +88,7 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
             HStack {
-                if case let .failed(message) = viewModel.operation {
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .lineLimit(2)
-                }
+                operationFeedback
                 Spacer()
                 Button("保存") {
                     Task {
@@ -108,6 +104,22 @@ struct SettingsView: View {
             }
             .padding()
             .background(Color.secondary.opacity(0.06))
+        }
+    }
+
+    @ViewBuilder
+    private var operationFeedback: some View {
+        switch viewModel.operation {
+        case .idle: EmptyView()
+        case .submitting, .runningAutosubmit, .savingSettings:
+            ProgressView().controlSize(.small)
+            Text(viewModel.operation == .savingSettings ? "正在保存…" : "正在运行…")
+                .font(.caption)
+        case let .failed(message):
+            Text(message).font(.caption).foregroundStyle(.red).lineLimit(2).help(message)
+        case let .succeeded(message):
+            Text(message).font(.caption).foregroundStyle(.green).lineLimit(2)
+                .accessibilityIdentifier("settings-operation-success")
         }
     }
 
@@ -129,6 +141,14 @@ struct SettingsView: View {
 
     private var autosubmitSettings: some View {
         Form {
+            Section("运行状态") {
+                AutosubmitStatusView(viewModel: viewModel)
+                if let error = viewModel.autosubmitLoadErrorMessage,
+                   viewModel.currentAutosubmitStatus != nil {
+                    Text("状态更新失败：\(error)")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            }
             Section("自动提交") {
                 Toggle("启用", isOn: $autosubmitEnabled)
 

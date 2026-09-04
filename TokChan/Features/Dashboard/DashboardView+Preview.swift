@@ -3,27 +3,34 @@ import Foundation
 import SwiftUI
 
 struct PreviewAPIService: TokscaleAPIService {
-    func fetchProfile(username: String) async throws -> DashboardData {
-        let json = #"""
-        {
-          "user":{"username":"youranreus","displayName":"季悠然","avatarUrl":null,"rank":946},
-          "stats":{"totalTokens":8963807446,"totalCost":7666.02,"activeDays":234},
-          "updatedAt":"2026-09-03T07:26:40.951Z",
-          "contributions":[{"clients":[
-            {"client":"codex","models":{
-              "gpt-5.6-sol":{"tokens":1600000000,"cost":1079.80},
-              "codex-auto-review":{"tokens":32000000,"cost":3.02}
-            },"tokens":{"input":180000000,"output":42000000,"cacheRead":1410000000},"cost":1082.82},
-            {"client":"cursor","models":{
-              "claude-opus-5-thinking-high":{"tokens":347000000,"cost":377.36},
-              "composer-2.5":{"tokens":318000000,"cost":132.96}
-            },"tokens":{"input":90000000,"output":25000000,"cacheRead":550000000},"cost":510.32}
-          ]}]
+    func fetchProfile(username: String, period: ProfilePeriod) async throws -> DashboardData {
+        let scale: Double = period == .all ? 100 : (period == .month ? 10 : (period == .week ? 1 : 0.2))
+        let clientIDs = ["codex", "cursor", "hermes", "pi", "unknown-agent"]
+        let clients: [[String: Any]] = clientIDs.enumerated().map { index, client in
+            let amount = 1000 * scale / Double(index + 1)
+            let models = Dictionary(uniqueKeysWithValues: (1...8).map { number in
+                ("model-\(number)", ["tokens": amount * Double(9 - number) / 36, "cost": Double(9 - number) * scale / 36])
+            })
+            return ["client": client, "models": models,
+                    "tokens": ["input": amount * 0.1, "output": amount * 0.05,
+                               "cacheRead": amount * 0.8, "cacheWrite": amount * 0.03,
+                               "reasoning": amount * 0.02], "cost": scale]
         }
-        """#
-        let response = try JSONDecoder().decode(PublicProfileResponse.self, from: Data(json.utf8))
-        return DashboardData(response: response)
+        let total = (1...5).reduce(0.0) { $0 + 1000 * scale / Double($1) }
+        let json: [String: Any] = [
+            "period": period.rawValue,
+            "dateRange": ["start": period == .week ? "2026-08-29" : "2026-08-06", "end": "2026-09-04"],
+            "user": ["username": username, "displayName": "季悠然", "rank": period == .day ? NSNull() : (period == .all ? 42 : 12) as Any],
+            "stats": ["totalTokens": total, "totalCost": scale * 5, "activeDays": period == .week ? 7 : 30,
+                      "inputTokens": total * 0.1, "outputTokens": total * 0.05,
+                      "cacheReadTokens": total * 0.8, "cacheWriteTokens": total * 0.03,
+                      "reasoningTokens": total * 0.02],
+            "updatedAt": "2026-09-04T01:00:00Z", "contributions": [["clients": clients]]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: json)
+        return DashboardData(response: try JSONDecoder().decode(PublicProfileResponse.self, from: data))
     }
+
 }
 
 struct PreviewCLIService: TokscaleCLIService {

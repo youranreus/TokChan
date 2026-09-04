@@ -1,6 +1,32 @@
 import Foundation
 
+enum ProfilePeriod: String, Codable, CaseIterable, Identifiable {
+    case all, day, week, month
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .all: return "全部"
+        case .day: return "日"
+        case .week: return "周"
+        case .month: return "月"
+        }
+    }
+}
+
+struct ProfileDateRange: Codable, Equatable {
+    let start: String?
+    let end: String?
+
+    var displayText: String {
+        guard let start, let end else { return "暂无日期范围" }
+        return "\(start) – \(end)"
+    }
+}
+
 struct PublicProfileResponse: Decodable {
+    let period: ProfilePeriod?
+    let dateRange: ProfileDateRange?
     let user: ProfileUser
     let stats: ProfileStats
     let updatedAt: String?
@@ -18,9 +44,30 @@ struct ProfileStats: Decodable {
     let totalTokens: Double
     let totalCost: Double
     let activeDays: Int
+    let inputTokens: Double?
+    let outputTokens: Double?
+    let cacheReadTokens: Double?
+    let cacheWriteTokens: Double?
+    let reasoningTokens: Double?
+
+    var breakdown: TokenBreakdown? {
+        guard let inputTokens, let outputTokens, let cacheReadTokens,
+              let cacheWriteTokens, let reasoningTokens else { return nil }
+        return TokenBreakdown(input: inputTokens, output: outputTokens,
+                              cacheRead: cacheReadTokens, cacheWrite: cacheWriteTokens,
+                              reasoning: reasoningTokens)
+    }
+}
+
+struct ProfileDailyTotals: Decodable {
+    let tokens: Double
+    let cost: Double
 }
 
 struct ProfileContribution: Decodable {
+    let date: String?
+    let totals: ProfileDailyTotals?
+    let tokenBreakdown: TokenBreakdown?
     let clients: [ProfileClientRecord]
 }
 
@@ -66,7 +113,7 @@ struct ProfileModelRecord: Decodable {
     }
 }
 
-struct TokenBreakdown: Decodable {
+struct TokenBreakdown: Codable, Equatable {
     let input: Double
     let output: Double
     let cacheRead: Double
@@ -106,6 +153,9 @@ struct TokenBreakdown: Decodable {
 }
 
 struct DashboardData: Codable, Equatable {
+    let period: ProfilePeriod
+    let dateRange: ProfileDateRange?
+    let breakdown: TokenBreakdown?
     let username: String
     let displayName: String
     let avatarURL: URL?
@@ -117,6 +167,9 @@ struct DashboardData: Codable, Equatable {
     let clients: [ClientUsageGroup]
 
     init(response: PublicProfileResponse) {
+        period = response.period ?? .all
+        dateRange = response.dateRange
+        breakdown = response.stats.breakdown
         username = response.user.username
         if let candidate = response.user.displayName, !candidate.isEmpty {
             displayName = candidate
@@ -133,6 +186,24 @@ struct DashboardData: Codable, Equatable {
             from: response.contributions,
             profileTotalTokens: response.stats.totalTokens
         )
+    }
+
+    static func day(from response: PublicProfileResponse) throws -> DashboardData {
+        // Use the server's date boundary and daily bucket, never the viewer's timezone.
+        guard let date = response.dateRange?.end else { throw TokscaleAPIError.invalidResponse }
+        let contribution = response.contributions.first { $0.date == date }
+        let total = contribution?.totals?.tokens ?? 0
+        let breakdown = contribution == nil ? TokenBreakdown() : contribution?.tokenBreakdown
+        let daily = PublicProfileResponse(
+            period: .day, dateRange: ProfileDateRange(start: date, end: date),
+            user: ProfileUser(username: response.user.username, displayName: response.user.displayName,
+                              avatarUrl: response.user.avatarUrl, rank: nil),
+            stats: ProfileStats(totalTokens: total, totalCost: contribution?.totals?.cost ?? 0,
+                activeDays: total > 0 ? 1 : 0, inputTokens: breakdown?.input,
+                outputTokens: breakdown?.output, cacheReadTokens: breakdown?.cacheRead,
+                cacheWriteTokens: breakdown?.cacheWrite, reasoningTokens: breakdown?.reasoning),
+            updatedAt: response.updatedAt, contributions: contribution.map { [$0] } ?? [])
+        return DashboardData(response: daily)
     }
 
     private static func parseDate(_ value: String) -> Date? {
@@ -222,4 +293,36 @@ struct ModelUsage: Codable, Identifiable, Equatable {
     let id: String
     let tokens: Double
     let cost: Double
+}
+
+// Fixed order is shared by the proportional bar and its accessible legend.
+enum TokenCategory: String, CaseIterable, Identifiable {
+    case input = "Input"
+    case output = "Output"
+    case cacheRead = "Cache Read"
+    case cacheWrite = "Cache Write"
+    case reasoning = "Reasoning"
+    var id: String { rawValue }
+}
+
+extension TokenBreakdown {
+    func value(for category: TokenCategory) -> Double {
+        let value: Double
+        switch category {
+        case .input: value = input
+        case .output: value = output
+        case .cacheRead: value = cacheRead
+        case .cacheWrite: value = cacheWrite
+        case .reasoning: value = reasoning
+        }
+        return value.isFinite ? max(0, value) : 0
+    }
+
+    func fraction(for category: TokenCategory) -> Double {
+        let values = TokenCategory.allCases.map { value(for: $0) }
+        // Normalize before summation so even very large inputs cannot overflow.
+        guard let largest = values.max(), largest > 0 else { return 0 }
+        let denominator = values.reduce(0) { $0 + $1 / largest }
+        return (value(for: category) / largest) / denominator
+    }
 }

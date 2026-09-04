@@ -9,12 +9,13 @@ private extension CharacterSet {
 }
 
 protocol TokscaleAPIService {
-    func fetchProfile(username: String) async throws -> DashboardData
+    func fetchProfile(username: String, period: ProfilePeriod) async throws -> DashboardData
 }
 
 enum TokscaleAPIError: LocalizedError {
     case invalidUsername
     case invalidResponse
+    case mismatchedPeriod
     case profileNotFound
     case server(statusCode: Int)
     case decoding(Error)
@@ -23,6 +24,8 @@ enum TokscaleAPIError: LocalizedError {
         switch self {
         case .invalidUsername:
             return "请在设置中填写有效的 Tokscale 用户名。"
+        case .mismatchedPeriod:
+            return "Tokscale 返回的时间范围不一致，请重试。"
         case .invalidResponse:
             return "Tokscale 返回了无效响应。"
         case .profileNotFound:
@@ -50,7 +53,7 @@ final class LiveTokscaleAPIClient: TokscaleAPIService {
         decoder = JSONDecoder()
     }
 
-    func fetchProfile(username: String) async throws -> DashboardData {
+    func fetchProfile(username: String, period: ProfilePeriod) async throws -> DashboardData {
         let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw TokscaleAPIError.invalidUsername }
 
@@ -61,7 +64,13 @@ final class LiveTokscaleAPIClient: TokscaleAPIService {
         guard let url = URL(string: baseString + encodedUsername) else {
             throw TokscaleAPIError.invalidUsername
         }
-        let (data, response) = try await session.data(from: url)
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw TokscaleAPIError.invalidUsername
+        }
+        let remotePeriod: ProfilePeriod = period == .day ? .week : period
+        components.queryItems = [URLQueryItem(name: "period", value: remotePeriod.rawValue)]
+        guard let requestURL = components.url else { throw TokscaleAPIError.invalidUsername }
+        let (data, response) = try await session.data(from: requestURL)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw TokscaleAPIError.invalidResponse
         }
@@ -76,7 +85,9 @@ final class LiveTokscaleAPIClient: TokscaleAPIService {
         }
 
         do {
-            return DashboardData(response: try decoder.decode(PublicProfileResponse.self, from: data))
+            let profile = try decoder.decode(PublicProfileResponse.self, from: data)
+            guard profile.period == remotePeriod else { throw TokscaleAPIError.mismatchedPeriod }
+            return try period == .day ? DashboardData.day(from: profile) : DashboardData(response: profile)
         } catch {
             throw TokscaleAPIError.decoding(error)
         }

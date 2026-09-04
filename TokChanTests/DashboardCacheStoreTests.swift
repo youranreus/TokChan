@@ -31,6 +31,27 @@ final class DashboardCacheStoreTests: XCTestCase {
         XCTAssertNil(FileDashboardCacheStore(fileURL: fileURL).load())
     }
 
+    func testLegacyUnscopedSnapshotIsRejected() throws {
+        let snapshot = DashboardCacheSnapshot(profile: try makeProfile(), autosubmit: nil, savedAt: Date())
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
+        var profile = try XCTUnwrap(json["profile"] as? [String: Any])
+        profile.removeValue(forKey: "period")
+        json["profile"] = profile
+        let legacy = try JSONSerialization.data(withJSONObject: json)
+        XCTAssertThrowsError(try JSONDecoder().decode(DashboardCacheSnapshot.self, from: legacy))
+    }
+
+    func testMigratesPreviousSingleScopeSnapshot() throws {
+        let profile = try makeProfile()
+        let snapshot = DashboardCacheSnapshot(profile: profile, autosubmit: nil, savedAt: Date())
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
+        legacy.removeValue(forKey: "profiles")
+        legacy.removeValue(forKey: "selectedPeriod")
+        let decoded = try JSONDecoder().decode(DashboardCacheSnapshot.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertEqual(decoded.profiles.map(\.data), [profile])
+        XCTAssertEqual(decoded.selectedPeriod, .all)
+    }
+
     private func makeProfile() throws -> DashboardData {
         let response = try JSONDecoder().decode(
             PublicProfileResponse.self,

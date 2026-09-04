@@ -63,3 +63,13 @@ Required checks:
 - Provide accessible labels for icon-only buttons and custom controls.
 - Respect system font sizing, dark mode, keyboard navigation, and pointer-focused interaction.
 - Use system colors where possible so dark mode and contrast settings work by default.
+
+## Dashboard viewport contract
+
+The 380×680 menu panel has a fixed outer VStack. Identity/status, the all/day/week/month segmented picker, metrics, five-category breakdown, client section heading and footer stay outside scrolling. Only client cards use ScrollView/LazyVStack. Bound long feedback text and provide help text so failures cannot consume the entire viewport.
+
+Each client defaults to its top five models in existing token-descending order. Expand/collapse affects visible rows only. Reset the client subtree identity on scope change so expansion and scroll position reset. Use Tokens in user-facing copy.
+
+Check light and dark renderings, zero/absent breakdown data, long client lists, and rapid scope changes. DashboardLayoutTests renders the real SwiftUI view at its fixed dimensions without remote dependencies.
+
+Cache-first loading uses one header submit/refresh button for both data reads and explicit submit operations, including first-load identity discovery. Disable it while loading; do not render separate spinners or background-refresh narration. Cached scope changes and reopening stay idle.

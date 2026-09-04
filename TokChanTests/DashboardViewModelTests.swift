@@ -53,7 +53,7 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isRefreshing)
     }
 
-    func testRefreshFailureKeepsCachedContentVisible() async throws {
+    func testCachedResourcesAreShownWithoutNetworkRequests() async throws {
         let cachedProfile = try makeDashboardData()
         let cachedStatus = try makeAutosubmitStatus()
         let cache = InMemoryCache(
@@ -82,7 +82,9 @@ final class DashboardViewModelTests: XCTestCase {
         }
         XCTAssertEqual(profile, cachedProfile)
         XCTAssertEqual(status, cachedStatus)
-        XCTAssertNotNil(viewModel.loadErrorMessage)
+        XCTAssertNil(viewModel.loadErrorMessage)
+        let events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
     }
 
     func testInitialLoadOnlyReadsProfileAndAutosubmitStatus() async {
@@ -197,6 +199,109 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(preferences.value, updated)
     }
 
+    func testLateWeekResponseCannotReplaceMonthAndSelectionDoesNotRunCLI() async throws {
+        let api = ControlledAPI()
+        let recorder = EventRecorder()
+        let model = DashboardViewModel(api: api, cli: FakeCLI(recorder: recorder),
+            preferencesStore: InMemoryPreferences(value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: "")),
+            npxLocator: FakeNpxLocator(), cacheStore: InMemoryCache())
+        let week = Task { await model.selectPeriod(.week) }
+        await api.waitForRequest(.week)
+        let month = Task { await model.selectPeriod(.month) }
+        await api.waitForRequest(.month)
+        await api.resolve(.month)
+        await month.value
+        XCTAssertEqual(model.profileState.loadedValue?.period, .month)
+        await api.resolve(.week)
+        await week.value
+        XCTAssertEqual(model.selectedPeriod, .month)
+        XCTAssertEqual(model.profileState.loadedValue?.period, .month)
+        let events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testSupersededRefreshDoesNotClaimSelectedProfileWasUpdated() async {
+        let api = ControlledAPI()
+        let model = DashboardViewModel(api: api, cli: FakeCLI(recorder: EventRecorder()),
+            preferencesStore: InMemoryPreferences(value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: "")),
+            npxLocator: FakeNpxLocator(), cacheStore: InMemoryCache())
+        let refresh = Task { await model.refresh() }
+        await api.waitForRequest(.all)
+        let week = Task { await model.selectPeriod(.week) }
+        await api.waitForRequest(.week)
+        await api.resolve(.all)
+        await refresh.value
+        XCTAssertEqual(model.operation, .succeeded("用量已提交。"))
+        XCTAssertNil(model.profileState.loadedValue)
+        XCTAssertEqual(model.selectedPeriod, .week)
+        await api.resolve(.week)
+        await week.value
+        XCTAssertEqual(model.profileState.loadedValue?.period, .week)
+    }
+
+    func testScopeFailureNeverUsesOtherScopeCache() async throws {
+        let cachedProfile = try makeDashboardData()
+        let model = DashboardViewModel(api: FakeAPI(recorder: EventRecorder(), fetchError: TestFailure.unavailable),
+            cli: FakeCLI(recorder: EventRecorder()),
+            preferencesStore: InMemoryPreferences(value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: "")),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: DashboardCacheSnapshot(profile: cachedProfile, autosubmit: nil, savedAt: Date())))
+        await model.selectPeriod(.week)
+        XCTAssertNil(model.profileState.loadedValue)
+        XCTAssertEqual(model.identityProfile?.username, "youranreus")
+        await model.selectPeriod(.all)
+        XCTAssertEqual(model.profileState.loadedValue?.period, .all)
+        XCTAssertNil(model.loadErrorMessage)
+    }
+
+    func testAllScopesSurviveDiskRoundTripAndReopeningWithoutRequests() async throws {
+        let recorder = EventRecorder()
+        let cache = InMemoryCache()
+        let preferences = InMemoryPreferences(value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: ""))
+        let model = DashboardViewModel(api: FakeAPI(recorder: recorder), cli: FakeCLI(recorder: recorder),
+            preferencesStore: preferences, npxLocator: FakeNpxLocator(), cacheStore: cache)
+        await model.load()
+        await model.selectPeriod(.day)
+        await model.selectPeriod(.week)
+        await model.selectPeriod(.month)
+        let saved = try XCTUnwrap(cache.snapshot)
+        XCTAssertEqual(Set(saved.profiles.map { $0.data.period }), Set(ProfilePeriod.allCases))
+        cache.snapshot = try JSONDecoder().decode(DashboardCacheSnapshot.self, from: JSONEncoder().encode(saved))
+        let reopenRecorder = EventRecorder()
+        let reopened = DashboardViewModel(api: FakeAPI(recorder: reopenRecorder), cli: FakeCLI(recorder: reopenRecorder),
+            preferencesStore: preferences, npxLocator: FakeNpxLocator(), cacheStore: cache)
+        XCTAssertEqual(reopened.selectedPeriod, .month)
+        XCTAssertEqual(reopened.profileState.loadedValue?.period, .month)
+        for period in ProfilePeriod.allCases {
+            await reopened.selectPeriod(period)
+            await reopened.load()
+            XCTAssertEqual(reopened.profileState.loadedValue?.period, period)
+        }
+        let events = await reopenRecorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
+        await reopened.refresh()
+        let refreshEvents = await reopenRecorder.snapshot()
+        XCTAssertEqual(refreshEvents, ["submit", "fetch"])
+        XCTAssertEqual(Set(cache.snapshot?.profiles.map { $0.data.period } ?? []), Set(ProfilePeriod.allCases))
+    }
+
+    func testFailedUncachedSelectionPersistsWithoutLosingOtherScopes() async throws {
+        let cache = InMemoryCache(snapshot: DashboardCacheSnapshot(profile: try makeDashboardData(), autosubmit: nil, savedAt: Date()))
+        let preferences = InMemoryPreferences(value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: ""))
+        let api = FakeAPI(recorder: EventRecorder(), fetchError: TestFailure.unavailable)
+        let model = DashboardViewModel(api: api, cli: FakeCLI(recorder: EventRecorder()),
+            preferencesStore: preferences, npxLocator: FakeNpxLocator(), cacheStore: cache)
+        await model.selectPeriod(.day)
+        XCTAssertEqual(cache.snapshot?.selectedPeriod, .day)
+        XCTAssertEqual(cache.snapshot?.profiles.map { $0.data.period }, [.all])
+        let reopened = DashboardViewModel(api: api, cli: FakeCLI(recorder: EventRecorder()),
+            preferencesStore: preferences, npxLocator: FakeNpxLocator(), cacheStore: cache)
+        XCTAssertEqual(reopened.selectedPeriod, .day)
+        XCTAssertNil(reopened.profileState.loadedValue)
+        await reopened.selectPeriod(.all)
+        XCTAssertEqual(reopened.profileState.loadedValue?.period, .all)
+    }
+
     private func makeViewModel(recorder: EventRecorder) -> DashboardViewModel {
         DashboardViewModel(
             api: FakeAPI(recorder: recorder),
@@ -240,15 +345,24 @@ private final class FakeAPI: TokscaleAPIService {
         self.fetchError = fetchError
     }
 
-    func fetchProfile(username: String) async throws -> DashboardData {
+    func fetchProfile(username: String, period: ProfilePeriod) async throws -> DashboardData {
         await recorder.append("fetch")
         if let fetchError { throw fetchError }
         let response = try JSONDecoder().decode(
             PublicProfileResponse.self,
-            from: Data(ProfileModelsTests.profileJSON.utf8)
+            from: try scopedFixture(period: period, username: username)
         )
         return DashboardData(response: response)
     }
+}
+
+private func scopedFixture(period: ProfilePeriod, username: String = "youranreus") throws -> Data {
+    var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ProfileModelsTests.profileJSON.utf8)) as? [String: Any])
+    json["period"] = period.rawValue
+    var user = try XCTUnwrap(json["user"] as? [String: Any])
+    user["username"] = username
+    json["user"] = user
+    return try JSONSerialization.data(withJSONObject: json)
 }
 
 private final class FakeCLI: TokscaleCLIService {
@@ -324,4 +438,29 @@ private final class InMemoryCache: DashboardCacheStoring {
 
     func load() -> DashboardCacheSnapshot? { snapshot }
     func save(_ snapshot: DashboardCacheSnapshot) throws { self.snapshot = snapshot }
+}
+
+private actor ControlledAPI: TokscaleAPIService {
+    private var pending: [ProfilePeriod: CheckedContinuation<DashboardData, Error>] = [:]
+    private var arrivals: [ProfilePeriod: CheckedContinuation<Void, Never>] = [:]
+
+    func fetchProfile(username: String, period: ProfilePeriod) async throws -> DashboardData {
+        try await withCheckedThrowingContinuation { continuation in
+            pending[period] = continuation
+            arrivals.removeValue(forKey: period)?.resume()
+        }
+    }
+
+    func waitForRequest(_ period: ProfilePeriod) async {
+        if pending[period] != nil { return }
+        await withCheckedContinuation { arrivals[period] = $0 }
+    }
+
+    func resolve(_ period: ProfilePeriod) {
+        do {
+            let data = try scopedFixture(period: period)
+            let response = try JSONDecoder().decode(PublicProfileResponse.self, from: data)
+            pending.removeValue(forKey: period)?.resume(returning: DashboardData(response: response))
+        } catch { pending.removeValue(forKey: period)?.resume(throwing: error) }
+    }
 }

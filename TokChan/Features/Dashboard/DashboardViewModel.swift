@@ -31,8 +31,11 @@ final class DashboardViewModel: ObservableObject {
     @Published private(set) var autosubmitState: LoadState<AutosubmitStatus> = .idle
     @Published private(set) var operation: DashboardOperation = .idle
     @Published private(set) var preferences: UserPreferences
+    @Published private(set) var selectedPeriod: ProfilePeriod = .all
+    @Published private(set) var identityProfile: DashboardData?
     @Published private(set) var isRefreshing = false
     @Published private(set) var loadErrorMessage: String?
+    @Published private(set) var autosubmitLoadErrorMessage: String?
     @Published private(set) var cacheSavedAt: Date?
 
     private let api: TokscaleAPIService
@@ -40,192 +43,162 @@ final class DashboardViewModel: ObservableObject {
     private let preferencesStore: PreferencesStoring
     private let npxLocator: NpxLocating
     private let cacheStore: DashboardCacheStoring
-    private var loadID = UUID()
+    private enum ProfileReloadResult {
+        case updated
+        case failed(String)
+        case superseded
 
-    var currentAutosubmitStatus: AutosubmitStatus? {
-        guard case let .loaded(status) = autosubmitState else { return nil }
-        return status
+        var errorMessage: String? {
+            if case let .failed(message) = self { return message }
+            return nil
+        }
     }
 
-    init(
-        api: TokscaleAPIService,
-        cli: TokscaleCLIService,
-        preferencesStore: PreferencesStoring,
-        npxLocator: NpxLocating,
-        cacheStore: DashboardCacheStoring
-    ) {
+    private var profileRequestID = UUID()
+    private var statusRequestID = UUID()
+    @Published private var isLoadingServices = false
+
+    var isLoading: Bool { isRefreshing || isLoadingServices || operation.isRunning }
+    private var cachedProfiles: [ProfilePeriod: (data: DashboardData, savedAt: Date)] = [:]
+
+    var currentAutosubmitStatus: AutosubmitStatus? { autosubmitState.loadedValue }
+
+    init(api: TokscaleAPIService, cli: TokscaleCLIService,
+         preferencesStore: PreferencesStoring, npxLocator: NpxLocating,
+         cacheStore: DashboardCacheStoring) {
         self.api = api
         self.cli = cli
         self.preferencesStore = preferencesStore
         self.npxLocator = npxLocator
         self.cacheStore = cacheStore
-
         let loadedPreferences = preferencesStore.load()
         preferences = loadedPreferences
         if let snapshot = cacheStore.load() {
-            let selectedUsername = loadedPreferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let profile = snapshot.profile,
-               selectedUsername.isEmpty
-                || profile.username.caseInsensitiveCompare(selectedUsername) == .orderedSame {
-                profileState = .loaded(profile)
+            let username = loadedPreferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
+            for entry in snapshot.profiles where username.isEmpty || entry.data.username.caseInsensitiveCompare(username) == .orderedSame {
+                cachedProfiles[entry.data.period] = (entry.data, entry.savedAt)
             }
-            if let autosubmit = snapshot.autosubmit {
-                autosubmitState = .loaded(autosubmit)
+            selectedPeriod = snapshot.selectedPeriod
+            if let cached = cachedProfiles[selectedPeriod] {
+                profileState = .loaded(cached.data)
+                identityProfile = cached.data
+                cacheSavedAt = cached.savedAt
+            } else {
+                identityProfile = cachedProfiles.values.first?.data
             }
-            cacheSavedAt = snapshot.savedAt
+            if let status = snapshot.autosubmit { autosubmitState = .loaded(status) }
         }
     }
 
-    func load() async {
-        guard !isRefreshing else { return }
-        let requestID = UUID()
-        loadID = requestID
-        isRefreshing = true
+    func selectPeriod(_ period: ProfilePeriod) async {
+        guard selectedPeriod != period else { return }
+        selectedPeriod = period
+        profileRequestID = UUID()
         loadErrorMessage = nil
-        if profileState.loadedValue == nil { profileState = .loading }
+        if let cached = cachedProfiles[period], matchesUsername(cached.data.username) {
+            profileState = .loaded(cached.data)
+            cacheSavedAt = cached.savedAt
+            isRefreshing = false
+            persistCurrentSnapshot()
+            return
+        } else {
+            profileState = .loading
+            cacheSavedAt = nil
+        }
+        persistCurrentSnapshot()
+        _ = await reloadProfile()
+    }
+
+    func load() async {
+        guard !isLoadingServices, !operation.isRunning else { return }
+        guard profileState.loadedValue == nil || autosubmitState.loadedValue == nil else { return }
+        isLoadingServices = true
+        defer { isLoadingServices = false }
         if autosubmitState.loadedValue == nil { autosubmitState = .loading }
-        defer {
-            if loadID == requestID { isRefreshing = false }
-        }
-
-        var loadErrors: [String] = []
-
-        var workingPreferences = preferences
-        let context: TokscaleCommandContext?
+        var context: TokscaleCommandContext?
         do {
-            context = try commandContext(for: workingPreferences)
+            context = try commandContext(for: preferences)
+            if preferences.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let context {
+                _ = try await resolvedUsername(context: context)
+            }
         } catch {
+            if preferences.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                recordAutosubmitError(error)
+            }
+        }
+        // Discovery can suspend (or fail) while Settings changes the executable/version.
+        // Re-resolve even after discovery failure so a captured old context cannot win.
+        do { context = try commandContext(for: preferences) }
+        catch {
             context = nil
-            let message = Self.message(for: error)
-            if autosubmitState.loadedValue == nil { autosubmitState = .failed(message) }
-            loadErrors.append(message)
+            recordAutosubmitError(error)
         }
-
-        if workingPreferences.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           let context {
-            do {
-                workingPreferences.username = try await cli.whoAmI(context: context)
-                preferences = workingPreferences
-                preferencesStore.save(workingPreferences)
-            } catch {
-                if loadID == requestID {
-                    let message = Self.message(for: error)
-                    if profileState.loadedValue == nil { profileState = .failed(message) }
-                    loadErrors.append(message)
-                }
-            }
-        }
-
-        let username = workingPreferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
-        let profileTask = username.isEmpty ? nil : Task { [api] in
-            try await api.fetchProfile(username: username)
-        }
-        let statusTask = context.map { commandContext in
-            Task { [cli] in
-                try await cli.autosubmitStatus(context: commandContext)
-            }
-        }
-
-        if let profileTask {
-            do {
-                let profile = try await profileTask.value
-                if loadID == requestID {
-                    profileState = .loaded(profile)
-                    persistCurrentSnapshot()
-                }
-            } catch {
-                if loadID == requestID {
-                    let message = Self.message(for: error)
-                    if profileState.loadedValue == nil { profileState = .failed(message) }
-                    loadErrors.append(message)
-                }
-            }
-        }
-
-        if let statusTask {
-            do {
-                let status = try await statusTask.value
-                if loadID == requestID {
-                    autosubmitState = .loaded(status)
-                    persistCurrentSnapshot()
-                }
-            } catch {
-                if loadID == requestID {
-                    let message = Self.message(for: error)
-                    if autosubmitState.loadedValue == nil { autosubmitState = .failed(message) }
-                    loadErrors.append(message)
-                }
-            }
-        }
-
-        if loadID == requestID, !loadErrors.isEmpty {
-            loadErrorMessage = Array(Set(loadErrors)).sorted().joined(separator: "\n")
-        }
+        async let profile = loadMissingProfile()
+        if autosubmitState.loadedValue == nil, let context { _ = await reloadAutosubmit(context: context) }
+        _ = await profile
     }
 
     func refresh() async {
         guard !operation.isRunning else { return }
+        operation = .submitting
         do {
             let context = try commandContext(for: preferences)
-            let username = try await resolvedUsername(context: context)
-            operation = .submitting
+            _ = try await resolvedUsername(context: context)
             try await cli.submit(context: context)
-            profileState = .loaded(try await api.fetchProfile(username: username))
-            persistCurrentSnapshot()
-            operation = .succeeded("用量已提交，资料已更新。")
-        } catch {
-            operation = .failed(Self.message(for: error))
-        }
+            switch await reloadProfile() {
+            case .updated: operation = .succeeded("用量已提交，资料已更新。")
+            case let .failed(message): operation = .failed(message)
+            case .superseded: operation = .succeeded("用量已提交。")
+            }
+        } catch { operation = .failed(Self.message(for: error)) }
     }
 
     func runAutosubmitNow() async {
         guard !operation.isRunning else { return }
+        operation = .runningAutosubmit
         do {
             let context = try commandContext(for: preferences)
-            let username = try await resolvedUsername(context: context)
-            operation = .runningAutosubmit
+            _ = try await resolvedUsername(context: context)
             try await cli.runAutosubmitNow(context: context)
-
-            async let status = cli.autosubmitStatus(context: context)
-            async let profile = api.fetchProfile(username: username)
-            let (newStatus, newProfile) = try await (status, profile)
-            autosubmitState = .loaded(newStatus)
-            profileState = .loaded(newProfile)
-            persistCurrentSnapshot()
-            operation = .succeeded("自动提交已完成。")
-        } catch {
-            operation = .failed(Self.message(for: error))
-        }
+            async let profile = reloadProfile()
+            let statusError = await reloadAutosubmit(context: context)
+            let profileResult = await profile
+            if let error = statusError ?? profileResult.errorMessage { operation = .failed(error) }
+            else { operation = .succeeded("自动提交已完成。") }
+        } catch { operation = .failed(Self.message(for: error)) }
     }
 
-    func saveSettings(
-        preferences newPreferences: UserPreferences,
-        autosubmit configuration: AutosubmitConfiguration
-    ) async -> Bool {
+    func saveSettings(preferences newPreferences: UserPreferences,
+                      autosubmit configuration: AutosubmitConfiguration) async -> Bool {
         guard !operation.isRunning else { return false }
+        operation = .savingSettings
         do {
-            let normalizedPreferences = UserPreferences(
+            let normalized = UserPreferences(
                 username: newPreferences.username.trimmingCharacters(in: .whitespacesAndNewlines),
                 tokscaleVersion: newPreferences.tokscaleVersion.trimmingCharacters(in: .whitespacesAndNewlines),
-                npxPath: newPreferences.npxPath.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-            let context = try commandContext(for: normalizedPreferences)
-            guard !normalizedPreferences.username.isEmpty else {
-                throw TokscaleAPIError.invalidUsername
+                npxPath: newPreferences.npxPath.trimmingCharacters(in: .whitespacesAndNewlines))
+            let context = try commandContext(for: normalized)
+            guard !normalized.username.isEmpty else { throw TokscaleAPIError.invalidUsername }
+            if configuration.enabled { try await cli.configureAutosubmit(configuration, context: context) }
+            else { try await cli.disableAutosubmit(context: context) }
+            // Invalidate pending reads before changing the selected account.
+            profileRequestID = UUID()
+            if !matchesUsername(normalized.username) {
+                cachedProfiles.removeAll()
+                profileState = .loading
+                identityProfile = nil
+                cacheSavedAt = nil
             }
-
-            operation = .savingSettings
-            if configuration.enabled {
-                try await cli.configureAutosubmit(configuration, context: context)
-            } else {
-                try await cli.disableAutosubmit(context: context)
+            preferences = normalized
+            preferencesStore.save(normalized)
+            async let profile = reloadProfile()
+            let statusError = await reloadAutosubmit(context: context)
+            let profileResult = await profile
+            if let error = statusError ?? profileResult.errorMessage {
+                operation = .failed(error)
+                return false
             }
-
-            preferences = normalizedPreferences
-            preferencesStore.save(normalizedPreferences)
-            autosubmitState = .loaded(try await cli.autosubmitStatus(context: context))
-            profileState = .loaded(try await api.fetchProfile(username: normalizedPreferences.username))
-            persistCurrentSnapshot()
             operation = .succeeded("设置已保存。")
             return true
         } catch {
@@ -239,22 +212,86 @@ final class DashboardViewModel: ObservableObject {
         operation = .idle
     }
 
+    private func loadMissingProfile() async -> ProfileReloadResult {
+        guard profileState.loadedValue == nil, !isRefreshing else { return .superseded }
+        return await reloadProfile()
+    }
+
+    private func reloadProfile() async -> ProfileReloadResult {
+        let requestID = UUID()
+        profileRequestID = requestID
+        let period = selectedPeriod
+        let username = preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        isRefreshing = true
+        loadErrorMessage = nil
+        if profileState.loadedValue == nil { profileState = .loading }
+        defer { if requestID == profileRequestID { isRefreshing = false } }
+        do {
+            guard !username.isEmpty else { throw TokscaleAPIError.invalidUsername }
+            let profile = try await api.fetchProfile(username: username, period: period)
+            guard requestID == profileRequestID, period == selectedPeriod, matchesUsername(username) else { return .superseded }
+            guard profile.period == period else { throw TokscaleAPIError.mismatchedPeriod }
+            let now = Date()
+            cachedProfiles[period] = (profile, now)
+            profileState = .loaded(profile)
+            identityProfile = profile
+            cacheSavedAt = now
+            persistCurrentSnapshot()
+            return .updated
+        } catch {
+            guard requestID == profileRequestID, period == selectedPeriod, matchesUsername(username) else { return .superseded }
+            let message = Self.message(for: error)
+            loadErrorMessage = message
+            if profileState.loadedValue == nil { profileState = .failed(message) }
+            return .failed(message)
+        }
+    }
+
+    private func reloadAutosubmit(context: TokscaleCommandContext) async -> String? {
+        let requestID = UUID()
+        statusRequestID = requestID
+        autosubmitLoadErrorMessage = nil
+        do {
+            let status = try await cli.autosubmitStatus(context: context)
+            guard requestID == statusRequestID else { return nil }
+            autosubmitState = .loaded(status)
+            persistCurrentSnapshot()
+            return nil
+        } catch {
+            guard requestID == statusRequestID else { return nil }
+            recordAutosubmitError(error)
+            return Self.message(for: error)
+        }
+    }
+
+    private func recordAutosubmitError(_ error: Error) {
+        let message = Self.message(for: error)
+        autosubmitLoadErrorMessage = message
+        if autosubmitState.loadedValue == nil { autosubmitState = .failed(message) }
+    }
+
+    private func matchesUsername(_ username: String) -> Bool {
+        preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(username) == .orderedSame
+    }
+
     private func resolvedUsername(context: TokscaleCommandContext) async throws -> String {
         let saved = preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
         if !saved.isEmpty { return saved }
         let discovered = try await cli.whoAmI(context: context)
-        preferences.username = discovered
-        preferencesStore.save(preferences)
-        return discovered
+        // Settings may have supplied an account while discovery was suspended.
+        if preferences.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            preferences.username = discovered
+            preferencesStore.save(preferences)
+        }
+        return preferences.username
     }
 
     private func commandContext(for preferences: UserPreferences) throws -> TokscaleCommandContext {
         guard TokscaleCommandBuilder.isValidVersion(preferences.tokscaleVersion) else {
             throw TokscaleCLIError.invalidVersion
         }
-        guard let npxURL = npxLocator.locate(
-            preferredPath: preferences.npxPath.isEmpty ? nil : preferences.npxPath
-        ) else {
+        guard let npxURL = npxLocator.locate(preferredPath: preferences.npxPath.isEmpty ? nil : preferences.npxPath) else {
             throw TokscaleCLIError.missingNpx
         }
         return TokscaleCommandContext(npxURL: npxURL, version: preferences.tokscaleVersion)
@@ -263,19 +300,14 @@ final class DashboardViewModel: ObservableObject {
     private func persistCurrentSnapshot() {
         let profile = profileState.loadedValue
         let autosubmit = autosubmitState.loadedValue
-        guard profile != nil || autosubmit != nil else { return }
-
-        let snapshot = DashboardCacheSnapshot(
-            profile: profile,
-            autosubmit: autosubmit,
-            savedAt: Date()
-        )
-        do {
-            try cacheStore.save(snapshot)
-            cacheSavedAt = snapshot.savedAt
-        } catch {
-            // Cache failures must never block fresh data or Tokscale operations.
+        let entries = ProfilePeriod.allCases.compactMap { period -> CachedDashboardProfile? in
+            guard let cached = cachedProfiles[period] else { return nil }
+            return CachedDashboardProfile(data: cached.data, savedAt: cached.savedAt)
         }
+        let snapshot = DashboardCacheSnapshot(profile: profile, autosubmit: autosubmit,
+            savedAt: cacheSavedAt ?? Date(), profiles: entries, selectedPeriod: selectedPeriod)
+        // The snapshot is disposable; failed writes must not mask successful reads.
+        try? cacheStore.save(snapshot)
     }
 
     private static func message(for error: Error) -> String {

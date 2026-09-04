@@ -6,51 +6,55 @@ struct DashboardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    profileContent
-                    autosubmitContent
-                    backgroundLoadBanner
-                    operationBanner
-                    usageContent
+            VStack(spacing: 10) {
+                if let profile = viewModel.identityProfile {
+                    header(profile)
+                } else {
+                    HStack {
+                        Text("TokChan").font(.headline)
+                        Spacer()
+                        refreshButton
+                    }
                 }
-                .padding(14)
-            }
+                backgroundLoadBanner
+                operationBanner
+                Picker("时间范围", selection: Binding(
+                    get: { viewModel.selectedPeriod },
+                    set: { period in Task { await viewModel.selectPeriod(period) } }
+                )) {
+                    ForEach(ProfilePeriod.allCases) { period in
+                        Text(period.title).tag(period)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .accessibilityIdentifier("period-picker")
 
+                if let profile = viewModel.profileState.loadedValue {
+                    metrics(profile)
+                    TokenBreakdownView(breakdown: profile.breakdown)
+                    HStack {
+                        Text("客户端用量").font(.caption.weight(.semibold))
+                        Spacer()
+                        Text(profile.dateRange?.displayText ?? "暂无日期范围")
+                            .font(.system(size: 10)).monospacedDigit()
+                    }
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("usage-heading")
+                }
+            }
+            .padding(14)
+            .fixedSize(horizontal: false, vertical: true)
+
+            usageContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             footer
         }
         .frame(width: 380, height: 680)
         .background(.background)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dashboard-panel")
-        .task {
-            await viewModel.load()
-        }
-    }
-
-    @ViewBuilder
-    private var profileContent: some View {
-        switch viewModel.profileState {
-        case .idle, .loading:
-            panelCard {
-                HStack(spacing: 10) {
-                    ProgressView()
-                    Text("正在读取 Tokscale 资料…")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-            }
-        case let .failed(message):
-            panelCard {
-                ErrorStateView(title: "资料暂不可用", message: message) {
-                    Task { await viewModel.load() }
-                }
-            }
-        case let .loaded(profile):
-            VStack(spacing: 10) {
-                header(profile)
-                metrics(profile)
-            }
-        }
+        .task { await viewModel.load() }
     }
 
     private func header(_ profile: DashboardData) -> some View {
@@ -73,40 +77,36 @@ struct DashboardView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                if viewModel.isRefreshing, viewModel.cacheSavedAt != nil {
-                    Text("正在后台更新，当前显示缓存数据")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+
             }
 
             Spacer(minLength: 8)
 
-            if viewModel.isRefreshing {
-                ProgressView()
-                    .controlSize(.small)
-                    .help("正在后台更新")
-            }
-
-            Button {
-                Task { await viewModel.refresh() }
-            } label: {
-                if viewModel.operation == .submitting {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                }
-            }
-            .buttonStyle(.borderless)
-            .disabled(viewModel.operation.isRunning)
-            .help("先提交本地用量，再刷新线上资料")
-            .accessibilityLabel("提交并刷新")
+            refreshButton
         }
+    }
+
+    private var refreshButton: some View {
+        Button {
+            Task { await viewModel.refresh() }
+        } label: {
+            if viewModel.isLoading {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: "arrow.clockwise")
+            }
+        }
+        .frame(width: 20, height: 20)
+        .buttonStyle(.borderless)
+        .disabled(viewModel.isLoading)
+        .help("提交本地用量并刷新当前范围")
+        .accessibilityLabel("提交并刷新")
+        .accessibilityIdentifier("submit-refresh-button")
     }
 
     private func metrics(_ profile: DashboardData) -> some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-            MetricView(title: "令牌数", value: DisplayFormatters.compactNumber(profile.totalTokens))
+            MetricView(title: "Tokens", value: DisplayFormatters.compactNumber(profile.totalTokens))
             MetricView(title: "成本", value: DisplayFormatters.currency(profile.totalCost))
             MetricView(title: "排名", value: profile.rank.map { "#\($0)" } ?? "—")
             MetricView(title: "活跃天数", value: "\(profile.activeDays)")
@@ -114,88 +114,10 @@ struct DashboardView: View {
     }
 
     @ViewBuilder
-    private var autosubmitContent: some View {
-        switch viewModel.autosubmitState {
-        case .idle, .loading:
-            panelCard {
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Text("正在读取自动提交状态…").foregroundStyle(.secondary)
-                    Spacer()
-                }
-            }
-        case let .failed(message):
-            panelCard {
-                ErrorStateView(title: "自动提交状态不可用", message: message) {
-                    openSettingsWindow()
-                }
-            }
-        case let .loaded(status):
-            panelCard {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Circle()
-                            .fill(status.enabled ? Color.green : Color.secondary)
-                            .frame(width: 8, height: 8)
-                        Text("自动提交")
-                            .font(.subheadline.weight(.semibold))
-                        Text(status.enabled ? DisplayFormatters.interval(minutes: status.intervalMinutes) : "已关闭")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("立即运行") {
-                            Task { await viewModel.runAutosubmitNow() }
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(viewModel.operation.isRunning)
-                    }
-
-                    HStack(spacing: 8) {
-                        Label(status.scheduler ?? "未知调度器", systemImage: "calendar.badge.clock")
-                        if let version = status.managedExecutableVersion {
-                            Label("v\(version)", systemImage: status.managedExecutableStale ? "exclamationmark.triangle" : "shippingbox")
-                        }
-                        Spacer()
-                        Text("上次运行于 \(DisplayFormatters.relativeDate(status.lastRunAt))")
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-
-                    if !status.clients.isEmpty {
-                        Text("客户端：\(status.clients.joined(separator: ", "))")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-
-                    Label(status.dateFilterSummary, systemImage: "line.3.horizontal.decrease.circle")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    if let executable = status.managedExecutable, !executable.isEmpty {
-                        Label(executable, systemImage: "terminal")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-
-                    if let lastError = status.lastError, !lastError.isEmpty {
-                        Label(lastError, systemImage: "exclamationmark.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .textSelection(.enabled)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
     private var backgroundLoadBanner: some View {
         if let message = viewModel.loadErrorMessage,
-           viewModel.profileState.loadedValue != nil || viewModel.autosubmitState.loadedValue != nil {
-            StatusBanner(text: "后台更新失败：\(message)", color: .orange, showsProgress: false)
+           viewModel.profileState.loadedValue != nil {
+            StatusBanner(text: "读取失败：\(message)", color: .orange, showsProgress: false)
         }
     }
 
@@ -204,12 +126,8 @@ struct DashboardView: View {
         switch viewModel.operation {
         case .idle:
             EmptyView()
-        case .submitting:
-            StatusBanner(text: "正在提交本地用量…", color: .accentColor, showsProgress: true)
-        case .runningAutosubmit:
-            StatusBanner(text: "正在运行自动提交…", color: .accentColor, showsProgress: true)
-        case .savingSettings:
-            StatusBanner(text: "正在保存自动提交设置…", color: .accentColor, showsProgress: true)
+        case .submitting, .runningAutosubmit, .savingSettings:
+            EmptyView()
         case let .succeeded(message):
             StatusBanner(text: message, color: .green, showsProgress: false)
         case let .failed(message):
@@ -219,30 +137,31 @@ struct DashboardView: View {
 
     @ViewBuilder
     private var usageContent: some View {
-        if case let .loaded(profile) = viewModel.profileState {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("客户端用量")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("全部时间")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-
-                if profile.clients.isEmpty {
-                    panelCard {
-                        Text("暂时没有已提交的客户端或模型明细。")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+        switch viewModel.profileState {
+        case .idle, .loading:
+            Color.clear
+        case let .failed(message):
+            ErrorStateView(title: "资料暂不可用", message: message) {
+                Task { await viewModel.load() }
+            }
+            .padding(.horizontal, 14)
+        case let .loaded(profile):
+            if profile.clients.isEmpty {
+                Text("此范围暂时没有已提交的客户端或模型明细。")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .padding(.horizontal, 14)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(profile.clients) { client in
+                            ClientUsageView(client: client)
+                        }
                     }
-                } else {
-                    ForEach(profile.clients) { client in
-                        ClientUsageView(client: client)
-                    }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 14)
                 }
+                .id(profile.period)
+                .accessibilityIdentifier("client-usage-scroll")
             }
         }
     }
@@ -352,12 +271,12 @@ private struct MetricView: View {
 
 private struct ClientUsageView: View {
     let client: ClientUsageGroup
+    @State private var isExpanded = false
 
     var body: some View {
         VStack(spacing: 4) {
-            HStack(alignment: .firstTextBaseline) {
-                Image(systemName: "terminal")
-                    .foregroundStyle(.secondary)
+            HStack(alignment: .center) {
+                ClientIcon(clientID: client.id)
                 Text(client.id)
                     .font(.subheadline.weight(.semibold))
                 Text(DisplayFormatters.percentage(client.percentage))
@@ -369,7 +288,7 @@ private struct ClientUsageView: View {
             .padding(10)
 
             if !client.models.isEmpty {
-                ForEach(client.models) { model in
+                ForEach(isExpanded ? client.models : Array(client.models.prefix(5))) { model in
                     HStack(alignment: .firstTextBaseline, spacing: 7) {
                         Circle()
                             .fill(Color.secondary.opacity(0.45))
@@ -383,6 +302,17 @@ private struct ClientUsageView: View {
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
+                    .accessibilityIdentifier("model-\(client.id)-\(model.id)")
+                }
+                if client.models.count > 5 {
+                    Button(isExpanded ? "收起" : "展开全部（\(client.models.count) 个模型）") {
+                        isExpanded.toggle()
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .accessibilityIdentifier("expand-models-\(client.id)")
                 }
             }
         }
@@ -400,28 +330,7 @@ private struct ClientUsageView: View {
     }
 }
 
-private struct ErrorStateView: View {
-    let title: String
-    let message: String
-    let action: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(title, systemImage: "exclamationmark.triangle.fill")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.orange)
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-            Button("处理") { action() }
-                .font(.caption)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct StatusBanner: View {
+struct StatusBanner: View {
     let text: String
     let color: Color
     let showsProgress: Bool
@@ -430,7 +339,7 @@ private struct StatusBanner: View {
         HStack(spacing: 8) {
             if showsProgress { ProgressView().controlSize(.small) }
             Circle().fill(color).frame(width: 7, height: 7)
-            Text(text).font(.caption).lineLimit(3)
+            Text(text).font(.caption).lineLimit(2).help(text)
             Spacer()
         }
         .padding(8)
