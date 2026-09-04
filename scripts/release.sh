@@ -96,15 +96,13 @@ case $remote_tag_status in
 esac
 
 set +e
-release_output=$(gh api "repos/{owner}/{repo}/releases/tags/$target_tag" --jq .draft 2>&1)
+release_output=$(gh api --paginate "repos/{owner}/{repo}/releases?per_page=100" \
+  --jq ".[] | select(.tag_name == \"$target_tag\") | .id" 2>&1)
 release_status=$?
 set -e
-if [[ $release_status -eq 0 ]]; then
-  fail "a GitHub Release already exists for $target_tag"
-fi
-if [[ "$release_output" != *"(HTTP 404)"* ]]; then
-  fail "could not confirm that GitHub Release $target_tag is absent: $release_output"
-fi
+[[ $release_status -eq 0 ]] || \
+  fail "could not check whether GitHub Release $target_tag exists: $release_output"
+[[ -z "$release_output" ]] || fail "a GitHub Release already exists for $target_tag"
 
 echo "==> Updating $current_version ($current_build) to $next_version ($next_build)"
 python3 scripts/lib/project-version.py "$project_file" set \

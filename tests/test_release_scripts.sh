@@ -125,6 +125,68 @@ grep -F 'cd "$(dirname "$checksum")"' "$root/.github/workflows/release.yml" >/de
 grep -F 'shasum -a 256 -c "$(basename "$checksum")"' \
   "$root/.github/workflows/release.yml" >/dev/null
 pass "release workflow verifies the basename checksum from its asset directory"
+grep -F 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1' \
+  "$root/.github/workflows/release.yml" >/dev/null
+! grep -F '/releases/tags/' "$root/.github/workflows/release.yml" >/dev/null
+pass "release workflow uses Node 24 checkout and avoids the published-only Tag endpoint"
+
+workflow_step="$test_tmp/publish-release-step.sh"
+python3 - "$root/.github/workflows/release.yml" "$workflow_step" <<'PY'
+from pathlib import Path
+import sys
+
+lines = Path(sys.argv[1]).read_text().splitlines()
+marker = next(i for i, line in enumerate(lines) if "name: Create or resume draft Release" in line)
+start = next(i for i in range(marker, len(lines)) if lines[i].strip() == "run: |") + 1
+script = []
+for line in lines[start:]:
+    if line and not line.startswith("          "):
+        break
+    script.append(line[10:] if line else "")
+Path(sys.argv[2]).write_text("\n".join(script) + "\n")
+PY
+
+workflow_mock_bin="$test_tmp/workflow-mock-bin"
+workflow_state="$test_tmp/workflow-release-state"
+mkdir -p "$workflow_mock_bin"
+printf draft > "$workflow_state"
+cat > "$workflow_mock_bin/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == api && " $* " == *" --paginate "* ]]; then
+  [[ "$(cat "${MOCK_RELEASE_STATE:?}")" == absent ]] || printf '123\ttrue\n'
+elif [[ "$1" == api && " $* " == *" --method PATCH "* ]]; then
+  printf published > "${MOCK_RELEASE_STATE:?}"
+elif [[ "$1" == api && " $* " == *" --jq .body "* ]]; then
+  echo 'This ZIP is unsigned and not Apple-notarized.'
+elif [[ "$1" == api && " $* " == *" --jq .draft "* ]]; then
+  [[ "$(cat "${MOCK_RELEASE_STATE:?}")" == draft ]] && echo true || echo false
+elif [[ "$1" == api && " $* " == *" --jq .assets[].name "* ]]; then
+  printf '%s\n' "${MOCK_ZIP_NAME:?}" "${MOCK_CHECKSUM_NAME:?}"
+elif [[ "$1 $2" == 'release create' ]]; then
+  [[ "$(cat "${MOCK_RELEASE_STATE:?}")" == absent ]]
+  printf draft > "${MOCK_RELEASE_STATE:?}"
+elif [[ "$1 $2" == 'release upload' ]]; then
+  [[ -f "$4" && -f "$5" ]]
+else
+  echo "unexpected gh invocation: $*" >&2
+  exit 1
+fi
+MOCK
+chmod +x "$workflow_mock_bin/gh"
+env PATH="$workflow_mock_bin:$PATH" \
+  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" ZIP="$zip" CHECKSUM="$checksum" \
+  MOCK_RELEASE_STATE="$workflow_state" MOCK_ZIP_NAME="$(basename "$zip")" \
+  MOCK_CHECKSUM_NAME="$(basename "$checksum")" bash "$workflow_step" >/dev/null
+[[ "$(cat "$workflow_state")" == published ]]
+pass "release workflow resumes and publishes a draft by Release ID"
+printf absent > "$workflow_state"
+env PATH="$workflow_mock_bin:$PATH" \
+  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" ZIP="$zip" CHECKSUM="$checksum" \
+  MOCK_RELEASE_STATE="$workflow_state" MOCK_ZIP_NAME="$(basename "$zip")" \
+  MOCK_CHECKSUM_NAME="$(basename "$checksum")" bash "$workflow_step" >/dev/null
+[[ "$(cat "$workflow_state")" == published ]]
+pass "release workflow creates, resolves, and publishes a new draft by Release ID"
 
 expect_failure "refusing to overwrite existing asset" env PATH="$fixture/mock-bin:$PATH" \
   "$fixture/scripts/build-release.sh" --skip-tests --output output
@@ -201,13 +263,12 @@ EOF
 #!/usr/bin/env bash
 case "$1 $2" in
   'auth status'|'repo view') exit 0 ;;
-  'api repos/'*)
+  'api --paginate')
     if [[ "${MOCK_GH_API_ERROR:-}" == 1 ]]; then
       echo 'gh: API rate limit exceeded (HTTP 403)' >&2
       exit 1
     fi
-    echo 'gh: Not Found (HTTP 404)' >&2
-    exit 1
+    [[ -z "${MOCK_GH_RELEASE_ID:-}" ]] || echo "$MOCK_GH_RELEASE_ID"
     ;;
   *) echo "unexpected gh invocation: $*" >&2; exit 1 ;;
 esac
@@ -265,9 +326,16 @@ expect_failure "unexpected tracked changes appeared" bash -c \
 [[ "$(git -C "$mutation_work" log -1 --format=%s)" == initial ]]
 pass "release script rejects source changes that appear after testing"
 
+draft_work="$test_tmp/draft"; draft_bare="$test_tmp/draft.git"
+make_release_repo "$draft_work" "$draft_bare"
+expect_failure "a GitHub Release already exists for $next_tag" env \
+  PATH="$draft_work/mock-bin:$PATH" MOCK_GH_RELEASE_ID=123 \
+  "$draft_work/scripts/release.sh" patch
+pass "release script rejects an existing draft Release"
+
 api_work="$test_tmp/api"; api_bare="$test_tmp/api.git"
 make_release_repo "$api_work" "$api_bare"
-expect_failure "could not confirm that GitHub Release" env \
+expect_failure "could not check whether GitHub Release" env \
   PATH="$api_work/mock-bin:$PATH" MOCK_GH_API_ERROR=1 \
   "$api_work/scripts/release.sh" patch
 pass "release script fails closed on GitHub API errors"

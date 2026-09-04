@@ -19,7 +19,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Check out tagged source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -104,18 +104,18 @@ jobs:
           CHECKSUM: ${{ steps.assets.outputs.checksum }}
         run: |
           set -euo pipefail
-          set +e
-          release_state=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .draft 2>&1)
-          release_status=$?
-          set -e
+          find_release() {
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq ".[] | select(.tag_name == \"${TAG}\") | [.id, .draft] | @tsv"
+          }
 
-          if [[ $release_status -eq 0 ]]; then
-            [[ "$release_state" == true ]] || {
-              echo "Release $TAG is already published; assets are immutable" >&2
-              exit 1
-            }
-            echo "Resuming existing draft Release $TAG"
-          elif [[ "$release_state" == *"(HTTP 404)"* ]]; then
+          release_info=$(find_release)
+          [[ "$release_info" != *$'\n'* ]] || {
+            echo "Multiple Releases found for $TAG; refusing ambiguous publication" >&2
+            exit 1
+          }
+
+          if [[ -z "$release_info" ]]; then
             printf -v warning '%s\n%s' \
               '> [!WARNING]' \
               "> This ZIP is unsigned and not Apple-notarized. It is intended for the maintainer's personal use only. Gatekeeper may block or warn on first launch. Verify the SHA-256 checksum before use. It is not ready for ordinary public distribution."
@@ -125,34 +125,48 @@ jobs:
               --title "TokChan $TAG" \
               --generate-notes \
               --notes "$warning"
-          else
-            echo "Could not determine Release state: $release_state" >&2
-            exit 1
+            release_info=$(find_release)
+            [[ -n "$release_info" && "$release_info" != *$'\n'* ]] || {
+              echo "Could not uniquely resolve newly created draft Release $TAG" >&2
+              exit 1
+            }
           fi
 
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .body |
+          IFS=$'\t' read -r release_id release_draft <<< "$release_info"
+          [[ "$release_id" =~ ^[0-9]+$ && "$release_draft" =~ ^(true|false)$ ]] || {
+            echo "Invalid Release metadata for $TAG: $release_info" >&2
+            exit 1
+          }
+          [[ "$release_draft" == true ]] || {
+            echo "Release $TAG is already published; assets are immutable" >&2
+            exit 1
+          }
+          echo "Using draft Release $TAG (ID $release_id)"
+          release_api="repos/${GITHUB_REPOSITORY}/releases/${release_id}"
+
+          gh api "$release_api" --jq .body |
             grep -F "unsigned and not Apple-notarized" >/dev/null || {
               echo "Draft Release is missing the required unsigned/unnotarized warning" >&2
               exit 1
             }
 
-          [[ "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .draft)" == true ]] || {
+          [[ "$(gh api "$release_api" --jq .draft)" == true ]] || {
             echo "Release $TAG left draft state before asset upload; refusing to overwrite assets" >&2
             exit 1
           }
           gh release upload "$TAG" "$ZIP" "$CHECKSUM" --clobber
 
-          [[ "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .draft)" == true ]] || {
+          [[ "$(gh api "$release_api" --jq .draft)" == true ]] || {
             echo "Release $TAG left draft state during asset upload; refusing to publish" >&2
             exit 1
           }
           expected=$(printf '%s\n%s\n' "$(basename "$ZIP")" "$(basename "$CHECKSUM")" | sort)
-          actual=$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)
+          actual=$(gh api "$release_api" --jq '.assets[].name' | sort)
           [[ "$actual" == "$expected" ]] || {
             echo "Release assets do not exactly match the expected pair" >&2
             printf 'Expected:\n%s\nActual:\n%s\n' "$expected" "$actual" >&2
             exit 1
           }
 
-          gh release edit "$TAG" --draft=false
-          [[ "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .draft)" == false ]]
+          gh api --method PATCH "$release_api" -F draft=false --silent
+          [[ "$(gh api "$release_api" --jq .draft)" == false ]]
