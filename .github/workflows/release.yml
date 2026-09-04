@@ -119,17 +119,14 @@ jobs:
             printf -v warning '%s\n%s' \
               '> [!WARNING]' \
               "> This ZIP is unsigned and not Apple-notarized. It is intended for the maintainer's personal use only. Gatekeeper may block or warn on first launch. Verify the SHA-256 checksum before use. It is not ready for ordinary public distribution."
-            gh release create "$TAG" \
-              --verify-tag \
-              --draft \
-              --title "TokChan $TAG" \
-              --generate-notes \
-              --notes "$warning"
-            release_info=$(find_release)
-            [[ -n "$release_info" && "$release_info" != *$'\n'* ]] || {
-              echo "Could not uniquely resolve newly created draft Release $TAG" >&2
-              exit 1
-            }
+            release_info=$(gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/releases" \
+              -f tag_name="$TAG" \
+              -f name="TokChan $TAG" \
+              -f body="$warning" \
+              -F draft=true \
+              -F generate_release_notes=true \
+              --jq '[.id, .draft] | @tsv')
           fi
 
           IFS=$'\t' read -r release_id release_draft <<< "$release_info"

@@ -154,7 +154,13 @@ cat > "$workflow_mock_bin/gh" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1" == api && " $* " == *" --paginate "* ]]; then
-  [[ "$(cat "${MOCK_RELEASE_STATE:?}")" == absent ]] || printf '123\ttrue\n'
+  if [[ "$(cat "${MOCK_RELEASE_STATE:?}")" != absent && "${MOCK_LIST_INVISIBLE:-}" != 1 ]]; then
+    printf '123\ttrue\n'
+  fi
+elif [[ "$1" == api && " $* " == *" --method POST "* ]]; then
+  [[ "$(cat "${MOCK_RELEASE_STATE:?}")" == absent ]]
+  printf draft > "${MOCK_RELEASE_STATE:?}"
+  printf '123\ttrue\n'
 elif [[ "$1" == api && " $* " == *" --method PATCH "* ]]; then
   printf published > "${MOCK_RELEASE_STATE:?}"
 elif [[ "$1" == api && " $* " == *" --jq .body "* ]]; then
@@ -163,9 +169,6 @@ elif [[ "$1" == api && " $* " == *" --jq .draft "* ]]; then
   [[ "$(cat "${MOCK_RELEASE_STATE:?}")" == draft ]] && echo true || echo false
 elif [[ "$1" == api && " $* " == *" --jq .assets[].name "* ]]; then
   printf '%s\n' "${MOCK_ZIP_NAME:?}" "${MOCK_CHECKSUM_NAME:?}"
-elif [[ "$1 $2" == 'release create' ]]; then
-  [[ "$(cat "${MOCK_RELEASE_STATE:?}")" == absent ]]
-  printf draft > "${MOCK_RELEASE_STATE:?}"
 elif [[ "$1 $2" == 'release upload' ]]; then
   [[ -f "$4" && -f "$5" ]]
 else
@@ -183,10 +186,10 @@ pass "release workflow resumes and publishes a draft by Release ID"
 printf absent > "$workflow_state"
 env PATH="$workflow_mock_bin:$PATH" \
   GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" ZIP="$zip" CHECKSUM="$checksum" \
-  MOCK_RELEASE_STATE="$workflow_state" MOCK_ZIP_NAME="$(basename "$zip")" \
+  MOCK_RELEASE_STATE="$workflow_state" MOCK_LIST_INVISIBLE=1 MOCK_ZIP_NAME="$(basename "$zip")" \
   MOCK_CHECKSUM_NAME="$(basename "$checksum")" bash "$workflow_step" >/dev/null
 [[ "$(cat "$workflow_state")" == published ]]
-pass "release workflow creates, resolves, and publishes a new draft by Release ID"
+pass "release workflow publishes a new draft from the create response ID"
 
 expect_failure "refusing to overwrite existing asset" env PATH="$fixture/mock-bin:$PATH" \
   "$fixture/scripts/build-release.sh" --skip-tests --output output
