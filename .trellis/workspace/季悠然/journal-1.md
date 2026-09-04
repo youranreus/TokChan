@@ -32,3 +32,38 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: Dashboard usage periods and persistent cache
+
+**Date**: 2026-09-04
+**Task**: Dashboard usage periods and persistent cache
+**Branch**: `master`
+
+### Summary
+
+用户验收通过。完成浮层布局、客户端图标和 Tokens 比例条，按 Tokscale 数据提供日周月展示；持久化各粒度缓存，统一提交与加载按钮，修复切换及异步发现竞态。
+
+### Main Changes
+
+- 实现 cache-first JSON 缓存与粒度选择持久化；每日数据使用上游日贡献记录。
+- 31 个客户端图标随包分发；自动提交状态迁入设置。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c12c275` | (see git log) |
+
+### Testing
+
+- [OK] 41 项单元测试全量通过，随后新增的选择持久化回归及 DashboardViewModelTests 定向通过。
+- [OK] Release 构建和 codesign 校验通过；最终 SwiftUI 明暗截图检查通过。原生交互检查受 CUA 超时限制。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 最新构建位于 /private/tmp/TokChan-cache-first-release/Build/Products/Release/TokChan.app。
