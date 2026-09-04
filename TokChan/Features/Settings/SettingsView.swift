@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var username: String
     @State private var version: String
     @State private var npxPath: String
+    @State private var isNpxOverrideExpanded: Bool
     @State private var autosubmitEnabled: Bool
     @State private var intervalMinutes: Int
     @State private var clientsText: String
@@ -40,6 +41,9 @@ struct SettingsView: View {
         _username = State(initialValue: preferences.username)
         _version = State(initialValue: preferences.tokscaleVersion)
         _npxPath = State(initialValue: preferences.npxPath)
+        _isNpxOverrideExpanded = State(
+            initialValue: viewModel.npxPathStatus(for: preferences.npxPath).shouldExpandOverride
+        )
         _autosubmitEnabled = State(initialValue: autosubmit.enabled)
         _intervalMinutes = State(initialValue: autosubmit.intervalMinutes)
         _clientsText = State(initialValue: autosubmit.clients.joined(separator: ", "))
@@ -129,14 +133,116 @@ struct SettingsView: View {
                 TextField("Tokscale 用户名", text: $username)
                 TextField("Tokscale 版本", text: $version)
                     .help("填写 latest 或 4.15.0 这样的完整版本号")
+            }
 
-                HStack {
-                    TextField("npx 可执行文件", text: $npxPath)
-                    Button("选择…") { chooseNpx() }
+            Section("npx") {
+                npxStatusView(npxPathStatus)
+
+                Button(isNpxOverrideExpanded ? "收起自定义设置" : "使用自定义 npx…") {
+                    isNpxOverrideExpanded.toggle()
+                }
+                .accessibilityIdentifier("npx-override-disclosure")
+
+                if isNpxOverrideExpanded {
+                    npxOverrideControls
                 }
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func npxStatusView(_ status: NpxPathStatus) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: npxStatusIcon(for: status))
+                .foregroundStyle(npxStatusColor(for: status))
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(npxStatusTitle(for: status))
+                    .font(.body.weight(.medium))
+                if let path = npxResolvedPath(for: status) {
+                    Text(path)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                } else {
+                    Text("未找到可执行的 npx。请安装 Node.js，或在下方选择自定义文件。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("npx-detection-status")
+    }
+
+    private var npxOverrideControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                TextField("自定义 npx 路径", text: $npxPath)
+                    .accessibilityIdentifier("npx-override-path")
+                Button("选择…") { chooseNpx() }
+            }
+
+            HStack {
+                Text("自定义路径必须是绝对路径且文件可执行。留空会恢复自动探测。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if !npxPath.isEmpty {
+                    Button("清除覆盖") { clearNpxOverride() }
+                        .accessibilityIdentifier("npx-clear-override")
+                }
+            }
+        }
+    }
+
+    private var npxPathStatus: NpxPathStatus {
+        viewModel.npxPathStatus(for: npxPath)
+    }
+
+    private func npxStatusTitle(for status: NpxPathStatus) -> String {
+        switch status {
+        case .automatic:
+            return "已自动探测 npx"
+        case .custom:
+            return "正在使用自定义 npx"
+        case .automaticFallback:
+            return "自定义路径不可用，已自动回退"
+        case .unavailable:
+            return "未探测到 npx"
+        }
+    }
+
+    private func npxResolvedPath(for status: NpxPathStatus) -> String? {
+        switch status {
+        case let .automatic(url), let .custom(url), let .automaticFallback(url):
+            return url.path
+        case .unavailable:
+            return nil
+        }
+    }
+
+    private func npxStatusIcon(for status: NpxPathStatus) -> String {
+        switch status {
+        case .automatic, .custom:
+            return "checkmark.circle.fill"
+        case .automaticFallback:
+            return "exclamationmark.triangle.fill"
+        case .unavailable:
+            return "xmark.circle.fill"
+        }
+    }
+
+    private func npxStatusColor(for status: NpxPathStatus) -> Color {
+        switch status {
+        case .automatic, .custom:
+            return .green
+        case .automaticFallback:
+            return .orange
+        case .unavailable:
+            return .red
+        }
     }
 
     private var autosubmitSettings: some View {
@@ -235,6 +341,13 @@ struct SettingsView: View {
             since: since,
             until: until
         )
+    }
+
+    private func clearNpxOverride() {
+        npxPath = ""
+        if !viewModel.npxPathStatus(for: "").shouldExpandOverride {
+            isNpxOverrideExpanded = false
+        }
     }
 
     private func chooseNpx() {

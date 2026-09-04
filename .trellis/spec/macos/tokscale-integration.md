@@ -42,6 +42,7 @@ protocol TokscaleCLIService {
 - Package version is `latest` or strict `major.minor.patch` with an optional prerelease suffix.
 - Commands use `Process.executableURL` plus a discrete `[String]` argument array; never use `/bin/sh -c`.
 - A saved `npx` override must be an absolute executable file. Discovery checks inherited `PATH`, Homebrew, and `~/.nvm/versions/node/*/bin/npx` in numeric version order.
+- Settings present an empty override as automatic discovery and display the resolved executable path. Keep manual selection collapsed when automatic discovery succeeds; expand recovery controls for missing discovery or an invalid saved override. Clearing the override restores automatic mode without changing the persisted schema.
 - Before launching `npx`, prepend its containing directory to the child `PATH`. NVM's `npx` uses `#!/usr/bin/env node`; finding the script alone is insufficient in a Finder-launched GUI environment.
 - Profile mapping reads `period`, `dateRange`, `user`, `stats`, `updatedAt`, and `contributions[].clients[]`. The request and response period must match. The API supports only `all`, `week` (trailing 7 days), and `month` (trailing 30 days); it does not accept `day` as a remote period. The visible day tab fetches week and projects the contribution whose date equals dateRange.end. Use its totals/tokenBreakdown/clients verbatim; return nil rank because there is no daily rank. No matching day means zero usage. Use returned date boundaries, not local calendar calculations.
 - Metric cards and rank use the selected response directly. In `all`, upstream activeDays follows its chart window; never silently recompute it as lifetime days.
@@ -109,6 +110,7 @@ if #available(macOS 14.0, *) {
 - Assert every command's exact argument suffix and rejection of invalid version, client, interval, and dates.
 - Execute a fixture `npx` with an `/usr/bin/env` shebang; assert sibling runtime resolution through the prepended child `PATH`.
 - Locator unit tests must inject or clear fixed system candidates; an empty `PATH` alone does not isolate Homebrew or `/usr/local` tools installed on CI runners. Preserve production precedence: explicit override, inherited `PATH`, fixed system candidates, then numerically newest NVM version.
+- Settings tests must cover automatic/custom/fallback/unavailable presentation, including whether override controls start collapsed or expanded; locator tests separately prove executable discovery and precedence.
 - With fake services, assert panel load performs only `fetch` and `status`; manual refresh orders `submit` before `fetch`; run-now orders `run` before profile/status reload.
 - UI smoke tests must use `--ui-testing` fixture dependencies and never access the network, `npx`, or `launchd`.
 

@@ -7,6 +7,22 @@ enum LoadState<Value> {
     case failed(String)
 }
 
+enum NpxPathStatus: Equatable {
+    case automatic(URL)
+    case custom(URL)
+    case automaticFallback(URL)
+    case unavailable
+
+    var shouldExpandOverride: Bool {
+        switch self {
+        case .custom, .automaticFallback, .unavailable:
+            return true
+        case .automatic:
+            return false
+        }
+    }
+}
+
 enum DashboardOperation: Equatable {
     case idle
     case submitting
@@ -62,6 +78,23 @@ final class DashboardViewModel: ObservableObject {
     private var cachedProfiles: [ProfilePeriod: (data: DashboardData, savedAt: Date)] = [:]
 
     var currentAutosubmitStatus: AutosubmitStatus? { autosubmitState.loadedValue }
+
+    func npxPathStatus(for preferredPath: String) -> NpxPathStatus {
+        let normalizedPath = preferredPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let locatedURL = npxLocator.locate(
+            preferredPath: normalizedPath.isEmpty ? nil : normalizedPath
+        ) else {
+            return .unavailable
+        }
+        guard !normalizedPath.isEmpty else { return .automatic(locatedURL) }
+
+        let preferredURL = URL(fileURLWithPath: normalizedPath).standardizedFileURL
+        if (normalizedPath as NSString).isAbsolutePath,
+           preferredURL == locatedURL.standardizedFileURL {
+            return .custom(locatedURL)
+        }
+        return .automaticFallback(locatedURL)
+    }
 
     init(api: TokscaleAPIService, cli: TokscaleCLIService,
          preferencesStore: PreferencesStoring, npxLocator: NpxLocating,

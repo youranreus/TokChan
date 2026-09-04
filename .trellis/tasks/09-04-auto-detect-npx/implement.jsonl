@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/macos/index.md", "reason": "macOS 开发清单与架构入口"}
+{"file": ".trellis/spec/macos/tokscale-integration.md", "reason": "npx 自动探测、覆盖与命令执行契约"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "设置界面实现规范"}
