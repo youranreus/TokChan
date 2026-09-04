@@ -7,10 +7,12 @@ trap 'rm -rf -- "$test_tmp"' EXIT
 
 fixture_version=7.8.9
 fixture_build=42
-next_version=7.8.10
+patch_version=7.8.10
+minor_version=7.9.0
+major_version=8.0.0
 next_build=43
 fixture_asset="TokChan-v${fixture_version}-macos-universal.zip"
-next_tag="v${next_version}"
+next_tag="v${patch_version}"
 export TEST_FIXTURE_VERSION=$fixture_version
 export TEST_FIXTURE_BUILD=$fixture_build
 
@@ -36,10 +38,34 @@ expect_failure() {
   }
 }
 
+expect_status_failure() {
+  local expected_status=$1
+  local expected=$2
+  shift 2
+  local output status
+  set +e
+  output=$("$@" 2>&1)
+  status=$?
+  set -e
+  [[ $status -eq $expected_status ]] || {
+    echo "expected status $expected_status, got $status: $*" >&2
+    echo "$output" >&2
+    exit 1
+  }
+  [[ "$output" == *"$expected"* ]] || {
+    echo "missing expected error '$expected' in:" >&2
+    echo "$output" >&2
+    exit 1
+  }
+}
+
 expect_failure "unknown argument" "$root/scripts/build-release.sh" --unknown
 pass "build script rejects unknown arguments"
 expect_failure "only be specified once" "$root/scripts/build-release.sh" --skip-tests --skip-tests
 pass "build script rejects duplicate arguments"
+expect_status_failure 2 "Usage: scripts/release.sh {patch|minor|major} [--push]" \
+  "$root/scripts/release.sh" invalid
+pass "release script rejects an invalid version update type with usage status"
 
 make_build_fixture() {
   local fixture=$1
@@ -262,21 +288,7 @@ MOCK
 dist/
 EOF
   printf stable > "$work/tracked-source"
-  cat > "$work/mock-bin/gh" <<'MOCK'
-#!/usr/bin/env bash
-case "$1 $2" in
-  'auth status'|'repo view') exit 0 ;;
-  'api --paginate')
-    if [[ "${MOCK_GH_API_ERROR:-}" == 1 ]]; then
-      echo 'gh: API rate limit exceeded (HTTP 403)' >&2
-      exit 1
-    fi
-    [[ -z "${MOCK_GH_RELEASE_ID:-}" ]] || echo "$MOCK_GH_RELEASE_ID"
-    ;;
-  *) echo "unexpected gh invocation: $*" >&2; exit 1 ;;
-esac
-MOCK
-  chmod +x "$work/scripts/"*.sh "$work/scripts/lib/project-version.py" "$work/mock-bin/gh"
+  chmod +x "$work/scripts/"*.sh "$work/scripts/lib/project-version.py"
   git init --bare "$bare" >/dev/null
   git -C "$work" init -b master >/dev/null
   git -C "$work" config user.name 'Release Test'
@@ -287,15 +299,58 @@ MOCK
   git -C "$work" push -u origin master >/dev/null
 }
 
+assert_release_type() {
+  local release_type=$1
+  local expected_version=$2
+  local work=$3
+  local command_path=$4
+  local push_release=${5:-false}
+  local expected_tag="v$expected_version"
+
+  if $push_release; then
+    printf 'yes\npush\n' | env PATH="$command_path" \
+      "$work/scripts/release.sh" "$release_type" --push >/dev/null
+  else
+    printf 'yes\n' | env PATH="$command_path" \
+      "$work/scripts/release.sh" "$release_type" >/dev/null
+  fi
+  [[ "$(git -C "$work" log -1 --format=%s)" == "chore(release): $expected_tag" ]]
+  [[ "$(git -C "$work" diff-tree --no-commit-id --name-only -r HEAD)" == TokChan.xcodeproj/project.pbxproj ]]
+  [[ "$(git -C "$work" tag -l "$expected_tag")" == "$expected_tag" ]]
+  [[ "$(git -C "$work" cat-file -t "$expected_tag")" == tag ]]
+  [[ "$(git -C "$work" for-each-ref --format='%(contents:subject)' "refs/tags/$expected_tag")" == "TokChan $expected_tag" ]]
+  [[ "$(git -C "$work" rev-list -n 1 "$expected_tag")" == "$(git -C "$work" rev-parse HEAD)" ]]
+  [[ "$(python3 "$work/scripts/lib/project-version.py" "$work/TokChan.xcodeproj/project.pbxproj" get)" == "$expected_version $next_build" ]]
+
+  if $push_release; then
+    [[ "$(git --git-dir="${work}.git" rev-parse refs/heads/master)" == "$(git -C "$work" rev-parse HEAD)" ]]
+    [[ "$(git --git-dir="${work}.git" rev-list -n 1 "$expected_tag")" == "$(git -C "$work" rev-parse HEAD)" ]]
+  fi
+}
+
 release_work="$test_tmp/release"
 release_bare="$test_tmp/release.git"
 make_release_repo "$release_work" "$release_bare"
-printf 'yes\n' | env PATH="$release_work/mock-bin:$PATH" "$release_work/scripts/release.sh" patch >/dev/null
-[[ "$(git -C "$release_work" log -1 --format=%s)" == "chore(release): $next_tag" ]]
-[[ "$(git -C "$release_work" tag -l "$next_tag")" == "$next_tag" ]]
-[[ "$(git -C "$release_work" cat-file -t "$next_tag")" == tag ]]
-[[ "$(python3 "$release_work/scripts/lib/project-version.py" "$release_work/TokChan.xcodeproj/project.pbxproj" get)" == "$next_version $next_build" ]]
+assert_release_type patch "$patch_version" "$release_work" "$release_work/mock-bin:$PATH"
 pass "release script creates a local version commit and annotated patch Tag"
+
+no_gh_path="$test_tmp/no-gh-bin"
+mkdir -p "$no_gh_path"
+for command_name in bash dirname git mkdir python3; do
+  ln -s "$(command -v "$command_name")" "$no_gh_path/$command_name"
+done
+! PATH="$no_gh_path" command -v gh >/dev/null 2>&1
+! grep -Eq '(^|[[:space:]])gh([[:space:]]|$)' "$root/scripts/release.sh"
+grep -Eq '(^|[[:space:]])gh api([[:space:]]|$)' "$root/.github/workflows/release.yml"
+minor_work="$test_tmp/minor"; minor_bare="$test_tmp/minor.git"
+make_release_repo "$minor_work" "$minor_bare"
+assert_release_type minor "$minor_version" "$minor_work" "$no_gh_path"
+pass "release script creates a minor release without GitHub CLI"
+
+major_work="$test_tmp/major"; major_bare="$test_tmp/major.git"
+make_release_repo "$major_work" "$major_bare"
+assert_release_type major "$major_version" "$major_work" "$major_work/mock-bin:$PATH" true
+pass "release script creates and atomically pushes a major release commit and annotated Tag"
 
 # Fresh fixtures keep each guard independent.
 dirty_work="$test_tmp/dirty"; dirty_bare="$test_tmp/dirty.git"
@@ -304,6 +359,13 @@ echo dirty > "$dirty_work/untracked"
 expect_failure "working tree and index must be clean" env PATH="$dirty_work/mock-bin:$PATH" \
   "$dirty_work/scripts/release.sh" patch
 pass "release script rejects a dirty tree"
+
+branch_work="$test_tmp/branch"; branch_bare="$test_tmp/branch.git"
+make_release_repo "$branch_work" "$branch_bare"
+git -C "$branch_work" checkout -b release-test >/dev/null
+expect_failure "releases must be prepared from master" env PATH="$branch_work/mock-bin:$PATH" \
+  "$branch_work/scripts/release.sh" patch
+pass "release script rejects a non-master branch"
 
 sync_work="$test_tmp/sync"; sync_bare="$test_tmp/sync.git"
 make_release_repo "$sync_work" "$sync_bare"
@@ -321,6 +383,17 @@ expect_failure "local Tag already exists" env PATH="$tag_work/mock-bin:$PATH" \
   "$tag_work/scripts/release.sh" patch
 pass "release script rejects a duplicate local Tag"
 
+remote_tag_work="$test_tmp/remote-tag"; remote_tag_bare="$test_tmp/remote-tag.git"
+make_release_repo "$remote_tag_work" "$remote_tag_bare"
+git -C "$remote_tag_work" tag -a "$next_tag" -m duplicate
+git -C "$remote_tag_work" push origin "$next_tag" >/dev/null
+git -C "$remote_tag_work" tag -d "$next_tag" >/dev/null
+expect_failure "local Tag already exists" env PATH="$remote_tag_work/mock-bin:$PATH" \
+  "$remote_tag_work/scripts/release.sh" patch
+[[ "$(git -C "$remote_tag_work" log -1 --format=%s)" == initial ]]
+[[ "$(python3 "$remote_tag_work/scripts/lib/project-version.py" "$remote_tag_work/TokChan.xcodeproj/project.pbxproj" get)" == "$fixture_version $fixture_build" ]]
+pass "release script rejects a duplicate remote Tag before version mutation"
+
 mutation_work="$test_tmp/mutation"; mutation_bare="$test_tmp/mutation.git"
 make_release_repo "$mutation_work" "$mutation_bare"
 expect_failure "unexpected tracked changes appeared" bash -c \
@@ -328,20 +401,6 @@ expect_failure "unexpected tracked changes appeared" bash -c \
 [[ -z "$(git -C "$mutation_work" tag --list "$next_tag")" ]]
 [[ "$(git -C "$mutation_work" log -1 --format=%s)" == initial ]]
 pass "release script rejects source changes that appear after testing"
-
-draft_work="$test_tmp/draft"; draft_bare="$test_tmp/draft.git"
-make_release_repo "$draft_work" "$draft_bare"
-expect_failure "a GitHub Release already exists for $next_tag" env \
-  PATH="$draft_work/mock-bin:$PATH" MOCK_GH_RELEASE_ID=123 \
-  "$draft_work/scripts/release.sh" patch
-pass "release script rejects an existing draft Release"
-
-api_work="$test_tmp/api"; api_bare="$test_tmp/api.git"
-make_release_repo "$api_work" "$api_bare"
-expect_failure "could not check whether GitHub Release" env \
-  PATH="$api_work/mock-bin:$PATH" MOCK_GH_API_ERROR=1 \
-  "$api_work/scripts/release.sh" patch
-pass "release script fails closed on GitHub API errors"
 
 python3 "$root/tests/test_project_version.py"
 pass "structured project-version tests pass"

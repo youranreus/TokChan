@@ -12,7 +12,7 @@ Local commands:
 
 ```text
 scripts/build-release.sh [--output <directory>] [--skip-tests]
-scripts/release.sh patch [--push]
+scripts/release.sh {patch|minor|major} [--push]
 python3 scripts/lib/project-version.py <project.pbxproj> get
 python3 scripts/lib/project-version.py <project.pbxproj> set --marketing X.Y.Z --build N
 ```
@@ -34,8 +34,9 @@ Tag message: TokChan vX.Y.Z
 
 ## 3. Contracts
 
-- `MARKETING_VERSION` is stable SemVer `X.Y.Z` and is the user-visible source version.
-- `CURRENT_PROJECT_VERSION` is a positive integer incremented once per release.
+- `MARKETING_VERSION` is stable SemVer `X.Y.Z` and is the user-visible source version. Release preparation increments patch as `X.Y.(Z+1)`, minor as `X.(Y+1).0`, or major as `(X+1).0.0`.
+- `CURRENT_PROJECT_VERSION` is a positive integer incremented once per release, regardless of the marketing-version increment type.
+- Local release preparation requires Git and Python, not GitHub CLI. It checks Git Tags; GitHub Release API checks and mutation belong to CI after Tag push.
 - Debug and Release app-target settings must match and use `VERSIONING_SYSTEM = apple-generic`.
 - The Tag must equal `v${MARKETING_VERSION}`; CI never substitutes another version.
 - `build-release.sh` runs `TokChanTests` unless `--skip-tests` is explicitly used for local iteration.
@@ -55,8 +56,8 @@ Tag message: TokChan vX.Y.Z
 | Existing final asset or foreign publication lock | Fail without deleting or replacing the existing resource |
 | ZIP, metadata, architecture, or checksum mismatch | Fail and leave no final-named new asset |
 | Dirty tree, non-`master`, or `HEAD != origin/master` | Refuse release preparation |
-| GitHub auth/API/permission error | Fail closed; never interpret as “Release absent” |
-| Local/remote Tag or Release already exists | Refuse version mutation |
+| Local or remote Tag already exists | Local preparation refuses version mutation |
+| GitHub auth/API/permission error | CI fails closed; never interpret as “Release absent” |
 | Source changes while release build runs | Refuse the release commit |
 | Tag does not equal source version or is outside `origin/master` | CI fails before Release mutation |
 | Existing draft Release | Replace only draft assets, verify exact names, then publish |
@@ -65,7 +66,7 @@ Tag message: TokChan vX.Y.Z
 
 ## 5. Good / Base / Bad Cases
 
-- Good: from clean synchronized `master`, run `scripts/release.sh patch`, review the version diff and local annotated Tag, then atomically push commit and Tag.
+- Good: from clean synchronized `master`, run `scripts/release.sh patch`, `minor`, or `major`, review the version diff and local annotated Tag, then atomically push commit and Tag.
 - Base: run `scripts/build-release.sh --skip-tests --output dist-local` for local packaging iteration; do not use this path for Tag publication.
 - Bad: manually edit only one build configuration, reuse a published Tag, overwrite a published asset, or treat a GitHub API failure as a missing Release.
 
@@ -99,7 +100,7 @@ CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" xcodebuild build
 
 ```bash
 # Version and build number are committed, and commit plus immutable Tag move together.
-scripts/release.sh patch --push
+scripts/release.sh minor --push
 # Internally: git push --atomic origin HEAD refs/tags/vX.Y.Z
 ```
 

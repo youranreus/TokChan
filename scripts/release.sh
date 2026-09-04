@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: scripts/release.sh patch [--push]" >&2
+  echo "Usage: scripts/release.sh {patch|minor|major} [--push]" >&2
 }
 
 fail() {
@@ -14,7 +14,12 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 cd "$repo_root"
 
-[[ $# -ge 1 && "$1" == patch ]] || { usage; exit 2; }
+[[ $# -ge 1 ]] || { usage; exit 2; }
+release_type=$1
+case "$release_type" in
+  patch|minor|major) ;;
+  *) usage; exit 2 ;;
+esac
 shift
 push_release=false
 if (($#)); then
@@ -22,7 +27,7 @@ if (($#)); then
   push_release=true
 fi
 
-for command_name in git gh python3; do
+for command_name in git python3; do
   command -v "$command_name" >/dev/null 2>&1 || fail "required command not found: $command_name"
 done
 [[ -x scripts/build-release.sh ]] || fail "scripts/build-release.sh is not executable"
@@ -66,10 +71,6 @@ head_commit=$(git rev-parse HEAD)
   fail "HEAD must exactly match origin/master before releasing"
 [[ -z "$(git status --porcelain)" ]] || fail "working tree changed while checking release prerequisites"
 
-gh auth status >/dev/null || fail "GitHub CLI is not authenticated"
-# Resolve repository access up front so network/auth/permission failures cannot look like absence.
-gh repo view --json nameWithOwner >/dev/null || fail "cannot access the GitHub repository with gh"
-
 read -r current_version current_build < <(
   python3 scripts/lib/project-version.py "$project_file" get
 )
@@ -78,7 +79,11 @@ IFS=. read -r major minor patch_number <<<"$current_version"
   fail "current marketing version is not stable SemVer: $current_version"
 [[ "$current_build" =~ ^[1-9][0-9]*$ ]] || \
   fail "current build number is not a positive integer: $current_build"
-next_version="$major.$minor.$((10#$patch_number + 1))"
+case "$release_type" in
+  patch) next_version="$major.$minor.$((10#$patch_number + 1))" ;;
+  minor) next_version="$major.$((10#$minor + 1)).0" ;;
+  major) next_version="$((10#$major + 1)).0.0" ;;
+esac
 next_build="$((10#$current_build + 1))"
 target_tag="v$next_version"
 
@@ -94,15 +99,6 @@ case $remote_tag_status in
   2) ;;
   *) fail "could not check remote Tag $target_tag: $remote_tag_output" ;;
 esac
-
-set +e
-release_output=$(gh api --paginate "repos/{owner}/{repo}/releases?per_page=100" \
-  --jq ".[] | select(.tag_name == \"$target_tag\") | .id" 2>&1)
-release_status=$?
-set -e
-[[ $release_status -eq 0 ]] || \
-  fail "could not check whether GitHub Release $target_tag exists: $release_output"
-[[ -z "$release_output" ]] || fail "a GitHub Release already exists for $target_tag"
 
 echo "==> Updating $current_version ($current_build) to $next_version ($next_build)"
 python3 scripts/lib/project-version.py "$project_file" set \

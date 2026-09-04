@@ -45,17 +45,19 @@ unzip -t TokChan-vX.Y.Z-macos-universal.zip
 
 > **Warning:** this first release format is not signed as an app bundle with a Developer ID identity and is not Apple-notarized. `codesign --verify TokChan.app` reports the packaged bundle as unsigned. The main Mach-O may still show linker-generated ad-hoc signature metadata; that does not provide bundle signing, a developer identity, or notarization. This format is intended only for the maintainer's personal use. Gatekeeper may block or warn on first launch, and the artifact is not suitable for ordinary public distribution.
 
-## Prepare and publish a patch release
+## Prepare and publish a release
 
 Versions are source-controlled in `TokChan.xcodeproj/project.pbxproj`. The app uses stable `X.Y.Z` marketing versions, positive integer build numbers, and annotated Tags named exactly `vX.Y.Z`.
 
-Start from a clean `master` checkout whose `HEAD` exactly matches `origin/master`, with `gh` installed and authenticated:
+Start from a clean `master` checkout whose `HEAD` exactly matches `origin/master`. Local release preparation requires only Git and Python:
 
 ```bash
 scripts/release.sh patch
+scripts/release.sh minor
+scripts/release.sh major
 ```
 
-The command fetches Tags, checks local/remote Tag and GitHub Release availability, increments both the patch version and build number, runs the complete release build, shows the project diff, and asks before creating `chore(release): vX.Y.Z` plus its annotated Tag. By default it does not push. After review, use the exact atomic push command printed by the script, or opt into the second push confirmation from the start:
+Choose `patch` for `X.Y.(Z+1)`, `minor` for `X.(Y+1).0`, or `major` for `(X+1).0.0`. The command fetches Tags, checks local/remote Tag availability, increments the build number, runs the complete release build, shows the project diff, and asks before creating `chore(release): vX.Y.Z` plus its annotated Tag. By default it does not push. After review, use the exact atomic push command printed by the script, or add `--push` to any release type for a second push confirmation:
 
 ```bash
 scripts/release.sh patch --push
