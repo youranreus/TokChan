@@ -3,7 +3,9 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var viewModel: DashboardViewModel
+    @ObservedObject var launchAtLoginModel: LaunchAtLoginSettingsModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     private enum SettingsTab: Hashable {
         case general
@@ -24,8 +26,12 @@ struct SettingsView: View {
     @State private var until: String
     @State private var selectedTab: SettingsTab = .general
 
-    init(viewModel: DashboardViewModel) {
+    init(
+        viewModel: DashboardViewModel,
+        launchAtLoginModel: LaunchAtLoginSettingsModel
+    ) {
         self.viewModel = viewModel
+        self.launchAtLoginModel = launchAtLoginModel
         let preferences = viewModel.preferences
         let autosubmit = viewModel.currentAutosubmitStatus.map(AutosubmitConfiguration.init)
             ?? AutosubmitConfiguration(
@@ -81,7 +87,15 @@ struct SettingsView: View {
         }
         .frame(width: 560, height: 600)
         .navigationTitle("TokChan! 设置")
-        .task { await viewModel.load() }
+        .task {
+            launchAtLoginModel.refresh()
+            await viewModel.load()
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active {
+                launchAtLoginModel.refresh()
+            }
+        }
     }
 
     private func settingsPage<Content: View>(
@@ -147,8 +161,80 @@ struct SettingsView: View {
                     npxOverrideControls
                 }
             }
+
+            launchAtLoginSettings
         }
         .formStyle(.grouped)
+    }
+
+    private var launchAtLoginSettings: some View {
+        Section("启动") {
+            Toggle("登录时启动 TokChan", isOn: launchAtLoginBinding)
+                .disabled(launchAtLoginModel.isUpdating || !launchAtLoginModel.isAvailable)
+                .accessibilityIdentifier("launch-at-login-toggle")
+
+            if launchAtLoginModel.isUpdating {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("正在更新登录项…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            launchAtLoginStatus
+
+            if let errorMessage = launchAtLoginModel.errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .help(errorMessage)
+                    .accessibilityIdentifier("launch-at-login-error")
+            }
+        }
+    }
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLoginModel.isEnabled },
+            set: { launchAtLoginModel.setEnabled($0) }
+        )
+    }
+
+    @ViewBuilder
+    private var launchAtLoginStatus: some View {
+        switch launchAtLoginModel.status {
+        case .enabled:
+            Label("已启用，TokChan 将在登录后自动启动。", systemImage: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.green)
+        case .notRegistered:
+            Text("未启用。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .requiresApproval:
+            VStack(alignment: .leading, spacing: 8) {
+                Label(
+                    "已添加登录项，但仍需在系统设置中批准后才会自动启动。",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+
+                Button("打开系统设置") {
+                    launchAtLoginModel.openSystemSettingsLoginItems()
+                }
+                .accessibilityIdentifier("open-login-items-settings")
+            }
+        case .notFound:
+            Label(
+                "当前无法使用登录时启动。请确认 TokChan 位于正常的应用程序位置后重试。",
+                systemImage: "xmark.circle.fill"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
     }
 
     private func npxStatusView(_ status: NpxPathStatus) -> some View {

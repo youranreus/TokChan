@@ -1,0 +1,8 @@
+{"file":".trellis/spec/macos/index.md","reason":"Project macOS architecture, deployment target, and dependency defaults."}
+{"file":".trellis/spec/macos/directory-structure.md","reason":"Placement rules for feature models and system integration services."}
+{"file":".trellis/spec/macos/swiftui-guidelines.md","reason":"Native Settings UI, side-effect, lifecycle, and accessibility conventions."}
+{"file":".trellis/spec/macos/state-management.md","reason":"Local observable state and injectable service-boundary conventions."}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"Recoverable error, main-actor, style, and dependency requirements."}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"Fake-backed unit testing and Xcode validation requirements."}
+{"file":".trellis/tasks/09-05-macos-launch-at-login/research/macos-launch-at-login.md","reason":"Apple SMAppService API findings, status semantics, repository constraints, and manual-test caveats."}
+{"file": ".trellis/spec/macos/service-management.md", "reason": "Executable SMAppService launch-at-login contract and safety requirements."}

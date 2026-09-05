@@ -1,0 +1,8 @@
+{"file":".trellis/spec/macos/index.md","reason":"Full macOS quality-check entry point and project defaults."}
+{"file":".trellis/spec/macos/directory-structure.md","reason":"Verify service/model placement and avoid unnecessary project structure."}
+{"file":".trellis/spec/macos/swiftui-guidelines.md","reason":"Verify native Settings UI, lifecycle refresh, side effects, and accessibility."}
+{"file":".trellis/spec/macos/state-management.md","reason":"Verify main-actor observable state and real injectable system boundary."}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"Verify error handling, concurrency, style, and dependency discipline."}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"Verify fake-backed coverage and full Xcode test command."}
+{"file":".trellis/tasks/09-05-macos-launch-at-login/research/macos-launch-at-login.md","reason":"Check implementation against authoritative SMAppService semantics and test-machine safety constraints."}
+{"file": ".trellis/spec/macos/service-management.md", "reason": "Verify status reconciliation, Release isolation, errors, and test safety."}

@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct TokChanApp: App {
     @StateObject private var viewModel: DashboardViewModel
+    @StateObject private var launchAtLoginModel: LaunchAtLoginSettingsModel
 
     init() {
         let api: TokscaleAPIService
@@ -42,6 +43,10 @@ struct TokChanApp: App {
                 cacheStore: cacheStore
             )
         )
+        let launchAtLoginService = LaunchAtLoginServiceFactory.make()
+        _launchAtLoginModel = StateObject(
+            wrappedValue: LaunchAtLoginSettingsModel(service: launchAtLoginService)
+        )
     }
 
     var body: some Scene {
@@ -52,8 +57,11 @@ struct TokChanApp: App {
         .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsView(viewModel: viewModel)
-                .environment(\.locale, Locale(identifier: "zh_CN"))
+            SettingsView(
+                viewModel: viewModel,
+                launchAtLoginModel: launchAtLoginModel
+            )
+            .environment(\.locale, Locale(identifier: "zh_CN"))
         }
     }
 }
