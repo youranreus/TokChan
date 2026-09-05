@@ -17,17 +17,13 @@ final class LaunchAtLoginSettingsModel: ObservableObject {
         status == .enabled || status == .requiresApproval
     }
 
-    var isAvailable: Bool {
-        status != .notFound
-    }
-
     func refresh() {
         status = service.status
         errorMessage = nil
     }
 
     func setEnabled(_ enabled: Bool) {
-        guard !isUpdating, isAvailable else { return }
+        guard !isUpdating else { return }
 
         isUpdating = true
         errorMessage = nil

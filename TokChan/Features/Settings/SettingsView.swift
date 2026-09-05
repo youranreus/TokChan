@@ -170,7 +170,7 @@ struct SettingsView: View {
     private var launchAtLoginSettings: some View {
         Section("启动") {
             Toggle("登录时启动 TokChan", isOn: launchAtLoginBinding)
-                .disabled(launchAtLoginModel.isUpdating || !launchAtLoginModel.isAvailable)
+                .disabled(launchAtLoginModel.isUpdating)
                 .accessibilityIdentifier("launch-at-login-toggle")
 
             if launchAtLoginModel.isUpdating {
@@ -228,12 +228,9 @@ struct SettingsView: View {
                 .accessibilityIdentifier("open-login-items-settings")
             }
         case .notFound:
-            Label(
-                "当前无法使用登录时启动。请确认 TokChan 位于正常的应用程序位置后重试。",
-                systemImage: "xmark.circle.fill"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            Text("系统尚未建立 TokChan 登录项记录。打开开关可尝试添加。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

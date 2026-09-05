@@ -22,21 +22,20 @@ final class LaunchAtLoginSettingsModelTests: XCTestCase {
     }
 
     func testStatusMappings() {
-        let cases: [(LaunchAtLoginStatus, Bool, Bool)] = [
-            (.enabled, true, true),
-            (.notRegistered, false, true),
-            (.requiresApproval, true, true),
-            (.notFound, false, false)
+        let cases: [(LaunchAtLoginStatus, Bool)] = [
+            (.enabled, true),
+            (.notRegistered, false),
+            (.requiresApproval, true),
+            (.notFound, false)
         ]
 
-        for (status, isEnabled, isAvailable) in cases {
+        for (status, isEnabled) in cases {
             let model = LaunchAtLoginSettingsModel(
                 service: FakeLaunchAtLoginService(status: status)
             )
 
             XCTAssertEqual(model.status, status)
             XCTAssertEqual(model.isEnabled, isEnabled)
-            XCTAssertEqual(model.isAvailable, isAvailable)
         }
     }
 
@@ -67,6 +66,32 @@ final class LaunchAtLoginSettingsModelTests: XCTestCase {
         XCTAssertTrue(model.isEnabled)
         XCTAssertNil(model.errorMessage)
         XCTAssertFalse(model.isUpdating)
+    }
+
+    func testNotFoundRemainsActionableAndRegisters() {
+        let service = FakeLaunchAtLoginService(status: .notFound)
+        service.statusAfterRegister = .enabled
+        let model = LaunchAtLoginSettingsModel(service: service)
+
+        model.setEnabled(true)
+
+        XCTAssertEqual(service.registerCallCount, 1)
+        XCTAssertEqual(model.status, .enabled)
+        XCTAssertTrue(model.isEnabled)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testRegisterFailureFromNotFoundShowsSystemError() {
+        let service = FakeLaunchAtLoginService(status: .notFound)
+        service.registerError = testError("系统拒绝创建登录项")
+        let model = LaunchAtLoginSettingsModel(service: service)
+
+        model.setEnabled(true)
+
+        XCTAssertEqual(service.registerCallCount, 1)
+        XCTAssertEqual(model.status, .notFound)
+        XCTAssertFalse(model.isEnabled)
+        XCTAssertEqual(model.errorMessage, "无法启用登录时启动：系统拒绝创建登录项")
     }
 
     func testThrownRegisterReconcilesPendingApprovalWithoutContradictoryError() {

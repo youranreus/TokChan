@@ -36,8 +36,8 @@ The live adapter maps `SMAppService.mainApp.status`, calls `register()` / `unreg
 - Re-read status after every register/unregister attempt, including thrown errors. An API call may throw while the authoritative status has already become `requiresApproval`.
 - Refresh when Settings appears and whenever the app becomes active after the user may have changed Login Items externally.
 - Treat `requiresApproval` as registered/requested (toggle on) but not yet effective; explain that user action is required and provide the system-settings action.
-- Treat `notFound` as unavailable (toggle off and disabled), not as a successful unregister.
-- A release app must carry a complete Bundle signature whose designated identifier matches `CFBundleIdentifier`, with Info.plist and resources sealed. A linker-generated ad-hoc Mach-O signature is insufficient and can make `SMAppService.mainApp.status` return `notFound`; follow `release-workflow.md` and require strict `codesign` verification.
+- Treat `notFound` as an absent Background Task Management record, not proof that the installed app is unusable. Keep the toggle off but actionable so an explicit enable request can call `register()` and create the record; surface any resulting system error.
+- A release app must carry a complete Bundle signature whose designated identifier matches `CFBundleIdentifier`, with Info.plist and resources sealed. A linker-generated ad-hoc Mach-O signature is insufficient for a stable Bundle identity; follow `release-workflow.md` and require strict `codesign` verification.
 - The UI-test launch path must use an in-memory fake only in `DEBUG`; Release builds must ignore `--ui-testing` and always construct the system adapter.
 - Automated tests must never register the test runner or mutate the host Mac's Login Items.
 
@@ -48,15 +48,16 @@ The live adapter maps `SMAppService.mainApp.status`, calls `register()` / `unreg
 | `.enabled` | Toggle on; eligible-to-run confirmation | Clear stale operation error |
 | `.notRegistered` | Toggle off | Clear stale error on explicit refresh |
 | `.requiresApproval` | Toggle on; pending warning and Login Items button | Do not show a contradictory registration failure if this is the post-call status |
-| `.notFound` / unknown future status | Toggle off and disabled; unavailable explanation | Do not claim registration or unregistration succeeded |
-| Installed `/Applications` app remains `.notFound` | Inspect full Bundle signature, designated identifier, Info.plist binding, and sealed resources | Do not diagnose location alone when `codesign --verify --deep --strict` fails |
+| `.notFound` / unknown future status | Toggle off but actionable; an enable attempt calls `register()` | Reconcile to the resulting status and show the system error if registration still fails |
+| Installed `/Applications` app remains `.notFound` before registration | Inspect the BTM log and complete Bundle signature, then allow an explicit registration attempt | Do not diagnose location or signature failure from status alone |
 | `register()` throws and status stays off/unavailable | Reconcile to system status | Show plain-language enable failure with technical localized detail |
 | `unregister()` throws and status stays on/pending | Reconcile to system status | Show plain-language disable failure with technical localized detail |
 
 ### 5. Good / Base / Bad Cases
 
 - **Good:** Register changes status to `requiresApproval`; the toggle remains on, approval guidance appears, and no contradictory error is shown.
-- **Base:** Status is `notRegistered`; the toggle is off and a user toggle immediately calls `register()`.
+- **Base:** Status is `notRegistered` or `notFound`; the toggle is off and a user toggle immediately calls `register()`.
+- **Bad:** Disable the toggle solely because the initial BTM lookup returned `notFound`; that prevents `register()` from creating the missing record.
 - **Bad:** Store `true` in `UserDefaults` before registration and render it as enabled even though System Settings rejected or disabled the item.
 - **Bad:** Let Release honor a command-line UI-testing marker and silently substitute fake registration state.
 
@@ -65,7 +66,7 @@ The live adapter maps `SMAppService.mainApp.status`, calls `register()` / `unreg
 Fake-backed unit tests must assert:
 
 - all four `SMAppService.Status` mappings;
-- enabled/available derivation for every app status;
+- enabled derivation for every app status and actionable registration from `notFound`;
 - immediate register and unregister call counts;
 - post-operation reconciliation from the fake's authoritative status;
 - register/unregister failure messages only when final status does not satisfy the request;
