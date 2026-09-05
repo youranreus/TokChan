@@ -4,6 +4,8 @@ set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/tokchan-script-tests.XXXXXX")
 trap 'rm -rf -- "$test_tmp"' EXIT
+mkdir -p "$test_tmp/tmp"
+export TMPDIR="$test_tmp/tmp"
 
 fixture_version=7.8.9
 fixture_build=42
@@ -86,6 +88,64 @@ MOCK
 #!/usr/bin/env bash
 echo 'arm64 x86_64'
 MOCK
+  cat > "$fixture/mock-bin/codesign" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+
+record() {
+  [[ -z "${MOCK_CODESIGN_LOG:-}" ]] || printf '%s\n' "$1" >> "$MOCK_CODESIGN_LOG"
+}
+
+if [[ $# -eq 6 && "$1" == --force && "$2" == --sign && "$3" == - && \
+      "$4" == --identifier ]]; then
+  identifier=$5
+  app=$6
+  [[ "$identifier" == com.youranreus.TokChan ]] || exit 64
+  record "$(printf 'sign\t%s\t%s' "$identifier" "$app")"
+  [[ "${MOCK_CODESIGN_SIGN_FAILURE:-}" != 1 ]] || exit 1
+  mkdir -p "$app/Contents/_CodeSignature"
+  printf 'fixture bundle signature\n' > "$app/Contents/_CodeSignature/CodeResources"
+  exit 0
+fi
+
+if [[ $# -eq 5 && "$1" == --verify && "$2" == --deep && "$3" == --strict && \
+      "$4" == --verbose=2 ]]; then
+  app=$5
+  record "$(printf 'verify\t%s' "$app")"
+  [[ -f "$app/Contents/_CodeSignature/CodeResources" ]] || exit 1
+  if [[ "$app" == */verification/TokChan.app ]]; then
+    [[ "${MOCK_CODESIGN_POST_VERIFY_FAILURE:-}" != 1 ]] || exit 1
+  else
+    [[ "${MOCK_CODESIGN_PRE_VERIFY_FAILURE:-}" != 1 ]] || exit 1
+  fi
+  exit 0
+fi
+
+if [[ $# -eq 3 && "$1" == -dv && "$2" == --verbose=4 ]]; then
+  app=$3
+  record "$(printf 'display\t%s' "$app")"
+  [[ -f "$app/Contents/_CodeSignature/CodeResources" ]] || exit 1
+  [[ "${MOCK_CODESIGN_METADATA_FAILURE:-}" != 1 ]] || exit 1
+  identifier=${MOCK_CODESIGN_METADATA_IDENTIFIER:-com.youranreus.TokChan}
+  if [[ "$app" == */verification/TokChan.app ]]; then
+    [[ "${MOCK_CODESIGN_POST_METADATA_FAILURE:-}" != 1 ]] || exit 1
+    identifier=${MOCK_CODESIGN_POST_METADATA_IDENTIFIER:-$identifier}
+  fi
+  printf '%s\n' \
+    "Identifier=$identifier" \
+    'Signature=adhoc' \
+    'Info.plist entries=3' \
+    'TeamIdentifier=not set' \
+    'Sealed Resources version=2 rules=13 files=2' >&2
+  if [[ "${MOCK_CODESIGN_DUPLICATE_IDENTIFIER:-}" == 1 ]]; then
+    printf 'Identifier=%s\n' "$identifier" >&2
+  fi
+  exit 0
+fi
+
+echo "unexpected codesign invocation: $*" >&2
+exit 64
+MOCK
   cat > "$fixture/mock-bin/xcodebuild" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -119,6 +179,7 @@ if [[ "$1" == build ]]; then
   app="$derived/Build/Products/Release/TokChan.app"
   mkdir -p "$app/Contents/MacOS"
   printf 'fake executable' > "$app/Contents/MacOS/TokChan"
+  chmod +x "$app/Contents/MacOS/TokChan"
   cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -138,15 +199,82 @@ MOCK
 
 fixture="$test_tmp/build"
 make_build_fixture "$fixture"
-PATH="$fixture/mock-bin:$PATH" "$fixture/scripts/build-release.sh" --skip-tests --output output >/dev/null
 zip="$fixture/output/$fixture_asset"
 checksum="$zip.sha256"
+
+assert_no_build_assets() {
+  [[ ! -e "$zip" && ! -L "$zip" && ! -e "$checksum" && ! -L "$checksum" ]]
+}
+
+expect_failure "ad-hoc bundle signing failed" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_CODESIGN_SIGN_FAILURE=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when ad-hoc bundle signing fails"
+
+rm -rf "$fixture/output"
+expect_failure "strict signature verification failed" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_CODESIGN_PRE_VERIFY_FAILURE=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when pre-package signature verification fails"
+
+rm -rf "$fixture/output"
+expect_failure "unexpected identifier wrong.identifier" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_CODESIGN_METADATA_IDENTIFIER=wrong.identifier \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when signature metadata has the wrong identifier"
+
+rm -rf "$fixture/output"
+expect_failure "could not inspect signature metadata" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_CODESIGN_METADATA_FAILURE=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when signature metadata inspection fails"
+
+rm -rf "$fixture/output"
+expect_failure "exactly one Identifier" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_CODESIGN_DUPLICATE_IDENTIFIER=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script rejects ambiguous duplicate signature metadata"
+
+rm -rf "$fixture/output"
+expect_failure "strict signature verification failed" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_CODESIGN_POST_VERIFY_FAILURE=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when extracted-app verification fails"
+
+rm -rf "$fixture/output"
+expect_failure "unexpected identifier post-archive.invalid" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_CODESIGN_POST_METADATA_IDENTIFIER=post-archive.invalid \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when extracted-app metadata changes"
+
+rm -rf "$fixture/output"
+codesign_log="$test_tmp/codesign.log"
+build_output=$(PATH="$fixture/mock-bin:$PATH" MOCK_CODESIGN_LOG="$codesign_log" \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output)
 [[ -f "$zip" && -f "$checksum" ]]
 (
   cd "$fixture/output"
   shasum -a 256 -c "$(basename "$checksum")" >/dev/null
 )
-pass "build script produces the canonical ZIP/checksum pair"
+[[ "$(grep -c $'^sign\tcom.youranreus.TokChan\t' "$codesign_log")" -eq 1 ]]
+[[ "$(grep -c $'^verify\t' "$codesign_log")" -eq 2 ]]
+[[ "$(grep -c $'^display\t' "$codesign_log")" -eq 2 ]]
+grep -F $'verify\t' "$codesign_log" | grep -F '/verification/TokChan.app' >/dev/null
+fixture_extraction="$test_tmp/fixture-extraction"
+mkdir -p "$fixture_extraction"
+ditto -x -k "$zip" "$fixture_extraction"
+[[ "$(cat "$fixture_extraction/TokChan.app/Contents/_CodeSignature/CodeResources")" == \
+  "fixture bundle signature" ]]
+[[ "$build_output" == *"ad-hoc signed, not Developer ID signed, and not Apple-notarized"* ]]
+[[ "$build_output" == *"intended only for the maintainer's personal use"* ]]
+pass "build script signs the complete bundle and preserves its signature through ZIP round trip"
 grep -F 'cd "$(dirname "$checksum")"' "$root/.github/workflows/release.yml" >/dev/null
 grep -F 'shasum -a 256 -c "$(basename "$checksum")"' \
   "$root/.github/workflows/release.yml" >/dev/null
@@ -155,6 +283,12 @@ grep -F 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1' \
   "$root/.github/workflows/release.yml" >/dev/null
 ! grep -F '/releases/tags/' "$root/.github/workflows/release.yml" >/dev/null
 pass "release workflow uses Node 24 checkout and avoids the published-only Tag endpoint"
+grep -F 'Test, build, ad-hoc sign, and package universal app' \
+  "$root/.github/workflows/release.yml" >/dev/null
+grep -F 'ad-hoc signed, not Developer ID signed, and not Apple-notarized' \
+  "$root/.github/workflows/release.yml" >/dev/null
+! grep -F 'This ZIP is unsigned' "$root/.github/workflows/release.yml" >/dev/null
+pass "release workflow describes ad-hoc signing without claiming Developer ID or notarization"
 
 workflow_step="$test_tmp/publish-release-step.sh"
 python3 - "$root/.github/workflows/release.yml" "$workflow_step" <<'PY'
@@ -190,7 +324,11 @@ elif [[ "$1" == api && " $* " == *" --method POST "* ]]; then
 elif [[ "$1" == api && " $* " == *" --method PATCH "* ]]; then
   printf published > "${MOCK_RELEASE_STATE:?}"
 elif [[ "$1" == api && " $* " == *" --jq .body "* ]]; then
-  echo 'This ZIP is unsigned and not Apple-notarized.'
+  if [[ -n "${MOCK_RELEASE_BODY:-}" ]]; then
+    printf '%s\n' "$MOCK_RELEASE_BODY"
+  else
+    echo "This app bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized. Ad-hoc signing provides bundle integrity but no verified developer identity. It is intended for the maintainer's personal use only. Gatekeeper may block or warn on first launch. Verify the SHA-256 checksum before use. It is not ready for ordinary public distribution."
+  fi
 elif [[ "$1" == api && " $* " == *" --jq .draft "* ]]; then
   [[ "$(cat "${MOCK_RELEASE_STATE:?}")" == draft ]] && echo true || echo false
 elif [[ "$1" == api && " $* " == *" --jq .assets[].name "* ]]; then
@@ -216,10 +354,29 @@ env PATH="$workflow_mock_bin:$PATH" \
   MOCK_CHECKSUM_NAME="$(basename "$checksum")" bash "$workflow_step" >/dev/null
 [[ "$(cat "$workflow_state")" == published ]]
 pass "release workflow publishes a new draft from the create response ID"
+printf draft > "$workflow_state"
+expect_failure "missing required warning text: no verified developer identity" env \
+  PATH="$workflow_mock_bin:$PATH" \
+  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" ZIP="$zip" CHECKSUM="$checksum" \
+  MOCK_RELEASE_STATE="$workflow_state" MOCK_ZIP_NAME="$(basename "$zip")" \
+  MOCK_CHECKSUM_NAME="$(basename "$checksum")" \
+  MOCK_RELEASE_BODY='This app bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized.' \
+  bash "$workflow_step"
+[[ "$(cat "$workflow_state")" == draft ]]
+pass "release workflow refuses a draft with incomplete distribution warnings"
 
 expect_failure "refusing to overwrite existing asset" env PATH="$fixture/mock-bin:$PATH" \
   "$fixture/scripts/build-release.sh" --skip-tests --output output
 pass "build script refuses stale final assets"
+
+rm -rf "$fixture/output"
+mkdir -p "$fixture/output"
+ln -s "$fixture/missing-user-asset" "$zip"
+expect_failure "refusing to overwrite existing asset" env PATH="$fixture/mock-bin:$PATH" \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+[[ -L "$zip" && "$(readlink "$zip")" == "$fixture/missing-user-asset" ]]
+rm -f "$zip"
+pass "build script preserves a pre-existing dangling asset symlink"
 
 rm -rf "$fixture/output"
 publish_lock="$fixture/output/.${fixture_asset}.publishing"

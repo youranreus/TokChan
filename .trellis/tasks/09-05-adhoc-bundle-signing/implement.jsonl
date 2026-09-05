@@ -1,0 +1,6 @@
+{"file":".trellis/spec/macos/index.md","reason":"Project-wide macOS constraints and quality entry point."}
+{"file":".trellis/spec/macos/release-workflow.md","reason":"Executable release packaging, validation, failure, and publication contracts."}
+{"file":".trellis/spec/macos/service-management.md","reason":"SMAppService requirement for a recognizable signed main-app bundle and safe manual validation."}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"Error handling, dependency, and implementation quality rules."}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"Project test expectations and Xcode validation command."}
+{"file":".trellis/tasks/09-05-adhoc-bundle-signing/research/adhoc-signing.md","reason":"Root-cause evidence, proven codesign/ZIP round trip, recommended command contract, and distribution caveats."}

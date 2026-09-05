@@ -1,0 +1,6 @@
+{"file":".trellis/spec/macos/index.md","reason":"Full macOS package quality-check entry point."}
+{"file":".trellis/spec/macos/release-workflow.md","reason":"Verify release command, failure cleanup, immutable asset, signing, and publication contracts."}
+{"file":".trellis/spec/macos/service-management.md","reason":"Verify the packaged main app meets SMAppService identity assumptions without unsafe automated registration."}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"Verify fail-closed error handling and dependency discipline."}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"Verify complete automated test coverage and Xcode suite execution."}
+{"file":".trellis/tasks/09-05-adhoc-bundle-signing/research/adhoc-signing.md","reason":"Check actual codesign metadata, ZIP preservation, fixture requirements, and truthful distribution wording."}

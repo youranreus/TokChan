@@ -4,7 +4,7 @@
 
 Use this contract whenever changing TokChan version settings, release packaging, Git Tags, or `.github/workflows/release.yml`.
 
-The current channel is a maintainer-only GitHub Release containing one universal ZIP. It is not Developer ID signed or Apple-notarized. Public distribution requires a separate hardening change.
+The current channel is a maintainer-only GitHub Release containing one universal ZIP. The complete app bundle is credential-free ad-hoc signed, but it is not Developer ID signed or Apple-notarized. Public distribution requires a separate hardening change.
 
 ## 2. Signatures
 
@@ -40,12 +40,15 @@ Tag message: TokChan vX.Y.Z
 - Debug and Release app-target settings must match and use `VERSIONING_SYSTEM = apple-generic`.
 - The Tag must equal `v${MARKETING_VERSION}`; CI never substitutes another version.
 - `build-release.sh` runs `TokChanTests` unless `--skip-tests` is explicitly used for local iteration.
+- Xcode compilation remains credential-free with automatic signing disabled. After validating Bundle metadata and architectures, the script must sign the complete outer app using `codesign --force --sign - --identifier com.youranreus.TokChan`; do not use signing-time `--deep` to hide nested-code ordering problems.
 - The built executable must contain `arm64` and `x86_64`; bundle identifier must be `com.youranreus.TokChan`.
+- Before packaging, strict `codesign --verify --deep --strict --verbose=2` verification and `codesign -dv --verbose=4` inspection must prove the expected designated identifier, a complete ad-hoc signature, Info.plist coverage, and sealed resources.
+- The staged ZIP must be extracted into the current run's owned temporary workspace, and the extracted `TokChan.app` must pass the same strict signature and metadata verification before checksum creation or publication.
 - The checksum records the ZIP basename so `shasum -a 256 -c` works after download.
 - Final local assets are never overwritten. A publication lock serializes the final pair, and cleanup removes only resources owned by the current run.
 - The release workflow uses only `GITHUB_TOKEN` with `contents: write`, one fixed macOS/Xcode job, and same-Tag concurrency.
 - GitHub Release publication is `absent -> draft -> exact asset pair -> published`. A draft may be resumed; a published Release is never overwritten.
-- Release notes and local output must state that the app bundle is unsigned/unnotarized and intended for personal use. A linker-generated ad-hoc Mach-O signature is not a Developer ID identity or a signed app bundle.
+- Release notes and local output must state that the complete bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized. Ad-hoc signing supplies integrity and a designated identifier, not an Apple-verified developer identity or guaranteed Gatekeeper acceptance.
 
 ## 4. Validation & Error Matrix
 
@@ -54,7 +57,7 @@ Tag message: TokChan vX.Y.Z
 | Debug/Release version drift | Fail before tests or packaging |
 | Invalid SemVer or non-positive build | Fail without editing or publishing assets |
 | Existing final asset or foreign publication lock | Fail without deleting or replacing the existing resource |
-| ZIP, metadata, architecture, or checksum mismatch | Fail and leave no final-named new asset |
+| ZIP, metadata, architecture, ad-hoc signing, strict signature/metadata verification, extraction, or checksum failure | Fail and leave no final-named new asset |
 | Dirty tree, non-`master`, or `HEAD != origin/master` | Refuse release preparation |
 | Local or remote Tag already exists | Local preparation refuses version mutation |
 | GitHub auth/API/permission error | CI fails closed; never interpret as “Release absent” |
@@ -81,7 +84,9 @@ bash tests/test_release_scripts.sh
 scripts/build-release.sh
 ```
 
-The full build must prove unit tests pass, bundle version/build/identifier match source, both architectures exist, ZIP integrity succeeds, and the checksum verifies. Parse workflow YAML and syntax-check every shell `run` block; run `shellcheck` and `actionlint` when installed.
+Fixture tests must use a local `codesign` mock (never a real certificate) and cover the exact complete-bundle signing command, signing failure, invalid pre-package verification/metadata, and extracted-app verification failure. Every failure must leave no final-named ZIP/checksum pair.
+
+The full build must prove unit tests pass, bundle version/build/identifier match source, both architectures exist, the original and ZIP-extracted apps pass strict Bundle signature verification and metadata inspection, ZIP integrity succeeds, and the checksum verifies. Parse workflow YAML and syntax-check every shell `run` block; run `shellcheck` and `actionlint` when installed.
 
 Before the first production Tag, rehearse in a disposable repository and prove draft retry, published-release rejection, and build-failure behavior. Validate the downloaded app on Apple Silicon and Intel hardware when available.
 

@@ -47,7 +47,7 @@ done
 [[ -f TokChan.xcodeproj/xcshareddata/xcschemes/TokChan.xcscheme ]] || \
   fail "the shared TokChan scheme was not found"
 
-for command_name in xcodebuild xcrun ditto lipo shasum unzip python3; do
+for command_name in xcodebuild xcrun codesign ditto lipo shasum unzip python3; do
   command -v "$command_name" >/dev/null 2>&1 || fail "required command not found: $command_name"
 done
 [[ -x /usr/libexec/PlistBuddy ]] || fail "required command not found: /usr/libexec/PlistBuddy"
@@ -143,8 +143,11 @@ asset_basename="TokChan-v${release_version}-macos-universal.zip"
 checksum_basename="${asset_basename}.sha256"
 final_zip="$output_dir/$asset_basename"
 final_checksum="$output_dir/$checksum_basename"
-[[ ! -e "$final_zip" ]] || fail "refusing to overwrite existing asset: $final_zip"
-[[ ! -e "$final_checksum" ]] || fail "refusing to overwrite existing asset: $final_checksum"
+path_exists() {
+  [[ -e "$1" || -L "$1" ]]
+}
+! path_exists "$final_zip" || fail "refusing to overwrite existing asset: $final_zip"
+! path_exists "$final_checksum" || fail "refusing to overwrite existing asset: $final_checksum"
 
 if ! $skip_tests; then
   echo "==> Running TokChan unit tests (UI tests are intentionally not a release gate)"
@@ -159,7 +162,7 @@ else
   echo "==> Skipping unit tests (local iteration only)"
 fi
 
-echo "==> Building unsigned universal Release app"
+echo "==> Building credential-free universal Release app (Xcode signing disabled)"
 xcodebuild build \
   -project TokChan.xcodeproj \
   -scheme TokChan \
@@ -194,10 +197,83 @@ architectures=" $(lipo -archs "$executable") "
 [[ "$architectures" == *" arm64 "* ]] || fail "main executable does not contain arm64"
 [[ "$architectures" == *" x86_64 "* ]] || fail "main executable does not contain x86_64"
 
+signature_metadata_value() {
+  local metadata=$1
+  local field=$2
+  awk -v prefix="$field=" '
+    index($0, prefix) == 1 {
+      count++
+      value = substr($0, length(prefix) + 1)
+    }
+    END {
+      if (count != 1) exit 1
+      print value
+    }
+  ' <<<"$metadata"
+}
+
+verify_signed_bundle() {
+  local bundle_path=$1
+  local expected_identifier=$2
+  local signature_metadata metadata_identifier signature_kind info_entries team_identifier
+  local sealed_resources
+
+  if ! codesign --verify --deep --strict --verbose=2 "$bundle_path" 2>&1 | tee -a "$build_log"; then
+    fail "strict signature verification failed for $bundle_path"
+  fi
+  if ! signature_metadata=$(codesign -dv --verbose=4 "$bundle_path" 2>&1); then
+    printf '%s\n' "$signature_metadata" >> "$build_log"
+    fail "could not inspect signature metadata for $bundle_path"
+  fi
+  printf '%s\n' "$signature_metadata" >> "$build_log"
+
+  if ! metadata_identifier=$(signature_metadata_value "$signature_metadata" Identifier); then
+    fail "signature metadata does not contain exactly one Identifier for $bundle_path"
+  fi
+  [[ "$metadata_identifier" == "$expected_identifier" ]] || \
+    fail "signature metadata has unexpected identifier $metadata_identifier for $bundle_path"
+
+  if ! signature_kind=$(signature_metadata_value "$signature_metadata" Signature); then
+    fail "signature metadata does not contain exactly one Signature for $bundle_path"
+  fi
+  [[ "$signature_kind" == adhoc ]] || \
+    fail "signature metadata is not a complete ad-hoc signature for $bundle_path"
+
+  if ! team_identifier=$(signature_metadata_value "$signature_metadata" TeamIdentifier); then
+    fail "signature metadata does not contain exactly one TeamIdentifier for $bundle_path"
+  fi
+  [[ "$team_identifier" == "not set" ]] || \
+    fail "ad-hoc signature unexpectedly has TeamIdentifier $team_identifier for $bundle_path"
+
+  if ! info_entries=$(signature_metadata_value "$signature_metadata" "Info.plist entries"); then
+    fail "signature metadata does not contain exactly one Info.plist entry count for $bundle_path"
+  fi
+  [[ "$info_entries" =~ ^[1-9][0-9]*$ ]] || \
+    fail "signature metadata does not cover Info.plist for $bundle_path"
+
+  if ! sealed_resources=$(signature_metadata_value "$signature_metadata" "Sealed Resources version"); then
+    fail "signature metadata does not contain exactly one sealed-resources record for $bundle_path"
+  fi
+  [[ "$sealed_resources" =~ ^[1-9][0-9]*\ rules=[0-9]+\ files=[1-9][0-9]*$ ]] || \
+    fail "signature metadata does not contain sealed resources for $bundle_path"
+}
+
+echo "==> Ad-hoc signing complete app bundle"
+codesign --force --sign - --identifier "$bundle_identifier" "$app_path" || \
+  fail "ad-hoc bundle signing failed"
+verify_signed_bundle "$app_path" "$bundle_identifier"
+
+echo "==> Packaging and reverifying signed app"
 staged_zip="$staging_dir/$asset_basename"
 staged_checksum="$staging_dir/$checksum_basename"
+verification_dir="$work_dir/verification"
 ditto -c -k --keepParent "$app_path" "$staged_zip"
 unzip -t "$staged_zip" >/dev/null
+mkdir -p "$verification_dir"
+ditto -x -k "$staged_zip" "$verification_dir"
+extracted_app="$verification_dir/TokChan.app"
+[[ -d "$extracted_app" ]] || fail "expected app was not found after ZIP extraction"
+verify_signed_bundle "$extracted_app" "$bundle_identifier"
 (
   cd "$staging_dir"
   shasum -a 256 "$asset_basename" > "$checksum_basename"
@@ -212,8 +288,8 @@ if mkdir -- "$publish_lock" 2>/dev/null; then
 else
   fail "another publication may be using this asset name: $publish_lock"
 fi
-[[ ! -e "$final_zip" ]] || fail "refusing to overwrite existing asset: $final_zip"
-[[ ! -e "$final_checksum" ]] || fail "refusing to overwrite existing asset: $final_checksum"
+! path_exists "$final_zip" || fail "refusing to overwrite existing asset: $final_zip"
+! path_exists "$final_checksum" || fail "refusing to overwrite existing asset: $final_checksum"
 
 # Publish the pair last. Paths are marked as ours before moving so interruption
 # during either move cannot leave final-named partial output behind.
@@ -226,5 +302,6 @@ succeeded=true
 echo "==> Release assets"
 echo "$final_zip"
 echo "$final_checksum"
-echo "WARNING: This app is not Developer ID signed or Apple-notarized."
-echo "It is intended for maintainer personal use only; Gatekeeper may block or warn on launch."
+echo "WARNING: This app bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized."
+echo "Ad-hoc signing provides bundle integrity but no verified developer identity; Gatekeeper may block or warn on launch."
+echo "This release format is intended only for the maintainer's personal use, not ordinary public distribution."

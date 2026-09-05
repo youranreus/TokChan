@@ -74,7 +74,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
 
-      - name: Test, build, and package unsigned universal app
+      - name: Test, build, ad-hoc sign, and package universal app
         shell: bash
         run: scripts/build-release.sh
 
@@ -118,7 +118,7 @@ jobs:
           if [[ -z "$release_info" ]]; then
             printf -v warning '%s\n%s' \
               '> [!WARNING]' \
-              "> This ZIP is unsigned and not Apple-notarized. It is intended for the maintainer's personal use only. Gatekeeper may block or warn on first launch. Verify the SHA-256 checksum before use. It is not ready for ordinary public distribution."
+              "> This app bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized. Ad-hoc signing provides bundle integrity but no verified developer identity. It is intended for the maintainer's personal use only. Gatekeeper may block or warn on first launch. Verify the SHA-256 checksum before use. It is not ready for ordinary public distribution."
             release_info=$(gh api --method POST \
               "repos/${GITHUB_REPOSITORY}/releases" \
               -f tag_name="$TAG" \
@@ -141,11 +141,20 @@ jobs:
           echo "Using draft Release $TAG (ID $release_id)"
           release_api="repos/${GITHUB_REPOSITORY}/releases/${release_id}"
 
-          gh api "$release_api" --jq .body |
-            grep -F "unsigned and not Apple-notarized" >/dev/null || {
-              echo "Draft Release is missing the required unsigned/unnotarized warning" >&2
+          release_body=$(gh api "$release_api" --jq .body)
+          for required_warning in \
+            "ad-hoc signed, not Developer ID signed, and not Apple-notarized" \
+            "no verified developer identity" \
+            "maintainer's personal use only" \
+            "Gatekeeper may block or warn" \
+            "Verify the SHA-256 checksum" \
+            "not ready for ordinary public distribution"
+          do
+            grep -F "$required_warning" <<< "$release_body" >/dev/null || {
+              echo "Draft Release is missing required warning text: $required_warning" >&2
               exit 1
             }
+          done
 
           [[ "$(gh api "$release_api" --jq .draft)" == true ]] || {
             echo "Release $TAG left draft state before asset upload; refusing to overwrite assets" >&2

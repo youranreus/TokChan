@@ -37,6 +37,7 @@ The live adapter maps `SMAppService.mainApp.status`, calls `register()` / `unreg
 - Refresh when Settings appears and whenever the app becomes active after the user may have changed Login Items externally.
 - Treat `requiresApproval` as registered/requested (toggle on) but not yet effective; explain that user action is required and provide the system-settings action.
 - Treat `notFound` as unavailable (toggle off and disabled), not as a successful unregister.
+- A release app must carry a complete Bundle signature whose designated identifier matches `CFBundleIdentifier`, with Info.plist and resources sealed. A linker-generated ad-hoc Mach-O signature is insufficient and can make `SMAppService.mainApp.status` return `notFound`; follow `release-workflow.md` and require strict `codesign` verification.
 - The UI-test launch path must use an in-memory fake only in `DEBUG`; Release builds must ignore `--ui-testing` and always construct the system adapter.
 - Automated tests must never register the test runner or mutate the host Mac's Login Items.
 
@@ -48,6 +49,7 @@ The live adapter maps `SMAppService.mainApp.status`, calls `register()` / `unreg
 | `.notRegistered` | Toggle off | Clear stale error on explicit refresh |
 | `.requiresApproval` | Toggle on; pending warning and Login Items button | Do not show a contradictory registration failure if this is the post-call status |
 | `.notFound` / unknown future status | Toggle off and disabled; unavailable explanation | Do not claim registration or unregistration succeeded |
+| Installed `/Applications` app remains `.notFound` | Inspect full Bundle signature, designated identifier, Info.plist binding, and sealed resources | Do not diagnose location alone when `codesign --verify --deep --strict` fails |
 | `register()` throws and status stays off/unavailable | Reconcile to system status | Show plain-language enable failure with technical localized detail |
 | `unregister()` throws and status stays on/pending | Reconcile to system status | Show plain-language disable failure with technical localized detail |
 
@@ -72,6 +74,7 @@ Fake-backed unit tests must assert:
 - UI-test factory behavior is in-memory under Debug.
 
 Run the full macOS Xcode suite and a Release build. Manual signed-app verification must cover Login Items visibility/removal, approval, external changes, and actual launch after sign-out/restart.
+For release workflow changes, extract the final ZIP and assert strict Bundle verification, `Identifier=com.youranreus.TokChan`, Info.plist coverage, sealed resources, and both architectures before testing the installed app.
 
 ### 7. Wrong vs Correct
 
