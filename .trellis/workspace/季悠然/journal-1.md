@@ -225,3 +225,44 @@
 ### Next Steps
 
 - 发布新的补丁版本，并用签名安装包手动验证 SMAppService 登录项
+
+
+## Session 9: 自定义价格设置与缺价检测闭环
+
+**Date**: 2026-09-05
+**Task**: 调研自定义价格设置与缺价检测闭环
+**Branch**: `master`
+
+### Summary
+
+在设置页新增原生自定义价格管理，支持无损增删改 `custom-pricing.json`，并通过 Tokscale dry-run 完成缺价检测、补价和重新检测闭环。
+
+### Main Changes
+
+- 新增自定义价格 Tab、原生表格及添加/编辑/删除表单
+- 增加无损 JSON 文件服务、原子写入和外部修改保护
+- 增加缺价诊断解析、Synthetic 模型匹配和过期报告保护
+- 扩展 CLI 集成、依赖注入、测试与 Tokscale 集成规范
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3ca2f3b` | feat(settings): add custom pricing management |
+| `5acf56e` | chore(task): archive 09-04-custom-pricing-settings |
+
+### Testing
+
+- [OK] 104 个单元测试与 1 个 UI 测试通过
+- [OK] macOS 13 universal Release 构建通过（arm64、x86_64）
+- [OK] `git diff --check` 与 Trellis 上下文校验通过
+- [OK] 未执行真实提交、自动提交变更或真实价格文件写入
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 建议在实体 macOS 13 环境进行交互验收
+- 使用真实缺价账户验证检测与补价闭环
