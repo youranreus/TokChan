@@ -188,3 +188,40 @@
 ### Next Steps
 
 - 使用签名安装版手动验证系统登录项、批准流程与重启后启动
+
+
+## Session 8: 修复发布包 ad-hoc Bundle 签名
+
+**Date**: 2026-09-05
+**Task**: 修复发布包 ad-hoc Bundle 签名
+**Branch**: `master`
+
+### Summary
+
+定位 TokChan 0.1.7 发布包只有 linker-generated 签名、导致 SMAppService.mainApp 返回 notFound；发布流水线现对完整 App Bundle 执行 credential-free ad-hoc 签名，并在打包前及 ZIP 解压后严格复验。
+
+### Main Changes
+
+- 为完整 TokChan.app 添加确定性 ad-hoc 签名与签名元数据校验
+- 增加 ZIP 解压后复验及签名失败的 fail-closed 发布保护
+- 扩展发布 fixture、GitHub Release 警告、README 与 macOS 规范
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `841e1aa` | (see git log) |
+
+### Testing
+
+- [OK] 发布脚本 fixture 32/32、版本测试 7/7 通过
+- [OK] Xcode 77 个单元测试与 1 个 UI 测试通过
+- [OK] 真实 universal Release ZIP 的 Bundle 签名、标识符、资源封装和校验和通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 发布新的补丁版本，并用签名安装包手动验证 SMAppService 登录项

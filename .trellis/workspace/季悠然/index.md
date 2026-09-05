@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
+- **Total Sessions**: 8
 - **Last Active**: 2026-09-05
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~190 | Active |
+| `journal-1.md` | ~227 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-09-05 | 修复发布包 ad-hoc Bundle 签名 | `841e1aa` | `master` |
 | 7 | 2026-09-05 | 添加 macOS 开机自启动设置 | `eeaa585` | `master` |
 | 6 | 2026-09-04 | 兼容常见 Node 版本管理器探测 | `dda32f7` | `master` |
 | 5 | 2026-09-04 | 自动探测 npx 路径 | `7c917b1` | `master` |
