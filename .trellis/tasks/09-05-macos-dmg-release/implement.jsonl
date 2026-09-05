@@ -1,0 +1,4 @@
+{"file":".trellis/spec/macos/index.md","reason":"Project-wide macOS constraints and package guidance entry point."}
+{"file":".trellis/spec/macos/release-workflow.md","reason":"Current executable contracts for asset naming, signing, cleanup, checksums, GitHub publication, and validation."}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"Fail-closed error handling, dependency discipline, and implementation quality requirements."}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"Project test strategy and required Xcode validation expectations."}

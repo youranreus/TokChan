@@ -21,7 +21,7 @@ TokChan is an agent-style app, so it appears in the menu bar and does not create
 
 ## Build a personal-use release
 
-The shared release entry point runs `TokChanTests`, performs a credential-free Release build for both Apple Silicon and Intel, validates its metadata and architectures, ad-hoc signs and strictly verifies the complete app bundle, then creates and re-verifies a ZIP plus SHA-256 checksum:
+The shared release entry point runs `TokChanTests`, performs a credential-free Release build for both Apple Silicon and Intel, validates its metadata and architectures, ad-hoc signs and strictly verifies the complete app bundle, then creates and re-verifies a native drag-to-install DMG plus SHA-256 checksum:
 
 ```bash
 scripts/build-release.sh
@@ -32,18 +32,20 @@ scripts/build-release.sh --skip-tests --output dist-local
 The default assets are:
 
 ```text
-dist/TokChan-vX.Y.Z-macos-universal.zip
-dist/TokChan-vX.Y.Z-macos-universal.zip.sha256
+dist/TokChan-vX.Y.Z-macos-universal.dmg
+dist/TokChan-vX.Y.Z-macos-universal.dmg.sha256
 ```
 
 Existing final-named assets are never overwritten. Verify a downloaded pair from the directory containing both files with:
 
 ```bash
-shasum -a 256 -c TokChan-vX.Y.Z-macos-universal.zip.sha256
-unzip -t TokChan-vX.Y.Z-macos-universal.zip
+shasum -a 256 -c TokChan-vX.Y.Z-macos-universal.dmg.sha256
+hdiutil verify TokChan-vX.Y.Z-macos-universal.dmg
 ```
 
-> **Warning:** the packaged app bundle has a complete ad-hoc signature, but it is not Developer ID signed and is not Apple-notarized. Ad-hoc signing lets macOS verify bundle integrity and its designated identifier; it does not establish an Apple-verified developer identity or guarantee Gatekeeper acceptance for downloads. This format is intended only for the maintainer's personal use. Gatekeeper may block or warn on first launch, and the artifact is not suitable for ordinary public distribution.
+To install, open the DMG and drag `TokChan.app` onto the `Applications` folder shown beside it, then eject the `TokChan` volume. Do not replace an existing installed copy unless that is intentional.
+
+> **Warning:** the packaged app bundle has a complete ad-hoc signature, but it is not Developer ID signed and is not Apple-notarized. DMG packaging improves installation convenience only. Ad-hoc signing lets macOS verify bundle integrity and its designated identifier; it does not establish an Apple-verified developer identity or guarantee Gatekeeper acceptance for downloads. This format is intended only for the maintainer's personal use. Gatekeeper may block or warn on first launch, and the artifact is not suitable for ordinary public distribution.
 
 ## Prepare and publish a release
 
@@ -71,7 +73,7 @@ Pushing the Tag triggers `.github/workflows/release.yml`. The workflow validates
 - Add a Tag ruleset for `v*` that limits Tag creation, update, and deletion to maintainers. Published Tags must never be moved.
 - Consider GitHub immutable Releases after rehearsing the workflow in a disposable repository.
 
-Before distributing TokChan to ordinary users, complete a separate hardening effort covering Developer ID Application signing, Hardened Runtime compatibility, Xcode archive/export, App Store Connect API-key notarization, stapling, `spctl`/Gatekeeper validation, credential rotation, and incident recovery. DMG/PKG packaging and in-app updates are also outside this personal-use release flow.
+Before distributing TokChan to ordinary users, complete a separate hardening effort covering Developer ID Application signing, Hardened Runtime compatibility, Xcode archive/export, App Store Connect API-key notarization, stapling, `spctl`/Gatekeeper validation, credential rotation, incident recovery, and in-app updates. PKG distribution remains outside this personal-use release flow.
 
 ## Integration behavior
 

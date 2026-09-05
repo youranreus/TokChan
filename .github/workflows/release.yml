@@ -84,23 +84,23 @@ jobs:
         run: |
           set -euo pipefail
           version='${{ steps.version.outputs.version }}'
-          zip="dist/TokChan-v${version}-macos-universal.zip"
-          checksum="${zip}.sha256"
-          test -f "$zip"
+          dmg="dist/TokChan-v${version}-macos-universal.dmg"
+          checksum="${dmg}.sha256"
+          test -f "$dmg"
           test -f "$checksum"
-          [[ "$(find dist -maxdepth 1 -type f -print | sort)" == "$(printf '%s\n%s\n' "$checksum" "$zip" | sort)" ]]
+          [[ "$(find dist -maxdepth 1 -type f -print | sort)" == "$(printf '%s\n%s\n' "$checksum" "$dmg" | sort)" ]]
           (
             cd "$(dirname "$checksum")"
             shasum -a 256 -c "$(basename "$checksum")"
           )
-          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
           echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
 
       - name: Create or resume draft Release
         shell: bash
         env:
           TAG: ${{ steps.version.outputs.tag }}
-          ZIP: ${{ steps.assets.outputs.zip }}
+          DMG: ${{ steps.assets.outputs.dmg }}
           CHECKSUM: ${{ steps.assets.outputs.checksum }}
         run: |
           set -euo pipefail
@@ -116,9 +116,10 @@ jobs:
           }
 
           if [[ -z "$release_info" ]]; then
-            printf -v warning '%s\n%s' \
+            printf -v warning '%s\n%s\n\n%s' \
               '> [!WARNING]' \
-              "> This app bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized. Ad-hoc signing provides bundle integrity but no verified developer identity. It is intended for the maintainer's personal use only. Gatekeeper may block or warn on first launch. Verify the SHA-256 checksum before use. It is not ready for ordinary public distribution."
+              "> This app bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized. DMG packaging improves installation convenience only; it provides no verified developer identity. It is intended for the maintainer's personal use only. Gatekeeper may block or warn on first launch. Verify the SHA-256 checksum before use. It is not ready for ordinary public distribution." \
+              "After verification, open the DMG and drag TokChan.app to the Applications folder shown in the image."
             release_info=$(gh api --method POST \
               "repos/${GITHUB_REPOSITORY}/releases" \
               -f tag_name="$TAG" \
@@ -160,13 +161,13 @@ jobs:
             echo "Release $TAG left draft state before asset upload; refusing to overwrite assets" >&2
             exit 1
           }
-          gh release upload "$TAG" "$ZIP" "$CHECKSUM" --clobber
+          gh release upload "$TAG" "$DMG" "$CHECKSUM" --clobber
 
           [[ "$(gh api "$release_api" --jq .draft)" == true ]] || {
             echo "Release $TAG left draft state during asset upload; refusing to publish" >&2
             exit 1
           }
-          expected=$(printf '%s\n%s\n' "$(basename "$ZIP")" "$(basename "$CHECKSUM")" | sort)
+          expected=$(printf '%s\n%s\n' "$(basename "$DMG")" "$(basename "$CHECKSUM")" | sort)
           actual=$(gh api "$release_api" --jq '.assets[].name' | sort)
           [[ "$actual" == "$expected" ]] || {
             echo "Release assets do not exactly match the expected pair" >&2

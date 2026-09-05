@@ -1,0 +1,4 @@
+{"file":".trellis/spec/macos/index.md","reason":"Full macOS package quality-check entry point."}
+{"file":".trellis/spec/macos/release-workflow.md","reason":"Verify packaging, signature, checksum, cleanup, immutable asset, and publication contracts."}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"Verify fail-closed behavior, minimal dependencies, and maintainability."}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"Verify fixture coverage, real Xcode tests, and integration validation."}

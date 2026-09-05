@@ -75,7 +75,7 @@ Fake-backed unit tests must assert:
 - UI-test factory behavior is in-memory under Debug.
 
 Run the full macOS Xcode suite and a Release build. Manual signed-app verification must cover Login Items visibility/removal, approval, external changes, and actual launch after sign-out/restart.
-For release workflow changes, extract the final ZIP and assert strict Bundle verification, `Identifier=com.youranreus.TokChan`, Info.plist coverage, sealed resources, and both architectures before testing the installed app.
+For release workflow changes, mount the final DMG read-only and assert strict Bundle verification, `Identifier=com.youranreus.TokChan`, Info.plist coverage, sealed resources, and both architectures before testing the installed app.
 
 ### 7. Wrong vs Correct
 

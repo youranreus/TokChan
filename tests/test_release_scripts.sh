@@ -13,7 +13,7 @@ patch_version=7.8.10
 minor_version=7.9.0
 major_version=8.0.0
 next_build=43
-fixture_asset="TokChan-v${fixture_version}-macos-universal.zip"
+fixture_asset="TokChan-v${fixture_version}-macos-universal.dmg"
 next_tag="v${patch_version}"
 export TEST_FIXTURE_VERSION=$fixture_version
 export TEST_FIXTURE_BUILD=$fixture_build
@@ -86,7 +86,113 @@ exit 0
 MOCK
   cat > "$fixture/mock-bin/lipo" <<'MOCK'
 #!/usr/bin/env bash
-echo 'arm64 x86_64'
+if [[ "$*" == *verification-mount* && "${MOCK_DMG_BAD_ARCHITECTURES:-}" == 1 ]]; then
+  echo arm64
+else
+  echo 'arm64 x86_64'
+fi
+MOCK
+  cat > "$fixture/mock-bin/shasum" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${MOCK_CHECKSUM_FAILURE:-}" == 1 && "$*" == *macos-universal.dmg ]]; then
+  exit 1
+fi
+exec /usr/bin/shasum "$@"
+MOCK
+  cat > "$fixture/mock-bin/osascript" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == - && -d "$2/TokChan.app" ]]
+[[ -L "$2/Applications" && "$(readlink "$2/Applications")" == /Applications ]]
+[[ -z "${MOCK_OSASCRIPT_LOG:-}" ]] || printf '%s\n' "$*" >> "$MOCK_OSASCRIPT_LOG"
+[[ "${MOCK_LAYOUT_FAILURE:-}" != 1 ]] || exit 1
+cat >/dev/null
+[[ "${MOCK_LAYOUT_MISSING:-}" == 1 ]] || printf fixture > "$2/.DS_Store"
+MOCK
+  cat > "$fixture/mock-bin/hdiutil" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+command_name=$1
+shift
+[[ -z "${MOCK_HDIUTIL_LOG:-}" ]] || printf '%s\t%s\n' "$command_name" "$*" >> "$MOCK_HDIUTIL_LOG"
+
+argument_after() {
+  local wanted=$1
+  shift
+  while (($#)); do
+    if [[ "$1" == "$wanted" ]]; then
+      printf '%s\n' "$2"
+      return
+    fi
+    shift
+  done
+  return 1
+}
+
+case "$command_name" in
+  create)
+    [[ "${MOCK_DMG_CREATE_FAILURE:-}" != 1 ]] || exit 1
+    source=$(argument_after -srcfolder "$@")
+    output=${!#}
+    [[ -d "$source/TokChan.app" ]]
+    [[ -L "$source/Applications" && "$(readlink "$source/Applications")" == /Applications ]]
+    printf 'writable image fixture\n' > "$output"
+    ;;
+  attach)
+    mount_point=$(argument_after -mountpoint "$@")
+    image=${!#}
+    if [[ "$image" == */TokChan-writable.dmg ]]; then
+      phase=layout
+      device=/dev/disk91
+      work_dir=$(dirname "$image")
+    else
+      phase=verification
+      device=/dev/disk92
+      work_dir=$(dirname "$(dirname "$image")")
+    fi
+    [[ "${MOCK_DMG_ATTACH_FAILURE:-}" != "$phase" ]] || exit 1
+    /usr/bin/ditto "$work_dir/dmg-root/" "$mount_point/"
+    if [[ "$phase" == verification ]]; then
+      if [[ "${MOCK_DMG_BAD_SYMLINK:-}" == 1 ]]; then
+        rm "$mount_point/Applications"
+        ln -s /tmp "$mount_point/Applications"
+      fi
+      [[ "${MOCK_DMG_EXTRA_ENTRY:-}" != 1 ]] || printf extra > "$mount_point/ReadMe.txt"
+      [[ "${MOCK_DMG_MISSING_APP:-}" != 1 ]] || rm -rf "$mount_point/TokChan.app"
+      if [[ "${MOCK_DMG_BAD_VERSION:-}" == 1 ]]; then
+        /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 0.0.0' \
+          "$mount_point/TokChan.app/Contents/Info.plist"
+      fi
+    fi
+    if [[ "${MOCK_DMG_BAD_PLIST:-}" == "$phase" ]]; then
+      printf '%s\n' '<?xml version="1.0"?><plist version="1.0"><dict/></plist>'
+    else
+      python3 - "$device" "$mount_point" <<'PY'
+import plistlib
+import sys
+plistlib.dump({"system-entities": [{"dev-entry": sys.argv[1], "mount-point": sys.argv[2]}]}, sys.stdout.buffer)
+PY
+    fi
+    ;;
+  detach)
+    phase=layout
+    [[ "$1" == /dev/disk92 ]] && phase=verification
+    [[ "${MOCK_DMG_DETACH_FAILURE:-}" != "$phase" ]] || exit 1
+    ;;
+  convert)
+    [[ "${MOCK_DMG_CONVERT_FAILURE:-}" != 1 ]] || exit 1
+    output=$(argument_after -o "$@")
+    printf 'compressed image fixture\n' > "$output"
+    ;;
+  verify)
+    [[ "${MOCK_DMG_VERIFY_FAILURE:-}" != 1 ]] || exit 1
+    [[ -f "$1" ]]
+    ;;
+  *)
+    echo "unexpected hdiutil invocation: $command_name $*" >&2
+    exit 64
+    ;;
+esac
 MOCK
   cat > "$fixture/mock-bin/codesign" <<'MOCK'
 #!/usr/bin/env bash
@@ -113,7 +219,7 @@ if [[ $# -eq 5 && "$1" == --verify && "$2" == --deep && "$3" == --strict && \
   app=$5
   record "$(printf 'verify\t%s' "$app")"
   [[ -f "$app/Contents/_CodeSignature/CodeResources" ]] || exit 1
-  if [[ "$app" == */verification/TokChan.app ]]; then
+  if [[ "$app" == */verification-mount/TokChan.app ]]; then
     [[ "${MOCK_CODESIGN_POST_VERIFY_FAILURE:-}" != 1 ]] || exit 1
   else
     [[ "${MOCK_CODESIGN_PRE_VERIFY_FAILURE:-}" != 1 ]] || exit 1
@@ -127,7 +233,7 @@ if [[ $# -eq 3 && "$1" == -dv && "$2" == --verbose=4 ]]; then
   [[ -f "$app/Contents/_CodeSignature/CodeResources" ]] || exit 1
   [[ "${MOCK_CODESIGN_METADATA_FAILURE:-}" != 1 ]] || exit 1
   identifier=${MOCK_CODESIGN_METADATA_IDENTIFIER:-com.youranreus.TokChan}
-  if [[ "$app" == */verification/TokChan.app ]]; then
+  if [[ "$app" == */verification-mount/TokChan.app ]]; then
     [[ "${MOCK_CODESIGN_POST_METADATA_FAILURE:-}" != 1 ]] || exit 1
     identifier=${MOCK_CODESIGN_POST_METADATA_IDENTIFIER:-$identifier}
   fi
@@ -199,11 +305,11 @@ MOCK
 
 fixture="$test_tmp/build"
 make_build_fixture "$fixture"
-zip="$fixture/output/$fixture_asset"
-checksum="$zip.sha256"
+dmg="$fixture/output/$fixture_asset"
+checksum="$dmg.sha256"
 
 assert_no_build_assets() {
-  [[ ! -e "$zip" && ! -L "$zip" && ! -e "$checksum" && ! -L "$checksum" ]]
+  [[ ! -e "$dmg" && ! -L "$dmg" && ! -e "$checksum" && ! -L "$checksum" ]]
 }
 
 expect_failure "ad-hoc bundle signing failed" env PATH="$fixture/mock-bin:$PATH" \
@@ -241,24 +347,155 @@ assert_no_build_assets
 pass "build script rejects ambiguous duplicate signature metadata"
 
 rm -rf "$fixture/output"
+post_verify_failure_log="$test_tmp/post-verify-failure-hdiutil.log"
 expect_failure "strict signature verification failed" env PATH="$fixture/mock-bin:$PATH" \
-  MOCK_CODESIGN_POST_VERIFY_FAILURE=1 \
+  MOCK_CODESIGN_POST_VERIFY_FAILURE=1 MOCK_HDIUTIL_LOG="$post_verify_failure_log" \
   "$fixture/scripts/build-release.sh" --skip-tests --output output
 assert_no_build_assets
-pass "build script fails closed when extracted-app verification fails"
+grep -F $'detach\t/dev/disk92' "$post_verify_failure_log" >/dev/null
+pass "build script detaches its verification image when mounted-app verification fails"
 
 rm -rf "$fixture/output"
 expect_failure "unexpected identifier post-archive.invalid" env PATH="$fixture/mock-bin:$PATH" \
   MOCK_CODESIGN_POST_METADATA_IDENTIFIER=post-archive.invalid \
   "$fixture/scripts/build-release.sh" --skip-tests --output output
 assert_no_build_assets
-pass "build script fails closed when extracted-app metadata changes"
+pass "build script fails closed when mounted-app signature metadata changes"
+
+rm -rf "$fixture/output"
+expect_failure "could not create writable disk image" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_DMG_CREATE_FAILURE=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when writable DMG creation fails"
+
+rm -rf "$fixture/output"
+layout_failure_log="$test_tmp/layout-failure-hdiutil.log"
+expect_failure "could not configure Finder disk image layout" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_LAYOUT_FAILURE=1 MOCK_HDIUTIL_LOG="$layout_failure_log" \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+grep -F $'detach\t/dev/disk91' "$layout_failure_log" >/dev/null
+pass "build script detaches its writable image when Finder layout fails"
+
+rm -rf "$fixture/output"
+expect_failure "Finder did not persist disk image layout metadata" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_LAYOUT_MISSING=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when Finder layout metadata is missing"
+
+rm -rf "$fixture/output"
+expect_failure "could not attach disk image for readwrite access" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_DMG_ATTACH_FAILURE=layout \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when writable DMG attach fails"
+
+rm -rf "$fixture/output"
+bad_plist_log="$test_tmp/bad-plist-hdiutil.log"
+expect_failure "could not identify owned readwrite disk image attachment" env \
+  PATH="$fixture/mock-bin:$PATH" MOCK_DMG_BAD_PLIST=layout MOCK_HDIUTIL_LOG="$bad_plist_log" \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+grep -F $'detach\t' "$bad_plist_log" | grep -F '/layout-mount' >/dev/null
+pass "build script tracks its owned writable mount when attach plist parsing fails"
+
+rm -rf "$fixture/output"
+bad_verification_plist_log="$test_tmp/bad-verification-plist-hdiutil.log"
+expect_failure "could not identify owned readonly disk image attachment" env \
+  PATH="$fixture/mock-bin:$PATH" MOCK_DMG_BAD_PLIST=verification \
+  MOCK_HDIUTIL_LOG="$bad_verification_plist_log" \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+grep -F $'detach\t' "$bad_verification_plist_log" | grep -F '/verification-mount' >/dev/null
+pass "build script tracks its owned verification mount when attach plist parsing fails"
+
+rm -rf "$fixture/output"
+expect_failure "could not detach writable disk image" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_DMG_DETACH_FAILURE=layout \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed and retains diagnostics when writable detach fails"
+
+rm -rf "$fixture/output"
+expect_failure "could not create compressed disk image" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_DMG_CONVERT_FAILURE=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when DMG conversion fails"
+
+rm -rf "$fixture/output"
+expect_failure "disk image verification failed" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_DMG_VERIFY_FAILURE=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when hdiutil verification fails"
+
+rm -rf "$fixture/output"
+expect_failure "could not attach disk image for readonly access" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_DMG_ATTACH_FAILURE=verification \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when verification mount fails"
+
+rm -rf "$fixture/output"
+expect_failure "does not point to /Applications" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_DMG_BAD_SYMLINK=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script rejects a DMG with the wrong Applications symlink"
+
+rm -rf "$fixture/output"
+expect_failure "unexpected user-visible disk image entries" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_DMG_EXTRA_ENTRY=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script rejects unexpected visible DMG contents"
+
+rm -rf "$fixture/output"
+expect_failure "expected app was not found in disk image" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_DMG_MISSING_APP=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script rejects a DMG without TokChan.app"
+
+rm -rf "$fixture/output"
+expect_failure "version 0.0.0 does not match" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_DMG_BAD_VERSION=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script rejects changed mounted-App version metadata"
+
+rm -rf "$fixture/output"
+expect_failure "does not contain x86_64" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_DMG_BAD_ARCHITECTURES=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script rejects changed mounted-App architectures"
+
+rm -rf "$fixture/output"
+expect_failure "could not detach verification disk image" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_DMG_DETACH_FAILURE=verification \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when verification detach fails"
+
+rm -rf "$fixture/output"
+expect_failure "diagnostic log retained" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_CHECKSUM_FAILURE=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when DMG checksum creation fails"
 
 rm -rf "$fixture/output"
 codesign_log="$test_tmp/codesign.log"
+hdiutil_log="$test_tmp/hdiutil.log"
+osascript_log="$test_tmp/osascript.log"
 build_output=$(PATH="$fixture/mock-bin:$PATH" MOCK_CODESIGN_LOG="$codesign_log" \
+  MOCK_HDIUTIL_LOG="$hdiutil_log" MOCK_OSASCRIPT_LOG="$osascript_log" \
   "$fixture/scripts/build-release.sh" --skip-tests --output output)
-[[ -f "$zip" && -f "$checksum" ]]
+[[ -f "$dmg" && -f "$checksum" ]]
 (
   cd "$fixture/output"
   shasum -a 256 -c "$(basename "$checksum")" >/dev/null
@@ -266,15 +503,17 @@ build_output=$(PATH="$fixture/mock-bin:$PATH" MOCK_CODESIGN_LOG="$codesign_log" 
 [[ "$(grep -c $'^sign\tcom.youranreus.TokChan\t' "$codesign_log")" -eq 1 ]]
 [[ "$(grep -c $'^verify\t' "$codesign_log")" -eq 2 ]]
 [[ "$(grep -c $'^display\t' "$codesign_log")" -eq 2 ]]
-grep -F $'verify\t' "$codesign_log" | grep -F '/verification/TokChan.app' >/dev/null
-fixture_extraction="$test_tmp/fixture-extraction"
-mkdir -p "$fixture_extraction"
-ditto -x -k "$zip" "$fixture_extraction"
-[[ "$(cat "$fixture_extraction/TokChan.app/Contents/_CodeSignature/CodeResources")" == \
-  "fixture bundle signature" ]]
+grep -F $'verify\t' "$codesign_log" | grep -F '/verification-mount/TokChan.app' >/dev/null
+[[ "$(grep -c $'^attach\t' "$hdiutil_log")" -eq 2 ]]
+[[ "$(grep -c $'^detach\t' "$hdiutil_log")" -eq 2 ]]
+grep -F $'create\t-quiet -fs HFS+ -format UDRW -volname TokChan -srcfolder ' "$hdiutil_log" >/dev/null
+grep -F $'convert\t' "$hdiutil_log" | grep -F -- '-format UDZO' >/dev/null
+grep -F $'verify\t' "$hdiutil_log" >/dev/null
+grep -F -- '-readonly -nobrowse -noautoopen -mountpoint' "$hdiutil_log" >/dev/null
+[[ -s "$osascript_log" ]]
 [[ "$build_output" == *"ad-hoc signed, not Developer ID signed, and not Apple-notarized"* ]]
 [[ "$build_output" == *"intended only for the maintainer's personal use"* ]]
-pass "build script signs the complete bundle and preserves its signature through ZIP round trip"
+pass "build script creates, lays out, mounts, and reverifies the signed DMG"
 grep -F 'cd "$(dirname "$checksum")"' "$root/.github/workflows/release.yml" >/dev/null
 grep -F 'shasum -a 256 -c "$(basename "$checksum")"' \
   "$root/.github/workflows/release.yml" >/dev/null
@@ -288,7 +527,42 @@ grep -F 'Test, build, ad-hoc sign, and package universal app' \
 grep -F 'ad-hoc signed, not Developer ID signed, and not Apple-notarized' \
   "$root/.github/workflows/release.yml" >/dev/null
 ! grep -F 'This ZIP is unsigned' "$root/.github/workflows/release.yml" >/dev/null
-pass "release workflow describes ad-hoc signing without claiming Developer ID or notarization"
+grep -F 'set position of item "TokChan.app" of targetFolder to {140, 160}' \
+  "$root/scripts/build-release.sh" >/dev/null
+grep -F 'set position of item "Applications" of targetFolder to {410, 160}' \
+  "$root/scripts/build-release.sh" >/dev/null
+! grep -Ei 'background (picture|image)' "$root/scripts/build-release.sh" >/dev/null
+grep -F 'TokChan-v${version}-macos-universal.dmg' \
+  "$root/.github/workflows/release.yml" >/dev/null
+! grep -F 'macos-universal.zip' "$root/.github/workflows/release.yml" >/dev/null
+python3 - "$root/.github/workflows/release.yml" <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+lines = Path(sys.argv[1]).read_text().splitlines()
+blocks = []
+for index, line in enumerate(lines):
+    if line.strip() != "run: |":
+        continue
+    indent = len(line) - len(line.lstrip()) + 2
+    block = []
+    for candidate in lines[index + 1:]:
+        candidate_indent = len(candidate) - len(candidate.lstrip())
+        if candidate.strip() and candidate_indent < indent:
+            break
+        block.append(candidate[indent:] if len(candidate) >= indent else "")
+    blocks.append("\n".join(block) + "\n")
+if not blocks:
+    raise SystemExit("no workflow shell blocks found")
+with tempfile.TemporaryDirectory() as directory:
+    for index, block in enumerate(blocks):
+        path = Path(directory) / f"run-{index}.sh"
+        path.write_text(block)
+        subprocess.run(["bash", "-n", str(path)], check=True)
+PY
+pass "release workflow uses the exact DMG pair and all shell blocks parse"
 
 workflow_step="$test_tmp/publish-release-step.sh"
 python3 - "$root/.github/workflows/release.yml" "$workflow_step" <<'PY'
@@ -315,7 +589,9 @@ cat > "$workflow_mock_bin/gh" <<'MOCK'
 set -euo pipefail
 if [[ "$1" == api && " $* " == *" --paginate "* ]]; then
   if [[ "$(cat "${MOCK_RELEASE_STATE:?}")" != absent && "${MOCK_LIST_INVISIBLE:-}" != 1 ]]; then
-    printf '123\ttrue\n'
+    state=$(cat "${MOCK_RELEASE_STATE:?}")
+    [[ "$state" == draft ]] && draft=true || draft=false
+    printf '123\t%s\n' "$draft"
   fi
 elif [[ "$1" == api && " $* " == *" --method POST "* ]]; then
   [[ "$(cat "${MOCK_RELEASE_STATE:?}")" == absent ]]
@@ -332,7 +608,7 @@ elif [[ "$1" == api && " $* " == *" --jq .body "* ]]; then
 elif [[ "$1" == api && " $* " == *" --jq .draft "* ]]; then
   [[ "$(cat "${MOCK_RELEASE_STATE:?}")" == draft ]] && echo true || echo false
 elif [[ "$1" == api && " $* " == *" --jq .assets[].name "* ]]; then
-  printf '%s\n' "${MOCK_ZIP_NAME:?}" "${MOCK_CHECKSUM_NAME:?}"
+  printf '%s\n' "${MOCK_DMG_NAME:?}" "${MOCK_CHECKSUM_NAME:?}"
 elif [[ "$1 $2" == 'release upload' ]]; then
   [[ -f "$4" && -f "$5" ]]
 else
@@ -342,28 +618,46 @@ fi
 MOCK
 chmod +x "$workflow_mock_bin/gh"
 env PATH="$workflow_mock_bin:$PATH" \
-  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" ZIP="$zip" CHECKSUM="$checksum" \
-  MOCK_RELEASE_STATE="$workflow_state" MOCK_ZIP_NAME="$(basename "$zip")" \
+  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" \
+  MOCK_RELEASE_STATE="$workflow_state" MOCK_DMG_NAME="$(basename "$dmg")" \
   MOCK_CHECKSUM_NAME="$(basename "$checksum")" bash "$workflow_step" >/dev/null
 [[ "$(cat "$workflow_state")" == published ]]
 pass "release workflow resumes and publishes a draft by Release ID"
 printf absent > "$workflow_state"
 env PATH="$workflow_mock_bin:$PATH" \
-  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" ZIP="$zip" CHECKSUM="$checksum" \
-  MOCK_RELEASE_STATE="$workflow_state" MOCK_LIST_INVISIBLE=1 MOCK_ZIP_NAME="$(basename "$zip")" \
+  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" \
+  MOCK_RELEASE_STATE="$workflow_state" MOCK_LIST_INVISIBLE=1 MOCK_DMG_NAME="$(basename "$dmg")" \
   MOCK_CHECKSUM_NAME="$(basename "$checksum")" bash "$workflow_step" >/dev/null
 [[ "$(cat "$workflow_state")" == published ]]
 pass "release workflow publishes a new draft from the create response ID"
 printf draft > "$workflow_state"
 expect_failure "missing required warning text: no verified developer identity" env \
   PATH="$workflow_mock_bin:$PATH" \
-  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" ZIP="$zip" CHECKSUM="$checksum" \
-  MOCK_RELEASE_STATE="$workflow_state" MOCK_ZIP_NAME="$(basename "$zip")" \
+  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" \
+  MOCK_RELEASE_STATE="$workflow_state" MOCK_DMG_NAME="$(basename "$dmg")" \
   MOCK_CHECKSUM_NAME="$(basename "$checksum")" \
   MOCK_RELEASE_BODY='This app bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized.' \
   bash "$workflow_step"
 [[ "$(cat "$workflow_state")" == draft ]]
 pass "release workflow refuses a draft with incomplete distribution warnings"
+
+printf published > "$workflow_state"
+expect_failure "already published; assets are immutable" env \
+  PATH="$workflow_mock_bin:$PATH" \
+  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" \
+  MOCK_RELEASE_STATE="$workflow_state" MOCK_DMG_NAME="$(basename "$dmg")" \
+  MOCK_CHECKSUM_NAME="$(basename "$checksum")" bash "$workflow_step"
+[[ "$(cat "$workflow_state")" == published ]]
+pass "release workflow preserves published Release immutability"
+
+printf draft > "$workflow_state"
+expect_failure "assets do not exactly match the expected pair" env \
+  PATH="$workflow_mock_bin:$PATH" \
+  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" \
+  MOCK_RELEASE_STATE="$workflow_state" MOCK_DMG_NAME=unexpected.dmg \
+  MOCK_CHECKSUM_NAME="$(basename "$checksum")" bash "$workflow_step"
+[[ "$(cat "$workflow_state")" == draft ]]
+pass "release workflow refuses to publish a draft with a non-exact asset pair"
 
 expect_failure "refusing to overwrite existing asset" env PATH="$fixture/mock-bin:$PATH" \
   "$fixture/scripts/build-release.sh" --skip-tests --output output
@@ -371,11 +665,11 @@ pass "build script refuses stale final assets"
 
 rm -rf "$fixture/output"
 mkdir -p "$fixture/output"
-ln -s "$fixture/missing-user-asset" "$zip"
+ln -s "$fixture/missing-user-asset" "$dmg"
 expect_failure "refusing to overwrite existing asset" env PATH="$fixture/mock-bin:$PATH" \
   "$fixture/scripts/build-release.sh" --skip-tests --output output
-[[ -L "$zip" && "$(readlink "$zip")" == "$fixture/missing-user-asset" ]]
-rm -f "$zip"
+[[ -L "$dmg" && "$(readlink "$dmg")" == "$fixture/missing-user-asset" ]]
+rm -f "$dmg"
 pass "build script preserves a pre-existing dangling asset symlink"
 
 rm -rf "$fixture/output"
@@ -416,7 +710,7 @@ expect_failure "diagnostic log retained" env PATH="$fixture/mock-bin:$PATH" \
 [[ ! -e "$fixture/output/$fixture_asset" ]]
 [[ ! -e "$fixture/output/$fixture_asset.sha256" ]]
 rm "$fixture/mock-bin/mv"
-pass "build script removes its ZIP when checksum publication fails"
+pass "build script removes its DMG when checksum publication fails"
 
 make_release_repo() {
   local work=$1
@@ -435,8 +729,8 @@ read -r version _ < <(
   python3 scripts/lib/project-version.py TokChan.xcodeproj/project.pbxproj get
 )
 mkdir -p dist
-printf fake > "dist/TokChan-v${version}-macos-universal.zip"
-printf checksum > "dist/TokChan-v${version}-macos-universal.zip.sha256"
+printf fake > "dist/TokChan-v${version}-macos-universal.dmg"
+printf checksum > "dist/TokChan-v${version}-macos-universal.dmg.sha256"
 if [[ "${MOCK_BUILD_MUTATES_TRACKED:-}" == 1 ]]; then
   printf changed > tracked-source
 fi
