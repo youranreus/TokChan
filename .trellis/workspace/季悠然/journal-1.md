@@ -152,3 +152,39 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 7: 添加 macOS 开机自启动设置
+
+**Date**: 2026-09-05
+**Task**: 添加 macOS 开机自启动设置
+**Branch**: `master`
+
+### Summary
+
+使用 SMAppService.mainApp 为 TokChan 增加符合 macOS 13 规范的登录时启动设置，系统状态作为唯一事实来源，覆盖待批准、错误恢复和外部状态刷新；补充测试与 Service Management 代码规范。
+
+### Main Changes
+
+- 新增可注入的 SMAppService 登录项服务与设置状态模型
+- 在常规设置中加入立即生效的登录时启动开关及系统批准引导
+- 增加 Service Management 规范、规划研究与 12 个聚焦测试
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `eeaa585` | (see git log) |
+
+### Testing
+
+- [OK] xcodebuild test：77 个单元测试与 1 个 UI 测试通过
+- [OK] Release universal macOS build 与 git diff --check 通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 使用签名安装版手动验证系统登录项、批准流程与重启后启动
