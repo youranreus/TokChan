@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import {
   delimiter,
@@ -19,7 +19,12 @@ interface PiToolResult {
   details?: unknown;
 }
 interface PiExtensionContext {
+  cwd?: string;
   hasUI?: boolean;
+  model?: {
+    provider?: string;
+    id?: string;
+  };
   sessionManager?: {
     getSessionId?: () => string;
     getSessionFile?: () => string | undefined;
@@ -293,7 +298,7 @@ function summaryText(text: string) {
   return `${text.trim().replace(/[。.!?…]+$/u, "")}...`;
 }
 function splitModelThinking(model?: string, fallbackThinking?: string) {
-  const m = model?.match(/^(.*):(off|minimal|low|medium|high|xhigh)$/i);
+  const m = model?.match(/^(.*):(off|minimal|low|medium|high|xhigh|max)$/i);
   return {
     model: m ? m[1] : model,
     thinking: (m?.[2] ?? fallbackThinking)?.toLowerCase(),
@@ -428,10 +433,13 @@ function exists(p: string) {
 function shellQuote(v: string) {
   return `'${v.replace(/'/g, `'\\''`)}'`;
 }
-function callStr(cb: (() => string | undefined) | undefined): string | null {
+function callStr(
+  cb: (() => string | undefined) | undefined,
+  receiver?: unknown,
+): string | null {
   if (!cb) return null;
   try {
-    return str(cb());
+    return str(cb.call(receiver));
   } catch {
     return null;
   }
@@ -654,16 +662,17 @@ function resolveRunCfg(
   input: SubagentInput,
   agentCfg: AgentConfig,
   inheritedThinking?: string,
+  inheritedModel?: string,
 ): PiRunConfig {
-  const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
+  const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
   const normalize = (v: unknown): string | undefined => {
     const s = typeof v === "string" && v.trim() ? v.trim().toLowerCase() : "";
     return THINKING_LEVELS.includes(s) ? s : undefined;
   };
-  const suffixRe = /:(off|minimal|low|medium|high|xhigh)$/i;
+  const suffixRe = /:(off|minimal|low|medium|high|xhigh|max)$/i;
   const inputModel = str(input.model);
   const agentModel = agentCfg.model;
-  const rawModel = inputModel ?? agentModel;
+  const rawModel = inputModel ?? agentModel ?? str(inheritedModel);
   const inputSuffixThinking = normalize(inputModel?.match(suffixRe)?.[1]);
   const agentSuffixThinking = normalize(agentModel?.match(suffixRe)?.[1]);
   const baseModel = rawModel?.replace(suffixRe, "");
@@ -676,6 +685,12 @@ function resolveRunCfg(
   if (baseModel && thinking && thinking !== "off")
     return { model: `${baseModel}:${thinking}`, thinking, tools: agentCfg.tools };
   return { model: baseModel || rawModel, thinking, tools: agentCfg.tools };
+}
+
+function contextModelRef(ctx?: PiExtensionContext): string | undefined {
+  const provider = str(ctx?.model?.provider);
+  const modelId = str(ctx?.model?.id);
+  return provider && modelId ? `${provider}/${modelId}` : undefined;
 }
 
 function buildPiArgs(cfg: PiRunConfig): string[] {
@@ -950,11 +965,33 @@ function readJsonlEntries(basePath: string, jsonlPath: string): JsonlEntry[] {
 function findRoot(start: string): string {
   let c = resolve(start);
   while (true) {
-    if (existsSync(join(c, ".trellis")) || existsSync(join(c, ".pi"))) return c;
+    // Only a directory with `.trellis/` is a Trellis project root. A bare
+    // `.pi` can be pi's global config (`~/.pi`) or an unrelated project, so
+    // accepting it here made root resolution stop too early (e.g. on `~`).
+    // Also reject a regular file named `.trellis` — the marker must be a
+    // directory.
+    const marker = join(c, ".trellis");
+    if (existsSync(marker) && statSync(marker).isDirectory()) return c;
     const p = dirname(c);
     if (p === c) return resolve(start);
     c = p;
   }
+}
+// Resolve the project root from the session working directory when available
+// (pi's ExtensionContext.cwd), falling back to the pi host process cwd.
+// process.cwd() is the host's launch directory and can differ from the
+// session cwd (pi-web / RPC / multi-project hosts), which made .pi/agents
+// lookups fail or resolve to the wrong project.
+function resolveRoot(ctx?: PiExtensionContext): string {
+  return findRoot(ctx?.cwd ?? process.cwd());
+}
+// Cache key scoping per-session state by both the session key and the
+// resolved project root. With dynamic root resolution a session can observe
+// different ctx.cwd values over its lifetime (pi-web / RPC / project
+// switching); keying caches by the session key alone would leak one
+// project's startup/task context into another.
+function cacheKey(k: string | null, ctx?: PiExtensionContext): string {
+  return `${k ?? "default"}::${resolveRoot(ctx)}`;
 }
 function splitFM(c: string) {
   const m = c.replace(/^\uFEFF/, "").match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
@@ -1016,20 +1053,43 @@ function parseAgentFM(c: string): AgentConfig {
 }
 
 function contextKey(input?: unknown, ctx?: PiExtensionContext): string | null {
-  const ov = str(process.env.TRELLIS_CONTEXT_ID);
-  if (ov) return ov.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 160) || hash(ov);
   const sessionId =
-    callStr(ctx?.sessionManager?.getSessionId) ??
+    callStr(ctx?.sessionManager?.getSessionId, ctx?.sessionManager) ??
     str(process.env.PI_SESSION_ID) ??
     str(process.env.PI_SESSIONID) ??
     lookupStr(input, ["session_id", "sessionId", "sessionID"]);
-  if (sessionId)
-    return `pi_${sessionId.replace(/[^A-Za-z0-9._-]+/g, "_") || hash(sessionId)}`;
+  if (sessionId) {
+    const normalized = sessionId.replace(/[^A-Za-z0-9._-]+/g, "_");
+    if (!normalized) return `pi_${hash(sessionId)}`;
+    return `pi_${normalized}${normalized === sessionId ? "" : `_${hash(sessionId)}`}`;
+  }
   const transcriptPath =
-    callStr(ctx?.sessionManager?.getSessionFile) ??
+    callStr(ctx?.sessionManager?.getSessionFile, ctx?.sessionManager) ??
     lookupStr(input, ["transcript_path", "transcriptPath", "transcript"]);
   if (transcriptPath) return `pi_transcript_${hash(transcriptPath)}`;
   return null;
+}
+
+/**
+ * Return `candidate` when it lands inside `root`, else null.
+ *
+ * A session pointer is not always something the user typed. `task.py` now
+ * refuses to store a ref that leaves the project, but a session file written
+ * before that fix can still hold one, and `trellis update` does not rewrite
+ * session files — so a poisoned pointer outlives the upgrade that closed the
+ * writer. Both sides are resolved so a task directory symlinked outside is
+ * refused too, but the original `candidate` is returned on success: callers do
+ * `relative(root, dir)`, and handing them a realpath would break that whenever
+ * `root` itself sits behind a symlink (`/tmp` does on macOS).
+ */
+function containInRoot(root: string, candidate: string): string | null {
+  try {
+    const rel = relative(realpathSync(root), realpathSync(candidate));
+    if (rel !== "" && (rel.startsWith("..") || isAbsolute(rel))) return null;
+    return candidate;
+  } catch {
+    return null;
+  }
 }
 
 function readTaskDir(root: string, key: string | null): string | null {
@@ -1043,39 +1103,14 @@ function readTaskDir(root: string, key: string | null): string | null {
     ref = ref;
     ref = ref.replace(/\\/g, "/").replace(/^\.\//, "");
     if (ref.startsWith("tasks/")) ref = `.trellis/${ref}`;
-    return ref.startsWith(".trellis/")
+    const candidate = ref.startsWith(".trellis/")
       ? join(root, ref)
       : isAbsolute(ref)
         ? ref
         : join(root, ".trellis", "tasks", ref);
+    return containInRoot(root, candidate);
   } catch {
     return null;
-  }
-}
-function sessionHasTask(root: string, key: string): boolean {
-  try {
-    const ctx = JSON.parse(
-      readText(join(root, ".trellis", ".runtime", "sessions", `${key}.json`)),
-    ) as JsonObject;
-    return !!str(ctx.current_task);
-  } catch {
-    return false;
-  }
-}
-function adoptKey(root: string, key: string): string {
-  if (sessionHasTask(root, key)) return key;
-  try {
-    const dir = join(root, ".trellis", ".runtime", "sessions");
-    const keys = readdirSync(dir)
-      .filter(
-        (f) => f.endsWith(".json") && sessionHasTask(root, f.slice(0, -5)),
-      )
-      .map((f) => f.slice(0, -5));
-    const proc = keys.filter((k) => k.startsWith("pi_process_"));
-    const cands = proc.length ? proc : keys;
-    return cands.length === 1 ? cands[0]! : key;
-  } catch {
-    return key;
   }
 }
 
@@ -1502,11 +1537,17 @@ async function runSubagent(
   signal?: AbortSignal,
   onUpdate?: (r: PiToolResult) => void,
   inheritedThinking?: string,
+  inheritedModel?: string,
 ): Promise<{ output: string; details: ProgressDetails; failed: boolean }> {
   const agentName = normalizeAgent(input.agent);
   const agentRaw = readText(join(root, ".pi", "agents", `${agentName}.md`));
   const agentCfg = parseAgentFM(agentRaw);
-  const runCfg = resolveRunCfg(input, agentCfg, inheritedThinking);
+  const runCfg = resolveRunCfg(
+    input,
+    agentCfg,
+    inheritedThinking,
+    inheritedModel,
+  );
   const mode = input.mode ?? "single";
   const startedAt = Date.now();
   const details: ProgressDetails = {
@@ -1647,32 +1688,36 @@ export default function trellisExtension(pi: {
   getThinkingLevel?: () => string;
 }): void {
   if (process.env.TRELLIS_SUBAGENT_CHILD === "1") return;
-  const root = findRoot(process.cwd());
+  // Process-level fallback; call sites with a session context re-resolve via
+  // resolveRoot(ctx) so the active project (session cwd) is used instead.
+  const root = resolveRoot();
   const procKey = `pi_process_${hash([root, process.pid, Date.now(), randomBytes(8).toString("hex")].join(":"))}`;
   let curKey: string | null = null;
 
   const getKey = (input?: unknown, ctx?: PiExtensionContext) => {
-    const k = adoptKey(root, contextKey(input, ctx) ?? curKey ?? procKey);
+    const k = contextKey(input, ctx) ?? curKey ?? procKey;
     curKey = k;
     return k;
   };
 
   // Per-turn cache to avoid double-spawning python
   let turnCache: {
-    key: string | null;
+    key: string;
     ts: number;
     wf: string;
     ov: string;
   } | null = null;
-  const getTurnCtx = (k: string | null) => {
+  const getTurnCtx = (k: string | null, ctx?: PiExtensionContext) => {
     const now = Date.now();
-    if (turnCache && turnCache.key === k && now - turnCache.ts < 1500)
+    const ck = cacheKey(k, ctx);
+    if (turnCache && turnCache.key === ck && now - turnCache.ts < 1500)
       return turnCache;
+    const r = resolveRoot(ctx);
     turnCache = {
-      key: k,
+      key: ck,
       ts: now,
-      wf: workflowBreadcrumb(root, k),
-      ov: sessionOverview(root, k),
+      wf: workflowBreadcrumb(r, k),
+      ov: sessionOverview(r, k),
     };
     return turnCache;
   };
@@ -1684,11 +1729,12 @@ export default function trellisExtension(pi: {
   const getStartupCtx = (
     k: string | null,
     turn: { ov: string },
+    ctx?: PiExtensionContext,
   ): string => {
-    const key = k ?? "default";
+    const key = cacheKey(k, ctx);
     let startup = startupCtxCache.get(key);
     if (startup === undefined) {
-      startup = buildStartupContext(root, k, turn.ov);
+      startup = buildStartupContext(resolveRoot(ctx), k, turn.ov);
       startupCtxCache.set(key, startup);
     }
     return startup;
@@ -1696,6 +1742,14 @@ export default function trellisExtension(pi: {
   const taskCtxSnapshot = new Map<string, string>();
   const lastSentTaskCtx = new Map<string, string>();
   const lastSentRuntimeCtx = new Map<string, string>();
+  // Session-level "most recently persisted" project root. The root-scoped
+  // lastSent* maps suppress re-emission for an unchanged root, but when a
+  // session switches projects (A -> B -> A) the latest persisted update
+  // would otherwise stay B's — and its <trellis-task-context-update>
+  // explicitly supersedes the system-prompt context. Re-assert the current
+  // root's task/runtime context on every root transition so the agent never
+  // keeps following the previous project's instructions.
+  const lastPersistedRoot = new Map<string, string>();
 
   // Toggle only the latest subagent native card; do not use Pi global tool expansion.
   const toggleDetail = (ctx: PiExtensionContext) => {
@@ -1751,7 +1805,7 @@ export default function trellisExtension(pi: {
           type: "string",
           description:
             "Optional Pi thinking level override for the child sub-agent process.",
-          enum: ["off", "minimal", "low", "medium", "high", "xhigh"],
+          enum: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
         },
       },
     },
@@ -1763,6 +1817,7 @@ export default function trellisExtension(pi: {
       ctx?: PiExtensionContext,
     ) => {
       activeSubagentToolCallId = id;
+      const root = resolveRoot(ctx);
       const agentName = normalizeAgent(input.agent);
       if (!isTrellisAgent(root, agentName)) {
         return {
@@ -1811,6 +1866,7 @@ export default function trellisExtension(pi: {
       };
       const key = getKey(cleanInput, ctx);
       const inheritedThinking = pi.getThinkingLevel?.();
+      const inheritedModel = contextModelRef(ctx);
       const result = await runSubagent(
         root,
         cleanInput,
@@ -1818,6 +1874,7 @@ export default function trellisExtension(pi: {
         signal,
         onUpdate,
         inheritedThinking,
+        inheritedModel,
       );
       return {
         content: [{ type: "text", text: result.output }],
@@ -1911,10 +1968,11 @@ export default function trellisExtension(pi: {
   });
   pi.on?.("before_agent_start", (event, ctx) => {
     const k = getKey(event, ctx);
-    const key = k ?? "default";
+    const key = cacheKey(k, ctx);
     const cur = (event as { systemPrompt?: string }).systemPrompt ?? "";
-    const turn = getTurnCtx(k);
-    const startup = getStartupCtx(k, turn);
+    const root = resolveRoot(ctx);
+    const turn = getTurnCtx(k, ctx);
+    const startup = getStartupCtx(k, turn, ctx);
     // Task context is snapshotted into systemPrompt once; later on-disk
     // changes are delivered as persisted messages so the prefix stays stable.
     const freshTaskCtx = buildContext(root, "trellis-implement", k);
@@ -1926,11 +1984,23 @@ export default function trellisExtension(pi: {
     }
     const updates: string[] = [];
     const runtimeContext = [turn.wf, turn.ov].filter(Boolean).join("\n\n");
-    if (runtimeContext && runtimeContext !== lastSentRuntimeCtx.get(key)) {
+    // Re-assert the current root's context on project switches: when the
+    // session returns to an unchanged root, the root-scoped lastSent* maps
+    // alone would leave the previous project's persisted update as the most
+    // recent one in history.
+    const prevRoot = lastPersistedRoot.get(k ?? "default");
+    const switchedRoot = prevRoot !== undefined && prevRoot !== root;
+    if (
+      runtimeContext &&
+      (runtimeContext !== lastSentRuntimeCtx.get(key) || switchedRoot)
+    ) {
       lastSentRuntimeCtx.set(key, runtimeContext);
       updates.push(runtimeContext);
     }
-    if (freshTaskCtx !== lastSentTaskCtx.get(key)) {
+    if (
+      freshTaskCtx !== lastSentTaskCtx.get(key) ||
+      switchedRoot
+    ) {
       lastSentTaskCtx.set(key, freshTaskCtx);
       updates.push(
         "<trellis-task-context-update>\nTask context changed on disk. This supersedes the Trellis Task Context in the system prompt.\n\n" +
@@ -1938,6 +2008,7 @@ export default function trellisExtension(pi: {
           "\n</trellis-task-context-update>",
       );
     }
+    if (updates.length > 0) lastPersistedRoot.set(k ?? "default", root);
     const content = updates.join("\n\n");
     return {
       message: content
