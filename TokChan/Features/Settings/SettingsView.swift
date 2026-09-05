@@ -4,12 +4,14 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var viewModel: DashboardViewModel
     @ObservedObject var launchAtLoginModel: LaunchAtLoginSettingsModel
+    @ObservedObject var customPricingViewModel: CustomPricingViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
     private enum SettingsTab: Hashable {
         case general
         case autosubmit
+        case customPricing
         case about
     }
 
@@ -28,10 +30,12 @@ struct SettingsView: View {
 
     init(
         viewModel: DashboardViewModel,
-        launchAtLoginModel: LaunchAtLoginSettingsModel
+        launchAtLoginModel: LaunchAtLoginSettingsModel,
+        customPricingViewModel: CustomPricingViewModel
     ) {
         self.viewModel = viewModel
         self.launchAtLoginModel = launchAtLoginModel
+        self.customPricingViewModel = customPricingViewModel
         let preferences = viewModel.preferences
         let autosubmit = viewModel.currentAutosubmitStatus.map(AutosubmitConfiguration.init)
             ?? AutosubmitConfiguration(
@@ -77,6 +81,12 @@ struct SettingsView: View {
             }
             .tag(SettingsTab.autosubmit)
 
+            CustomPricingSettingsView(viewModel: customPricingViewModel)
+                .tabItem {
+                    Label("自定义价格", systemImage: "dollarsign.circle")
+                }
+                .tag(SettingsTab.customPricing)
+
             settingsPage {
                 aboutSettings
             }
@@ -85,7 +95,10 @@ struct SettingsView: View {
             }
             .tag(SettingsTab.about)
         }
-        .frame(width: 560, height: 600)
+        .frame(
+            minWidth: 760, idealWidth: 900, maxWidth: 1_100,
+            minHeight: 620, idealHeight: 680, maxHeight: 900
+        )
         .navigationTitle("TokChan! 设置")
         .task {
             launchAtLoginModel.refresh()

@@ -4,7 +4,7 @@
 
 ### 1. Scope / Trigger
 
-Use this contract whenever code reads Tokscale profile data, executes Tokscale through `npx`, or changes the autosubmit UI. TokChan is an adapter around Tokscale's public API and official CLI; it must not implement a second scheduler or edit Tokscale configuration files directly.
+Use this contract whenever code reads Tokscale profile data, executes Tokscale through `npx`, changes the autosubmit UI, or manages custom pricing. TokChan is an adapter around Tokscale's public API and official CLI; it must not implement a second scheduler. Direct Tokscale file writes are forbidden except for the explicitly scoped `custom-pricing.json` contract below.
 
 ### 2. Signatures
 
@@ -17,6 +17,8 @@ npx --yes tokscale@<version> autosubmit status --json
 npx --yes tokscale@<version> autosubmit enable --interval <Nm> [filters]
 npx --yes tokscale@<version> autosubmit disable
 npx --yes tokscale@<version> autosubmit run --force
+npx --yes tokscale@<version> pricing list-overrides --json
+npx --yes tokscale@<version> submit --dry-run
 ```
 
 Swift boundaries:
@@ -53,6 +55,13 @@ protocol TokscaleCLIService {
 - Autosubmit status details and run-now live in Settings, with progress/success/failure feedback. Run-now uses persisted CLI settings, not unsaved form drafts.
 - `AutosubmitStatus` reads enablement, interval, scheduler, clients, date flags/range, managed executable/version/staleness, last run milliseconds, and last error.
 - Only username, Tokscale version, and optional `npx` path belong in `UserDefaults`. A separate disposable caches-directory snapshot may contain mapped display data and the last observed autosubmit status; see `data-persistence.md`.
+- Custom pricing management first resolves the effective path through `pricing list-overrides --json`, then reads and mutates only that `custom-pricing.json`. Credentials, `settings.json`, LaunchAgents, and scheduler state remain out of bounds.
+- Treat the raw JSON document as the lossless source of truth; the CLI list response is only a path/effective-entry projection. Preserve unedited metadata, unknown keys, tier fields, compatible aliases, and decimal number semantics without routing untouched JSON numbers through binary floating-point. A missing file may become a minimal `models` document, but malformed documents must never be rebuilt as empty.
+- Custom-pricing writes compare the previously loaded bytes immediately before an atomic replacement. External changes stop the write and require reload. Editing a base rate removes all aliases for that selected rate and writes the canonical per-million key; untouched rates retain their original representation.
+- Price values are USD per million Tokens in the UI. Missing and explicit zero are distinct. Reject non-finite/negative values, case-insensitive duplicate model IDs, and entries without either input or output pricing.
+- Missing-price checks use persisted npx/version settings and exactly `submit --dry-run` with the CLI default range. They never invoke plain `submit`, `autosubmit run`, or save unrelated Settings drafts. Parse complete stdout/stderr after removing ANSI escapes and keep missing-price rows even when an all-unpriced summary says no data. Tokscale 4.15.x prints `unpriced provider/model message(s)` (not `unpriced message(s): provider/model`); current output may cap detail rows and list the remaining IDs separately.
+- Fix-up matching first uses Tokscale's case-insensitive exact key, then its documented Synthetic normalization (`hf:org/model` or `accounts/<provider>/models/<model>`). Exact matches win; ambiguous normalized matches must never be silently rewritten or duplicated.
+- A diagnostic pass requires a recognized dry-run completion marker, no unparsed pricing-failure signal, and no degraded scanner/pricing-source warning. Unknown formats, no-data results, partial-source results, failures, and verified no-missing results are separate states. Any file/context change makes an existing report stale until another dry-run.
 
 ### 4. Validation & Error Matrix
 
@@ -70,6 +79,11 @@ protocol TokscaleCLIService {
 | CLI non-zero exit | Surface exit code and at most 4,000 characters of stderr/stdout |
 | CLI timeout | Terminate the child and surface `ProcessRunnerError.timedOut` |
 | Invalid status JSON | `invalidStatusJSON`, without changing autosubmit |
+| Invalid pricing-list JSON/path | Fail loading; do not guess the default directory |
+| Missing custom-pricing file | Show an addable empty state; create only on explicit save |
+| Malformed custom-pricing JSON/models | Block writes and preserve the original bytes |
+| File changed since load | Abort with a reload-required conflict; never overwrite external edits |
+| Unknown/degraded dry-run output | Preserve details and show indeterminate/partial, never a clean pass |
 
 ### 5. Good / Base / Bad Cases
 
@@ -111,6 +125,8 @@ if #available(macOS 14.0, *) {
 - Execute a fixture `npx` with an `/usr/bin/env` shebang; assert sibling runtime resolution through the prepended child `PATH`.
 - Locator unit tests must inject or clear fixed system candidates; an empty `PATH` alone does not isolate Homebrew or `/usr/local` tools installed on CI runners. Cover explicit override/PATH/fixed precedence; every supported manager's default and absolute environment-root layout; selected/default preference; strict stable semantic sorting; deterministic cross-manager order; excluded shims, multishells and caches; broken aliases; unsafe roots/config tokens; and directory or non-executable impostors.
 - Settings tests must cover automatic/custom/fallback/unavailable presentation, including whether override controls start collapsed or expanded; locator tests separately prove executable discovery and precedence.
+- Custom-pricing file tests use temporary directories and cover missing/malformed files, add/edit/delete, zero versus nil, aliases, unknown/tier field preservation, duplicate IDs, and external-change conflicts.
+- Fixture tests cover legacy excluded-unpriced output, current zero-cost unpriced output, all-unpriced zero summaries, no data, degraded sources, ANSI output, and unknown formats. A fake runner must assert the exact `pricing list-overrides --json` and `submit --dry-run` suffixes and prove no real submit command runs.
 - With fake services, assert panel load performs only `fetch` and `status`; manual refresh orders `submit` before `fetch`; run-now orders `run` before profile/status reload.
 - UI smoke tests must use `--ui-testing` fixture dependencies and never access the network, `npx`, or `launchd`.
 

@@ -14,7 +14,9 @@ final class CLICommandBuilderTests: XCTestCase {
             (.whoami, ["whoami"]),
             (.submit, ["submit"]),
             (.disableAutosubmit, ["autosubmit", "disable"]),
-            (.runAutosubmitNow, ["autosubmit", "run", "--force"])
+            (.runAutosubmitNow, ["autosubmit", "run", "--force"]),
+            (.pricingOverrides, ["pricing", "list-overrides", "--json"]),
+            (.pricingDryRun, ["submit", "--dry-run"])
         ]
 
         for (command, suffix) in expected {
@@ -47,9 +49,11 @@ final class CLICommandBuilderTests: XCTestCase {
     }
 
     func testRejectsInjectionShapedVersionAndClient() {
-        XCTAssertThrowsError(
-            try TokscaleCommandBuilder.arguments(version: "latest;rm", command: .submit)
-        )
+        for invalidVersion in ["latest;rm", "4.15.0-.", "4.15.0-beta..1"] {
+            XCTAssertThrowsError(
+                try TokscaleCommandBuilder.arguments(version: invalidVersion, command: .submit)
+            )
+        }
 
         let configuration = AutosubmitConfiguration(
             enabled: true,

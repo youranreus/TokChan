@@ -4,6 +4,7 @@ import SwiftUI
 struct TokChanApp: App {
     @StateObject private var viewModel: DashboardViewModel
     @StateObject private var launchAtLoginModel: LaunchAtLoginSettingsModel
+    @StateObject private var customPricingViewModel: CustomPricingViewModel
 
     init() {
         let api: TokscaleAPIService
@@ -11,27 +12,38 @@ struct TokChanApp: App {
         let preferences: PreferencesStoring
         let npxLocator: NpxLocating
         let cacheStore: DashboardCacheStoring
+        let customPricingCLI: CustomPricingCLIService
+        let customPricingStore: CustomPricingFileStoring
 
         #if DEBUG
         if CommandLine.arguments.contains("--ui-testing") {
             api = PreviewAPIService()
-            cli = PreviewCLIService()
+            let previewCLI = PreviewCLIService()
+            cli = previewCLI
+            customPricingCLI = previewCLI
             preferences = PreviewPreferencesStore()
             npxLocator = PreviewNpxLocator()
             cacheStore = PreviewCacheStore()
+            customPricingStore = PreviewCustomPricingStore()
         } else {
             api = LiveTokscaleAPIClient()
-            cli = TokscaleCLIClient(runner: FoundationProcessRunner())
+            let liveCLI = TokscaleCLIClient(runner: FoundationProcessRunner())
+            cli = liveCLI
+            customPricingCLI = liveCLI
             preferences = UserDefaultsPreferencesStore()
             npxLocator = NpxLocator()
             cacheStore = FileDashboardCacheStore()
+            customPricingStore = CustomPricingFileStore()
         }
         #else
         api = LiveTokscaleAPIClient()
-        cli = TokscaleCLIClient(runner: FoundationProcessRunner())
+        let liveCLI = TokscaleCLIClient(runner: FoundationProcessRunner())
+        cli = liveCLI
+        customPricingCLI = liveCLI
         preferences = UserDefaultsPreferencesStore()
         npxLocator = NpxLocator()
         cacheStore = FileDashboardCacheStore()
+        customPricingStore = CustomPricingFileStore()
         #endif
 
         _viewModel = StateObject(
@@ -47,6 +59,14 @@ struct TokChanApp: App {
         _launchAtLoginModel = StateObject(
             wrappedValue: LaunchAtLoginSettingsModel(service: launchAtLoginService)
         )
+        _customPricingViewModel = StateObject(
+            wrappedValue: CustomPricingViewModel(
+                cli: customPricingCLI,
+                store: customPricingStore,
+                preferencesStore: preferences,
+                npxLocator: npxLocator
+            )
+        )
     }
 
     var body: some Scene {
@@ -59,7 +79,8 @@ struct TokChanApp: App {
         Settings {
             SettingsView(
                 viewModel: viewModel,
-                launchAtLoginModel: launchAtLoginModel
+                launchAtLoginModel: launchAtLoginModel,
+                customPricingViewModel: customPricingViewModel
             )
             .environment(\.locale, Locale(identifier: "zh_CN"))
         }

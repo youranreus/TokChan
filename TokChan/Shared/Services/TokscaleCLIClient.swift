@@ -12,6 +12,8 @@ enum TokscaleCommand: Equatable {
     case configureAutosubmit(AutosubmitConfiguration)
     case disableAutosubmit
     case runAutosubmitNow
+    case pricingOverrides
+    case pricingDryRun
 }
 
 enum TokscaleCommandBuilder {
@@ -32,6 +34,10 @@ enum TokscaleCommandBuilder {
             arguments += ["autosubmit", "disable"]
         case .runAutosubmitNow:
             arguments += ["autosubmit", "run", "--force"]
+        case .pricingOverrides:
+            arguments += ["pricing", "list-overrides", "--json"]
+        case .pricingDryRun:
+            arguments += ["submit", "--dry-run"]
         }
 
         return arguments
@@ -39,7 +45,7 @@ enum TokscaleCommandBuilder {
 
     static func isValidVersion(_ version: String) -> Bool {
         version.range(
-            of: #"^(latest|[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$"#,
+            of: #"^(latest|[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$"#,
             options: .regularExpression
         ) != nil
     }
@@ -238,6 +244,11 @@ final class FoundationProcessRunner: ProcessRunning {
     }
 }
 
+protocol CustomPricingCLIService {
+    func customPricingFileURL(context: TokscaleCommandContext) async throws -> URL
+    func checkCustomPricing(context: TokscaleCommandContext) async throws -> PricingDiagnosticReport
+}
+
 protocol TokscaleCLIService {
     func whoAmI(context: TokscaleCommandContext) async throws -> String
     func submit(context: TokscaleCommandContext) async throws
@@ -258,6 +269,8 @@ enum TokscaleCLIError: LocalizedError {
     case invalidDateFilter
     case failed(exitCode: Int32, message: String)
     case invalidStatusJSON(Error)
+    case invalidPricingJSON(Error)
+    case unsupportedPricing(version: String, detail: String)
     case usernameNotFound
 
     var errorDescription: String? {
@@ -276,13 +289,21 @@ enum TokscaleCLIError: LocalizedError {
             return "Tokscale 退出码为 \(exitCode)：\(message)"
         case let .invalidStatusJSON(error):
             return "无法读取自动提交状态：\(error.localizedDescription)"
+        case let .invalidPricingJSON(error):
+            return "无法读取 Tokscale 的自定义价格列表：\(error.localizedDescription)"
+        case let .unsupportedPricing(version, detail):
+            return "Tokscale \(version) 不支持所需的自定义价格命令。请升级 Tokscale 版本后重试。\(detail.isEmpty ? "" : "\n\(detail)")"
         case .usernameNotFound:
             return "Tokscale 尚未登录，或无法识别当前用户名。"
         }
     }
 }
 
-final class TokscaleCLIClient: TokscaleCLIService {
+final class TokscaleCLIClient: TokscaleCLIService, CustomPricingCLIService {
+    private struct PricingOverridesResponse: Decodable {
+        let path: String
+    }
+
     private let runner: ProcessRunning
     private let decoder = JSONDecoder()
     private let timeout: TimeInterval
@@ -336,6 +357,42 @@ final class TokscaleCLIClient: TokscaleCLIService {
         _ = try await run(.runAutosubmitNow, context: context)
     }
 
+    func customPricingFileURL(context: TokscaleCommandContext) async throws -> URL {
+        let output: ProcessOutput
+        do {
+            output = try await run(.pricingOverrides, context: context)
+        } catch let error as TokscaleCLIError {
+            throw Self.pricingCapabilityError(error, version: context.version)
+        }
+        guard let data = output.stdout.data(using: .utf8) else {
+            throw ProcessRunnerError.unreadableOutput
+        }
+        do {
+            let response = try decoder.decode(PricingOverridesResponse.self, from: data)
+            let path = response.path.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !path.isEmpty else { throw CustomPricingError.unsupportedLocation }
+            if (path as NSString).isAbsolutePath {
+                return URL(fileURLWithPath: path).standardizedFileURL
+            }
+            return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent(path).standardizedFileURL
+        } catch let error as CustomPricingError {
+            throw error
+        } catch {
+            throw TokscaleCLIError.invalidPricingJSON(error)
+        }
+    }
+
+    func checkCustomPricing(context: TokscaleCommandContext) async throws -> PricingDiagnosticReport {
+        let output: ProcessOutput
+        do {
+            output = try await run(.pricingDryRun, context: context)
+        } catch let error as TokscaleCLIError {
+            throw Self.pricingCapabilityError(error, version: context.version)
+        }
+        return PricingDiagnosticsParser().parse(output)
+    }
+
     private func run(
         _ command: TokscaleCommand,
         context: TokscaleCommandContext
@@ -354,6 +411,20 @@ final class TokscaleCLIClient: TokscaleCLIService {
             throw TokscaleCLIError.failed(exitCode: output.exitCode, message: message)
         }
         return output
+    }
+
+    private static func pricingCapabilityError(
+        _ error: TokscaleCLIError,
+        version: String
+    ) -> TokscaleCLIError {
+        guard case let .failed(_, message) = error else { return error }
+        let lowered = message.lowercased()
+        let unsupportedSignals = [
+            "unrecognized subcommand", "unknown command", "unexpected argument",
+            "wasn't expected", "was not expected", "unknown option"
+        ]
+        guard unsupportedSignals.contains(where: lowered.contains) else { return error }
+        return .unsupportedPricing(version: version, detail: message)
     }
 
     private static func sanitizedMessage(_ value: String) -> String {

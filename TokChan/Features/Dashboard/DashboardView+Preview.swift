@@ -33,7 +33,7 @@ struct PreviewAPIService: TokscaleAPIService {
 
 }
 
-struct PreviewCLIService: TokscaleCLIService {
+struct PreviewCLIService: TokscaleCLIService, CustomPricingCLIService {
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
     func submit(context: TokscaleCommandContext) async throws {}
 
@@ -54,6 +54,27 @@ struct PreviewCLIService: TokscaleCLIService {
     ) async throws {}
     func disableAutosubmit(context: TokscaleCommandContext) async throws {}
     func runAutosubmitNow(context: TokscaleCommandContext) async throws {}
+
+    func customPricingFileURL(context: TokscaleCommandContext) async throws -> URL {
+        URL(fileURLWithPath: "/tmp/tokchan-ui-test/custom-pricing.json")
+    }
+
+    func checkCustomPricing(context: TokscaleCommandContext) async throws -> PricingDiagnosticReport {
+        PricingDiagnosticReport(
+            outcome: .missingPricing,
+            items: [MissingPricingItem(
+                providerModel: "anthropic/claude-preview",
+                provider: "anthropic",
+                modelID: "claude-preview",
+                messageCount: 3,
+                tokenCount: 12_345,
+                reason: "Tokscale 报告该模型缺少价格。"
+            )],
+            warnings: [],
+            details: "Dry run fixture: anthropic/claude-preview is unpriced.",
+            checkedAt: Date(timeIntervalSince1970: 1_788_425_600)
+        )
+    }
 }
 
 final class PreviewPreferencesStore: PreferencesStoring {
@@ -91,5 +112,59 @@ struct DashboardView_Previews: PreviewProvider {
 final class PreviewCacheStore: DashboardCacheStoring {
     func load() -> DashboardCacheSnapshot? { nil }
     func save(_ snapshot: DashboardCacheSnapshot) throws {}
+}
+
+final class PreviewCustomPricingStore: CustomPricingFileStoring {
+    private var value = CustomPricingSnapshot(
+        fileURL: URL(fileURLWithPath: "/tmp/tokchan-ui-test/custom-pricing.json"),
+        originalData: Data("fixture".utf8),
+        entries: [
+            CustomPricingEntry(
+                modelID: "claude-sonnet-4-5-with-a-long-model-identifier", inputPrice: 3, outputPrice: 15,
+                cacheReadPrice: 0.3, cacheWritePrice: nil,
+                source: "fixture", notes: "UI testing", issue: nil
+            ),
+            CustomPricingEntry(
+                modelID: "free-model", inputPrice: 0, outputPrice: 0,
+                cacheReadPrice: nil, cacheWritePrice: nil,
+                source: nil, notes: nil, issue: nil
+            )
+        ] + (1...14).map {
+            CustomPricingEntry(modelID: "fixture-model-\($0)", inputPrice: Double($0),
+                               outputPrice: Double($0 * 2), cacheReadPrice: nil,
+                               cacheWritePrice: nil, source: "fixture", notes: nil, issue: nil)
+        }
+    )
+
+    func load(from url: URL) throws -> CustomPricingSnapshot { value }
+    func hasChanged(_ snapshot: CustomPricingSnapshot) throws -> Bool { false }
+
+    func add(_ draft: ValidatedCustomPricingDraft, to snapshot: CustomPricingSnapshot) throws -> CustomPricingSnapshot {
+        value = replacing(entries: snapshot.entries + [entry(draft)])
+        return value
+    }
+
+    func update(originalModelID: String, with draft: ValidatedCustomPricingDraft,
+                in snapshot: CustomPricingSnapshot) throws -> CustomPricingSnapshot {
+        value = replacing(entries: snapshot.entries.filter { $0.modelID != originalModelID } + [entry(draft)])
+        return value
+    }
+
+    func delete(modelID: String, from snapshot: CustomPricingSnapshot) throws -> CustomPricingSnapshot {
+        value = replacing(entries: snapshot.entries.filter { $0.modelID != modelID })
+        return value
+    }
+
+    private func replacing(entries: [CustomPricingEntry]) -> CustomPricingSnapshot {
+        CustomPricingSnapshot(fileURL: value.fileURL, originalData: UUID().uuidString.data(using: .utf8),
+                              entries: entries.sorted { $0.modelID < $1.modelID })
+    }
+
+    private func entry(_ draft: ValidatedCustomPricingDraft) -> CustomPricingEntry {
+        CustomPricingEntry(modelID: draft.modelID, inputPrice: draft.inputPrice,
+                           outputPrice: draft.outputPrice, cacheReadPrice: draft.cacheReadPrice,
+                           cacheWritePrice: draft.cacheWritePrice, source: draft.source,
+                           notes: draft.notes, issue: nil)
+    }
 }
 #endif
