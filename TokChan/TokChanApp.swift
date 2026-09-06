@@ -1,12 +1,14 @@
+import AppKit
 import SwiftUI
 
-@main
-struct TokChanApp: App {
-    @StateObject private var viewModel: DashboardViewModel
-    @StateObject private var launchAtLoginModel: LaunchAtLoginSettingsModel
-    @StateObject private var customPricingViewModel: CustomPricingViewModel
+@MainActor
+final class TokChanApplicationDelegate: NSObject, NSApplicationDelegate {
+    let viewModel: DashboardViewModel
+    let launchAtLoginModel: LaunchAtLoginSettingsModel
+    let customPricingViewModel: CustomPricingViewModel
+    private var statusItemCoordinator: NSStatusItemCoordinator?
 
-    init() {
+    override init() {
         let api: TokscaleAPIService
         let cli: TokscaleCLIService
         let preferences: PreferencesStoring
@@ -46,41 +48,45 @@ struct TokChanApp: App {
         customPricingStore = CustomPricingFileStore()
         #endif
 
-        _viewModel = StateObject(
-            wrappedValue: DashboardViewModel(
-                api: api,
-                cli: cli,
-                preferencesStore: preferences,
-                npxLocator: npxLocator,
-                cacheStore: cacheStore
-            )
+        viewModel = DashboardViewModel(
+            api: api,
+            cli: cli,
+            preferencesStore: preferences,
+            npxLocator: npxLocator,
+            cacheStore: cacheStore
         )
-        let launchAtLoginService = LaunchAtLoginServiceFactory.make()
-        _launchAtLoginModel = StateObject(
-            wrappedValue: LaunchAtLoginSettingsModel(service: launchAtLoginService)
+        launchAtLoginModel = LaunchAtLoginSettingsModel(
+            service: LaunchAtLoginServiceFactory.make()
         )
-        _customPricingViewModel = StateObject(
-            wrappedValue: CustomPricingViewModel(
-                cli: customPricingCLI,
-                store: customPricingStore,
-                preferencesStore: preferences,
-                npxLocator: npxLocator
-            )
+        customPricingViewModel = CustomPricingViewModel(
+            cli: customPricingCLI,
+            store: customPricingStore,
+            preferencesStore: preferences,
+            npxLocator: npxLocator
         )
+        super.init()
     }
 
-    var body: some Scene {
-        MenuBarExtra("TokChan", image: "MenuBarIcon") {
-            DashboardView(viewModel: viewModel)
-                .environment(\.locale, Locale(identifier: "zh_CN"))
-        }
-        .menuBarExtraStyle(.window)
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard statusItemCoordinator == nil else { return }
+        statusItemCoordinator = NSStatusItemCoordinator(
+            viewModel: viewModel,
+            settingsAction: .live,
+            terminate: { NSApplication.shared.terminate(nil) }
+        )
+    }
+}
 
+@main
+struct TokChanApp: App {
+    @NSApplicationDelegateAdaptor(TokChanApplicationDelegate.self) private var appDelegate
+
+    var body: some Scene {
         Settings {
             SettingsView(
-                viewModel: viewModel,
-                launchAtLoginModel: launchAtLoginModel,
-                customPricingViewModel: customPricingViewModel
+                viewModel: appDelegate.viewModel,
+                launchAtLoginModel: appDelegate.launchAtLoginModel,
+                customPricingViewModel: appDelegate.customPricingViewModel
             )
             .environment(\.locale, Locale(identifier: "zh_CN"))
         }

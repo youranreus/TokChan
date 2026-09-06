@@ -35,6 +35,24 @@ final class TokChanUITests: XCTestCase {
         })
     }
 
+    func testRightClickShowsActionsWithoutOpeningDashboard() throws {
+        let application = XCUIApplication()
+        application.launchArguments = ["--ui-testing"]
+        application.launch()
+        defer { application.terminate() }
+
+        let systemUI = XCUIApplication(bundleIdentifier: "com.apple.systemuiserver")
+        let statusItem = systemUI.menuBars.statusItems["TokChan"]
+        guard statusItem.waitForExistence(timeout: 10) else {
+            throw XCTSkip("SystemUIServer did not expose menu bar items; run this UI test in isolation")
+        }
+
+        statusItem.rightClick()
+        XCTAssertFalse(application.otherElements["dashboard-panel"].exists)
+        XCTAssertTrue(application.menuItems["设置…"].waitForExistence(timeout: 3))
+        XCTAssertTrue(application.menuItems["退出 TokChan"].exists)
+    }
+
     private func lifecycleCounts(of panel: XCUIElement) -> (appearances: Int, disappearances: Int)? {
         guard let value = panel.value as? String else { return nil }
         let components = value.split(separator: ":").compactMap { Int($0) }

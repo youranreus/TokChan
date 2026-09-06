@@ -1,9 +1,7 @@
-import AppKit
 import SwiftUI
 
 struct DashboardView: View {
     @ObservedObject var viewModel: DashboardViewModel
-    @State private var showsDiagnostics = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -48,7 +46,6 @@ struct DashboardView: View {
 
             usageContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            footer
         }
         .frame(width: 380, height: 680)
         .background(.background)
@@ -57,8 +54,6 @@ struct DashboardView: View {
         #if DEBUG
         .accessibilityValue("\(viewModel.panelAppearanceCount):\(viewModel.panelDisappearanceCount)")
         #endif
-        .onAppear { viewModel.panelDidAppear() }
-        .onDisappear { viewModel.panelDidDisappear() }
     }
 
     private func header(_ profile: DashboardData) -> some View {
@@ -77,11 +72,18 @@ struct DashboardView: View {
                 Text(profile.displayName)
                     .font(.headline)
                     .lineLimit(1)
-                Text("@\(profile.username) · 线上更新于 \(DisplayFormatters.relativeDate(profile.updatedAt))")
+                Text("@\(profile.username)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-
+                if let freshnessText {
+                    Text(freshnessText)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .help(freshnessText)
+                        .accessibilityIdentifier("snapshot-updated-at")
+                }
             }
 
             Spacer(minLength: 8)
@@ -119,7 +121,7 @@ struct DashboardView: View {
 
     @ViewBuilder
     private var operationBanner: some View {
-        switch viewModel.operation {
+        switch viewModel.dashboardOperation {
         case .idle:
             EmptyView()
         case .submitting, .runningAutosubmit, .savingSettings:
@@ -162,137 +164,11 @@ struct DashboardView: View {
         }
     }
 
-    private var footer: some View {
-        HStack {
-            settingsButton
-
-            Spacer()
-
-            if let updateText {
-                Text(updateText)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .help(updateText)
-                    .accessibilityIdentifier("snapshot-updated-at")
-            }
-
-            if !viewModel.diagnosticMessages.isEmpty {
-                Button {
-                    showsDiagnostics.toggle()
-                } label: {
-                    Image(systemName: "info.circle")
-                }
-                .buttonStyle(.borderless)
-                .help("查看刷新详情")
-                .accessibilityLabel("查看刷新详情")
-                .accessibilityIdentifier("refresh-diagnostics-button")
-                .popover(isPresented: $showsDiagnostics) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("刷新详情").font(.headline)
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(Array(viewModel.diagnosticMessages.enumerated()), id: \.offset) { _, message in
-                                    Text(message)
-                                        .font(.caption)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .textSelection(.enabled)
-                                }
-                            }
-                        }
-                        .frame(maxHeight: 260)
-                    }
-                    .padding(12)
-                    .frame(width: 300, alignment: .leading)
-                }
-            }
-
-            Spacer()
-
-            Button("退出 TokChan") {
-                NSApplication.shared.terminate(nil)
-            }
-            .buttonStyle(.borderless)
-        }
-        .font(.caption)
-        .padding(.horizontal, 14)
-        .frame(height: 38)
-        .background(Color.secondary.opacity(0.06))
-    }
-
-    private var updateText: String? {
-        guard let fetchedAt = viewModel.cacheSavedAt else { return nil }
-        let fetched = "更新于 \(DisplayFormatters.relativeDate(fetchedAt))"
-        guard let dataDate = viewModel.profileState.loadedValue?.dateRange?.end else { return fetched }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        guard dataDate != formatter.string(from: Date()) else { return fetched }
-        return "数据日期 \(dataDate) · \(fetched)"
-    }
-
-    @ViewBuilder
-    private var settingsButton: some View {
-        if #available(macOS 14.0, *) {
-            NativeSettingsButton()
-        } else {
-            Button {
-                openLegacySettingsWindow()
-            } label: {
-                Label("设置", systemImage: "gearshape")
-            }
-            .buttonStyle(.borderless)
-            .accessibilityIdentifier("settings-button")
-        }
-    }
-
-    private func openSettingsWindow() {
-        if #available(macOS 14.0, *) {
-            NSApplication.shared.sendAction(
-                Selector(("showSettingsWindow:")),
-                to: nil,
-                from: nil
-            )
-            NSApplication.shared.activate(ignoringOtherApps: true)
-        } else {
-            openLegacySettingsWindow()
-        }
-    }
-
-    private func openLegacySettingsWindow() {
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        let didOpen = NSApplication.shared.sendAction(
-            Selector(("showSettingsWindow:")),
-            to: nil,
-            from: nil
+    private var freshnessText: String? {
+        SnapshotFreshnessFormatter.text(
+            fetchedAt: viewModel.cacheSavedAt,
+            dataDate: viewModel.profileState.loadedValue?.dateRange?.end
         )
-        if !didOpen {
-            NSApplication.shared.sendAction(
-                Selector(("showPreferencesWindow:")),
-                to: nil,
-                from: nil
-            )
-        }
-    }
-    private func panelCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
-            .padding(10)
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
-    }
-}
-
-@available(macOS 14.0, *)
-private struct NativeSettingsButton: View {
-    @Environment(\.openSettings) private var openSettings
-
-    var body: some View {
-        Button {
-            NSApplication.shared.activate(ignoringOtherApps: true)
-            openSettings()
-        } label: {
-            Label("设置", systemImage: "gearshape")
-        }
-        .buttonStyle(.borderless)
-        .accessibilityIdentifier("settings-button")
     }
 }
 

@@ -84,6 +84,9 @@ final class DashboardViewModel: ObservableObject {
     private var timerTask: Task<Void, Never>?
     private var lastAutomaticAttempt: Date?
     private var isPanelVisible = false
+    private var panelPresentationGeneration: UInt64 = 0
+    private var operationPresentationGeneration: UInt64?
+    private var suppressDashboardOperationBanner = false
     private var isLoadingServices = false
     private var cachedProfiles: [ProfilePeriod: (data: DashboardData, savedAt: Date)] = [:]
 
@@ -92,6 +95,10 @@ final class DashboardViewModel: ObservableObject {
     }
 
     var currentAutosubmitStatus: AutosubmitStatus? { autosubmitState.loadedValue }
+
+    var dashboardOperation: DashboardOperation {
+        suppressDashboardOperationBanner ? .idle : operation
+    }
 
     var diagnosticMessages: [String] {
         [
@@ -167,6 +174,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func panelDidAppear() {
+        guard !isPanelVisible else { return }
         #if DEBUG
         panelAppearanceCount += 1
         #endif
@@ -180,12 +188,16 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func panelDidDisappear() {
+        guard isPanelVisible else { return }
         #if DEBUG
         panelDisappearanceCount += 1
         #endif
         isPanelVisible = false
+        panelPresentationGeneration &+= 1
+        suppressDashboardOperationBanner = true
         timerTask?.cancel()
         timerTask = nil
+        clearOperationMessage()
     }
 
     func selectPeriod(_ period: ProfilePeriod) async {
@@ -244,20 +256,20 @@ final class DashboardViewModel: ObservableObject {
     func refresh() async {
         guard !operation.isRunning else { return }
         invalidateProfileRefresh()
-        operation = .submitting
+        beginOperation(.submitting)
         do {
             let context = try commandContext(for: preferences)
             _ = try await resolvedUsername(context: context)
             try await cli.submit(context: context)
             switch await reloadProfiles(force: true, automatic: false) {
             case .updated:
-                operation = .succeeded("用量已提交，全部范围已更新。")
+                completeOperation(.succeeded("用量已提交，全部范围已更新。"))
             case let .failed(message):
-                operation = .failed("用量已提交，但统计读取失败：\(message)")
+                completeOperation(.failed("用量已提交，但统计读取失败：\(message)"))
             case .superseded:
-                operation = .succeeded("用量已提交。")
+                completeOperation(.succeeded("用量已提交。"))
             }
-        } catch { operation = .failed(Self.message(for: error)) }
+        } catch { completeOperation(.failed(Self.message(for: error))) }
     }
 
     func retryStatistics() async {
@@ -268,7 +280,7 @@ final class DashboardViewModel: ObservableObject {
     func runAutosubmitNow() async {
         guard !operation.isRunning else { return }
         invalidateProfileRefresh()
-        operation = .runningAutosubmit
+        beginOperation(.runningAutosubmit)
         do {
             let context = try commandContext(for: preferences)
             _ = try await resolvedUsername(context: context)
@@ -277,13 +289,13 @@ final class DashboardViewModel: ObservableObject {
             async let status = reloadAutosubmit(context: context)
             let (profileResult, statusError) = await (profiles, status)
             if let error = profileResult.errorMessage {
-                operation = .failed("自动提交已完成，但统计读取失败：\(error)")
+                completeOperation(.failed("自动提交已完成，但统计读取失败：\(error)"))
             } else if let statusError {
-                operation = .failed("自动提交已完成，但状态读取失败：\(statusError)")
+                completeOperation(.failed("自动提交已完成，但状态读取失败：\(statusError)"))
             } else {
-                operation = .succeeded("自动提交已完成。")
+                completeOperation(.succeeded("自动提交已完成。"))
             }
-        } catch { operation = .failed(Self.message(for: error)) }
+        } catch { completeOperation(.failed(Self.message(for: error))) }
     }
 
     func saveSettings(
@@ -291,7 +303,7 @@ final class DashboardViewModel: ObservableObject {
         autosubmit configuration: AutosubmitConfiguration
     ) async -> Bool {
         guard !operation.isRunning else { return false }
-        operation = .savingSettings
+        beginOperation(.savingSettings)
         do {
             let normalized = UserPreferences(
                 username: newPreferences.username.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -323,13 +335,13 @@ final class DashboardViewModel: ObservableObject {
             async let status = reloadAutosubmit(context: context)
             let (profileResult, statusError) = await (profiles, status)
             if let error = profileResult.errorMessage ?? statusError {
-                operation = .failed(error)
+                completeOperation(.failed(error))
                 return false
             }
-            operation = .succeeded("设置已保存。")
+            completeOperation(.succeeded("设置已保存。"))
             return true
         } catch {
-            operation = .failed(Self.message(for: error))
+            completeOperation(.failed(Self.message(for: error)))
             return false
         }
     }
@@ -337,6 +349,23 @@ final class DashboardViewModel: ObservableObject {
     func clearOperationMessage() {
         guard !operation.isRunning else { return }
         operation = .idle
+        operationPresentationGeneration = nil
+    }
+
+    private func beginOperation(_ runningOperation: DashboardOperation) {
+        operationPresentationGeneration = panelPresentationGeneration
+        suppressDashboardOperationBanner = !isPanelVisible
+        operation = runningOperation
+    }
+
+    private func completeOperation(_ result: DashboardOperation) {
+        defer { operationPresentationGeneration = nil }
+        if let operationPresentationGeneration {
+            suppressDashboardOperationBanner = suppressDashboardOperationBanner
+                || operationPresentationGeneration != panelPresentationGeneration
+                || !isPanelVisible
+        }
+        operation = result
     }
 
     private func reloadProfiles(force: Bool, automatic: Bool) async -> ProfileReloadResult {

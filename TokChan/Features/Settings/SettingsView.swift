@@ -1,6 +1,13 @@
 import AppKit
 import SwiftUI
 
+struct AboutCopy {
+    static let summary = "Tokscale的状态栏预览应用"
+    static let bylinePrefix = "Made with love by "
+    static let author = "季悠然"
+    static let authorURL = URL(string: "https://blog.mitsuha.space")!
+}
+
 struct SettingsView: View {
     @ObservedObject var viewModel: DashboardViewModel
     @ObservedObject var launchAtLoginModel: LaunchAtLoginSettingsModel
@@ -393,10 +400,17 @@ struct SettingsView: View {
             Text("版本 \(appVersion)")
                 .foregroundStyle(.secondary)
 
-            Text("TokChan 是 Tokscale 的 macOS 菜单栏伴侣，用于查看用量并管理自动提交。")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: 360)
+            VStack(spacing: 6) {
+                Text(AboutCopy.summary)
+                HStack(spacing: 0) {
+                    Text(AboutCopy.bylinePrefix)
+                    Link(AboutCopy.author, destination: AboutCopy.authorURL)
+                        .accessibilityIdentifier("about-author-link")
+                }
+            }
+            .multilineTextAlignment(.center)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: 360)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
