@@ -266,3 +266,47 @@
 
 - 建议在实体 macOS 13 环境进行交互验收
 - 使用真实缺价账户验证检测与补价闭环
+
+
+## Session 10: 统一浮窗文案与状态栏菜单交互
+
+**Date**: 2026-09-06
+**Task**: 统一浮窗文案与菜单交互
+**Branch**: `master`
+
+### Summary
+
+统一统计新鲜度文案，移除浮窗底部操作栏，并以单一 AppKit 状态项实现左键浮窗与右键原生状态栏菜单；修正操作提示生命周期及关于页文案。
+
+### Main Changes
+
+- 使用唯一 `NSStatusItem`、transient `NSPopover` 与动态 `NSMenu` 替换 `MenuBarExtra(.window)`
+- 标题与状态栏菜单共用快照更新时间；跨日显示实际数据日期
+- 右键原生状态栏菜单集中更新时间、诊断、设置与退出，设置优先调用 SwiftUI Command-Comma 命令
+- 手动操作完成提示不再跨浮窗关闭遗留，进行中操作不被取消
+- 关于页使用指定两行文案，并为“季悠然”添加博客链接
+- 同步 macOS 状态项、Settings、新鲜度与测试规范
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ed0f240` | feat(macos): unify status item menu interactions |
+| `9948e42` | docs(trellis): record status item interaction contracts |
+| `67b1d7a` | chore(task): archive 09-06-unify-popover-copy-menu |
+
+### Testing
+
+- [OK] 132 个单元测试通过
+- [OK] macOS 13 universal Release 构建与 Xcode Analyze 通过
+- [OK] `git diff --check` 与 Trellis 上下文校验通过
+- [OK] 用户通过本地 Release 构建验收左右键、原生状态栏菜单、设置打开及整体交互
+- [INFO] 2 个状态栏 UI 测试因当前 SystemUIServer 未暴露状态项而明确跳过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 发布前可在实体 macOS 13 环境补充运行时视觉验证
