@@ -13,6 +13,7 @@ struct CustomPricingSettingsView: View {
             diagnosticSection
         }
         .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .sheet(isPresented: editorPresented) {
             CustomPricingEditorView(viewModel: viewModel)
         }
