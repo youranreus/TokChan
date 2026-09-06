@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/macos/index.md", "reason": "macOS 项目架构与规范入口"}
+{"file": ".trellis/spec/macos/data-persistence.md", "reason": "快照持久化；旧行为由任务 PRD 明确替换"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "固定面板布局与交互；静默读进度遵循新 PRD"}
+{"file": ".trellis/spec/macos/state-management.md", "reason": "可观察状态与并发边界"}
+{"file": ".trellis/spec/macos/networking-guidelines.md", "reason": "异步网络与错误处理"}
+{"file": ".trellis/spec/macos/tokscale-integration.md", "reason": "CLI 操作边界及服务端日期契约"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "注入假服务与确定性验证"}
+{"file": ".trellis/tasks/09-06-cache-refresh-strategy/research/cache-refresh.md", "reason": "调研证据、旧契约及批次一致性限制"}
