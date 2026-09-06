@@ -14,6 +14,100 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isRefreshing)
     }
 
+    func testStatusTitleUsesConfiguredCachedPeriodWithoutChangingDashboardSelection() throws {
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
+        let preferences = InMemoryPreferences(value: UserPreferences(
+            username: "youranreus",
+            tokscaleVersion: "latest",
+            npxPath: "",
+            statusTextEnabled: true,
+            statusTextTemplate: "日 {token} / {cost}",
+            statusTextPeriod: .day
+        ))
+        let viewModel = DashboardViewModel(
+            api: FakeAPI(recorder: EventRecorder()),
+            cli: FakeCLI(recorder: EventRecorder()),
+            preferencesStore: preferences,
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: snapshot),
+            now: { self.referenceDate }
+        )
+        let day = try XCTUnwrap(snapshot.profiles.first { $0.data.period == .day }?.data)
+
+        XCTAssertEqual(viewModel.selectedPeriod, .all)
+        XCTAssertEqual(viewModel.profileState.loadedValue?.period, .all)
+        XCTAssertEqual(
+            viewModel.statusItemTitle,
+            StatusItemTextRenderer.render(template: "日 {token} / {cost}", data: day)
+        )
+    }
+
+    func testStatusTitleRequiresEnabledNonemptyTemplateAndCachedPeriod() throws {
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
+        let disabled = DashboardViewModel(
+            api: FakeAPI(recorder: EventRecorder()),
+            cli: FakeCLI(recorder: EventRecorder()),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: snapshot)
+        )
+        XCTAssertNil(disabled.statusItemTitle)
+
+        let emptyTemplate = DashboardViewModel(
+            api: FakeAPI(recorder: EventRecorder()),
+            cli: FakeCLI(recorder: EventRecorder()),
+            preferencesStore: InMemoryPreferences(value: UserPreferences(
+                username: "youranreus",
+                tokscaleVersion: "latest",
+                npxPath: "",
+                statusTextEnabled: true,
+                statusTextTemplate: "",
+                statusTextPeriod: .day
+            )),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: snapshot)
+        )
+        XCTAssertNil(emptyTemplate.statusItemTitle)
+
+        let noCache = DashboardViewModel(
+            api: FakeAPI(recorder: EventRecorder()),
+            cli: FakeCLI(recorder: EventRecorder()),
+            preferencesStore: InMemoryPreferences(value: UserPreferences(
+                username: "youranreus",
+                tokscaleVersion: "latest",
+                npxPath: "",
+                statusTextEnabled: true
+            )),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+        XCTAssertNil(noCache.statusItemTitle)
+    }
+
+    func testFailedRefreshPreservesStatusTitleFromOldCompleteBatch() async throws {
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: EventRecorder(), fetchError: TestFailure.unavailable),
+            cli: FakeCLI(recorder: EventRecorder()),
+            preferencesStore: InMemoryPreferences(value: UserPreferences(
+                username: "youranreus",
+                tokscaleVersion: "latest",
+                npxPath: "",
+                statusTextEnabled: true
+            )),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: snapshot),
+            now: { self.referenceDate.addingTimeInterval(301) }
+        )
+        let oldTitle = model.statusItemTitle
+
+        await model.pullStatisticsNow()
+
+        XCTAssertNotNil(oldTitle)
+        XCTAssertEqual(model.statusItemTitle, oldTitle)
+        XCTAssertNotNil(model.loadErrorMessage)
+    }
+
     func testUnresolvedIdentityDoesNotDisplayAnAccountSnapshot() throws {
         let snapshot = try completeSnapshot(fetchedAt: referenceDate)
         let viewModel = DashboardViewModel(
@@ -110,6 +204,89 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(model.operation, .succeeded("用量已提交，全部范围已更新。"))
     }
 
+    func testPushOnlySubmitsExactlyOnceWithoutFetchingOrReadingStatus() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(recorder: recorder)
+
+        await model.pushUsageNow()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["submit"])
+        XCTAssertEqual(model.operation, .idle)
+        XCTAssertNil(model.pushErrorMessage)
+    }
+
+    func testPullOnlyFetchesExactlyOneCompleteBatchWithoutSubmitting() async {
+        let recorder = EventRecorder()
+        let cache = InMemoryCache()
+        let model = makeViewModel(recorder: recorder, cache: cache)
+
+        await model.pullStatisticsNow()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["fetch"])
+        XCTAssertEqual(Set(cache.snapshot?.profiles.map(\.data.period) ?? []), Set(ProfilePeriod.allCases))
+        XCTAssertEqual(model.operation, .idle)
+    }
+
+    func testImmediateActionFailuresAppearInDiagnostics() async {
+        let pushRecorder = EventRecorder()
+        let pushModel = DashboardViewModel(
+            api: FakeAPI(recorder: pushRecorder),
+            cli: FakeCLI(recorder: pushRecorder, submitError: TestFailure.unavailable),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        await pushModel.pushUsageNow()
+
+        let pushEvents = await pushRecorder.snapshot()
+        XCTAssertEqual(pushEvents, ["submit"])
+        XCTAssertNotNil(pushModel.pushErrorMessage)
+        XCTAssertTrue(pushModel.diagnosticMessages.contains { $0.hasPrefix("即时推送：") })
+
+        let pullRecorder = EventRecorder()
+        let pullModel = makeViewModel(
+            recorder: pullRecorder,
+            api: FakeAPI(recorder: pullRecorder, fetchError: TestFailure.unavailable)
+        )
+
+        await pullModel.pullStatisticsNow()
+
+        let pullEvents = await pullRecorder.snapshot()
+        XCTAssertEqual(pullEvents, ["fetch"])
+        XCTAssertNotNil(pullModel.loadErrorMessage)
+        XCTAssertTrue(pullModel.diagnosticMessages.contains { $0.hasPrefix("统计读取：") })
+    }
+
+    func testRunningImmediatePushRejectsPullAndDuplicatePush() async {
+        let recorder = EventRecorder()
+        let cli = SuspendedPushCLI(recorder: recorder)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: cli,
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        let firstPush = Task { await model.pushUsageNow() }
+        await cli.waitForSubmit()
+        XCTAssertEqual(model.operation, .pushing)
+
+        await model.pullStatisticsNow()
+        await model.pushUsageNow()
+        var events = await recorder.snapshot()
+        XCTAssertEqual(events, ["submit"])
+
+        await cli.resumeSubmit()
+        await firstPush.value
+        events = await recorder.snapshot()
+        XCTAssertEqual(events, ["submit"])
+        XCTAssertEqual(model.operation, .idle)
+    }
+
     func testSubmitFailureStopsStatisticsRead() async {
         let recorder = EventRecorder()
         let model = DashboardViewModel(
@@ -141,7 +318,7 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(model.operation, .succeeded("自动提交已完成。"))
     }
 
-    func testSavingSettingsConfiguresBeforeRefreshingTheWholeBatch() async {
+    func testSavingSettingsConfiguresBeforeRefreshingTheWholeBatch() async throws {
         let recorder = EventRecorder()
         let preferences = standardPreferences()
         let model = DashboardViewModel(
@@ -154,7 +331,10 @@ final class DashboardViewModelTests: XCTestCase {
         let updated = UserPreferences(
             username: "youranreus",
             tokscaleVersion: "4.15.0",
-            npxPath: "/custom/npx"
+            npxPath: "/custom/npx",
+            statusTextEnabled: true,
+            statusTextTemplate: "月度 {token} / {cost}",
+            statusTextPeriod: .month
         )
         let configuration = AutosubmitConfiguration(
             enabled: true,
@@ -173,6 +353,12 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(events.first, "configure")
         XCTAssertEqual(Set(events.dropFirst()), Set(["fetch", "status"]))
         XCTAssertEqual(preferences.value, updated)
+        let profile = try XCTUnwrap(model.profileState.loadedValue)
+        XCTAssertEqual(
+            model.statusItemTitle,
+            "月度 \(DisplayFormatters.compactNumber(profile.totalTokens)) / "
+                + DisplayFormatters.currency(profile.totalCost)
+        )
     }
 
     func testStatusFailureDoesNotBlockSuccessfulStatisticsBatch() async {
@@ -570,6 +756,47 @@ private final class FakeCLI: TokscaleCLIService {
     }
     func disableAutosubmit(context: TokscaleCommandContext) async throws { await recorder.append("disable") }
     func runAutosubmitNow(context: TokscaleCommandContext) async throws { await recorder.append("run") }
+}
+
+private actor SuspendedPushCLI: TokscaleCLIService {
+    private let recorder: EventRecorder
+    private var submitContinuation: CheckedContinuation<Void, Never>?
+    private var arrivalContinuation: CheckedContinuation<Void, Never>?
+    private var submitStarted = false
+
+    init(recorder: EventRecorder) {
+        self.recorder = recorder
+    }
+
+    func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
+
+    func submit(context: TokscaleCommandContext) async throws {
+        await recorder.append("submit")
+        submitStarted = true
+        arrivalContinuation?.resume()
+        arrivalContinuation = nil
+        await withCheckedContinuation { submitContinuation = $0 }
+    }
+
+    func waitForSubmit() async {
+        if submitStarted { return }
+        await withCheckedContinuation { arrivalContinuation = $0 }
+    }
+
+    func resumeSubmit() {
+        submitContinuation?.resume()
+        submitContinuation = nil
+    }
+
+    func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus {
+        try JSONDecoder().decode(AutosubmitStatus.self, from: Data(#"{"enabled":false}"#.utf8))
+    }
+    func configureAutosubmit(
+        _ configuration: AutosubmitConfiguration,
+        context: TokscaleCommandContext
+    ) async throws {}
+    func disableAutosubmit(context: TokscaleCommandContext) async throws {}
+    func runAutosubmitNow(context: TokscaleCommandContext) async throws {}
 }
 
 private enum TestFailure: Error { case unavailable }

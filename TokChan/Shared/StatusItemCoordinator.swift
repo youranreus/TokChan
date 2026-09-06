@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 enum StatusItemClickAction: Equatable {
@@ -19,19 +20,46 @@ enum StatusMenuDescriptor: Equatable {
     case information(String)
     case diagnostics([String])
     case separator
+    case push(isEnabled: Bool)
+    case pull(isEnabled: Bool)
     case settings
     case quit
 }
 
 enum StatusMenuBuilder {
-    static func descriptors(freshness: String?, diagnostics: [String]) -> [StatusMenuDescriptor] {
+    static func descriptors(
+        freshness: String?,
+        diagnostics: [String],
+        actionsEnabled: Bool
+    ) -> [StatusMenuDescriptor] {
         var items: [StatusMenuDescriptor] = []
         if let freshness { items.append(.information(freshness)) }
         if !diagnostics.isEmpty { items.append(.diagnostics(diagnostics)) }
         if !items.isEmpty { items.append(.separator) }
+        items.append(.push(isEnabled: actionsEnabled))
+        items.append(.pull(isEnabled: actionsEnabled))
+        items.append(.separator)
         items.append(.settings)
         items.append(.quit)
         return items
+    }
+}
+
+struct StatusItemPresentation: Equatable {
+    let title: String
+    let accessibilityLabel: String
+    let usesVariableLength: Bool
+
+    init(statusTitle: String?) {
+        if let statusTitle, !statusTitle.isEmpty {
+            title = statusTitle
+            accessibilityLabel = "TokChan，\(statusTitle)"
+            usesVariableLength = true
+        } else {
+            title = ""
+            accessibilityLabel = "TokChan"
+            usesVariableLength = false
+        }
     }
 }
 
@@ -92,6 +120,7 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
     private let popover: NSPopover
     private let hostingController: NSHostingController<AnyView>
     private var transientStatusMenu: NSMenu?
+    private var cancellables: Set<AnyCancellable> = []
 
     init(
         viewModel: DashboardViewModel,
@@ -125,6 +154,20 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
             button.action = #selector(statusButtonPressed(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+
+        // @Published emits the incoming value before the stored property is updated.
+        viewModel.$preferences
+            .sink { [weak self] preferences in
+                guard let self else { return }
+                self.updateStatusItem(
+                    with: self.viewModel.statusItemTitle(for: preferences)
+                )
+            }
+            .store(in: &cancellables)
+        viewModel.$profileState
+            .sink { [weak self] _ in self?.synchronizeStatusItem() }
+            .store(in: &cancellables)
+        synchronizeStatusItem()
     }
 
     deinit {
@@ -183,7 +226,8 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
         )
         let descriptors = StatusMenuBuilder.descriptors(
             freshness: freshness,
-            diagnostics: viewModel.diagnosticMessages
+            diagnostics: viewModel.diagnosticMessages,
+            actionsEnabled: !viewModel.operation.isRunning
         )
         let menu = NSMenu(title: "TokChan")
         for descriptor in descriptors {
@@ -204,6 +248,24 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
                 menu.addItem(item)
             case .separator:
                 menu.addItem(.separator())
+            case let .push(isEnabled):
+                let item = NSMenuItem(
+                    title: "立刻推送",
+                    action: #selector(pushUsageNow(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.isEnabled = isEnabled
+                menu.addItem(item)
+            case let .pull(isEnabled):
+                let item = NSMenuItem(
+                    title: "立刻拉取",
+                    action: #selector(pullStatisticsNow(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.isEnabled = isEnabled
+                menu.addItem(item)
             case .settings:
                 menu.addItem(NSMenuItem(
                     title: "设置…",
@@ -221,6 +283,29 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
             }
         }
         return menu
+    }
+
+    private func synchronizeStatusItem() {
+        updateStatusItem(with: viewModel.statusItemTitle)
+    }
+
+    private func updateStatusItem(with title: String?) {
+        let presentation = StatusItemPresentation(statusTitle: title)
+        statusItem.length = presentation.usesVariableLength
+            ? NSStatusItem.variableLength
+            : NSStatusItem.squareLength
+        guard let button = statusItem.button else { return }
+        button.title = presentation.title
+        button.imagePosition = presentation.usesVariableLength ? .imageLeading : .imageOnly
+        button.setAccessibilityLabel(presentation.accessibilityLabel)
+    }
+
+    @objc private func pushUsageNow(_ sender: Any?) {
+        Task { await viewModel.pushUsageNow() }
+    }
+
+    @objc private func pullStatisticsNow(_ sender: Any?) {
+        Task { await viewModel.pullStatisticsNow() }
     }
 
     @objc private func openSettings(_ sender: Any?) {

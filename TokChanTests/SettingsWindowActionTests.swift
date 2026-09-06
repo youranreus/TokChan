@@ -14,20 +14,46 @@ final class StatusItemPresentationTests: XCTestCase {
         XCTAssertEqual(
             StatusMenuBuilder.descriptors(
                 freshness: "数据日期 2026-09-05 · 更新于 1 小时前",
-                diagnostics: ["统计读取：离线", "本地保存：只读"]
+                diagnostics: ["统计读取：离线", "本地保存：只读"],
+                actionsEnabled: true
             ),
             [
                 .information("数据日期 2026-09-05 · 更新于 1 小时前"),
                 .diagnostics(["统计读取：离线", "本地保存：只读"]),
+                .separator,
+                .push(isEnabled: true),
+                .pull(isEnabled: true),
                 .separator,
                 .settings,
                 .quit
             ]
         )
         XCTAssertEqual(
-            StatusMenuBuilder.descriptors(freshness: nil, diagnostics: []),
-            [.settings, .quit]
+            StatusMenuBuilder.descriptors(
+                freshness: nil,
+                diagnostics: [],
+                actionsEnabled: false
+            ),
+            [
+                .push(isEnabled: false),
+                .pull(isEnabled: false),
+                .separator,
+                .settings,
+                .quit
+            ]
         )
+    }
+
+    func testStatusItemPresentationSwitchesBetweenIconOnlyAndReadableTitle() {
+        let iconOnly = StatusItemPresentation(statusTitle: nil)
+        XCTAssertEqual(iconOnly.title, "")
+        XCTAssertEqual(iconOnly.accessibilityLabel, "TokChan")
+        XCTAssertFalse(iconOnly.usesVariableLength)
+
+        let titled = StatusItemPresentation(statusTitle: "1K · US$12.50")
+        XCTAssertEqual(titled.title, "1K · US$12.50")
+        XCTAssertEqual(titled.accessibilityLabel, "TokChan，1K · US$12.50")
+        XCTAssertTrue(titled.usesVariableLength)
     }
 
     func testSettingsActionPrefersSwiftUISettingsCommand() {
