@@ -1,0 +1,8 @@
+{"file":".trellis/spec/macos/index.md","reason":"TokChan macOS architecture and dependency baseline."}
+{"file":".trellis/spec/macos/swiftui-guidelines.md","reason":"Unique AppKit status-item coordinator, dynamic native menu, Settings UI, accessibility and popover contracts."}
+{"file":".trellis/spec/macos/state-management.md","reason":"MainActor observable state and derived display-value rules."}
+{"file":".trellis/spec/macos/data-persistence.md","reason":"UserDefaults preference boundary and complete stale-readable all/day/week/month cache behavior."}
+{"file":".trellis/spec/macos/tokscale-integration.md","reason":"Strict submit versus batch-fetch command semantics and Settings integration contracts."}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"Swift style, concurrency, errors and accessibility expectations."}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"Required deterministic model, status-item and UI verification strategy."}
+{"file":".trellis/tasks/09-07-status-text-and-mail-actions/research/status-text-and-actions.md","reason":"Task-specific code boundaries, existing behavior and design conclusions."}
