@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/macos/index.md", "reason": "macOS 项目形态与规范入口"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "状态栏原生交互、设置窗口兼容、固定浮窗与生命周期契约"}
+{"file": ".trellis/spec/macos/state-management.md", "reason": "共享模型所有权与操作反馈状态边界"}
+{"file": ".trellis/spec/macos/quality-guidelines.md", "reason": "AppKit/SwiftUI 代码质量、可访问性与错误处理"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "模型、布局和真实菜单栏 UI 验证要求"}
+{"file": ".trellis/tasks/09-06-unify-popover-copy-menu/research/status-item-context-menu.md", "reason": "右键菜单公开 API 调研、架构比较与风险"}

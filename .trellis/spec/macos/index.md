@@ -4,7 +4,7 @@
 
 ## Project shape
 
-TokChan is a dependency-free macOS 13 SwiftUI menu-bar app. `TokChanApp.swift` creates a window-style `MenuBarExtra`; feature UI lives under `TokChan/Features`, and external Tokscale/API/preferences boundaries live under `TokChan/Shared`.
+TokChan is a dependency-free macOS 13 menu-bar app with a SwiftUI `App`/`Settings` scene and an AppKit status-item bridge. The application delegate owns the single status item and dashboard popover; feature UI lives under `TokChan/Features`, and external Tokscale/API/preferences boundaries live under `TokChan/Shared`.
 
 ## Guidelines Index
 

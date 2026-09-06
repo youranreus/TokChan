@@ -99,24 +99,8 @@ protocol TokscaleCLIService {
 
 ### Convention: Settings Scene Window Invocation
 
-**What**: When the app declares a SwiftUI `Settings` scene, the menu-bar dashboard's settings control uses `SettingsLink` on macOS 14 and later. The macOS 13 compatibility branch may send `showSettingsWindow:` because `SettingsLink` is unavailable there.
+The SwiftUI `Settings` scene remains the sole settings-window owner. The AppKit status menu activates the application and first invokes the main menu's standard Command-Comma Settings command. If unavailable, it sends `showSettingsWindow:` through the responder chain and then `showPreferencesWindow:` only when unhandled. Keep command invocation and selector dispatch injectable so tests assert precedence and fallback without opening a real window; never locate the window by title or recreate Settings inside the popover.
 
-**Why**: Sending the legacy selector from the primary macOS 14+ path is not a reliable bridge to a SwiftUI `Settings` scene, so the button can appear to do nothing.
-
-**Example**:
-```swift
-if #available(macOS 14.0, *) {
-    SettingsLink {
-        Label("设置", systemImage: "gearshape")
-    }
-} else {
-    Button { openSettingsWindowOnLegacySystem() } label: {
-        Label("设置", systemImage: "gearshape")
-    }
-}
-```
-
-**Test**: Keep a stable `settings-button` accessibility identifier and cover the supported-system view path with a regression test.
 ### 6. Tests Required
 
 - Verify exact URL period/username encoding, revalidation policy, finite timeout, and rejection of mismatched response scope.

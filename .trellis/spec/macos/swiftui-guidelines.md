@@ -21,6 +21,15 @@
 - Use `NavigationSplitView` when the app has sidebar/detail structure; use `NavigationStack` only for clearly hierarchical flows.
 - Keep navigation state explicit when screens need deep linking or restoration.
 - Avoid stringly typed route identifiers; prefer enums or typed values once routing grows.
+
+### Status-item and popover ownership
+
+The application delegate must retain exactly one coordinator that owns one `NSStatusItem`, one `.transient` `NSPopover`, and one hosting controller for the 380×680 `DashboardView`. Do not use `MenuBarExtra(.window)`, assign a persistent `statusItem.menu`, or add a global event monitor.
+
+Route status-button mouse-up events explicitly: left-click toggles the existing popover; right-click closes it first, builds an `NSMenu` from current model state, temporarily assigns it to `statusItem.menu`, and calls the status button's `performClick`. Clear the assignment when menu tracking ends so left-click remains the popover action. Do not use `popUpContextMenu` or coordinate-positioned `NSMenu.popUp`: the required surface is a native status-item menu, anchored and highlighted by AppKit. The status menu owns diagnostics, Settings, and Quit, and is rebuilt on every secondary click so freshness and diagnostics are not startup snapshots.
+
+Only `NSPopoverDelegate.popoverDidShow` and `popoverDidClose` may call `DashboardViewModel.panelDidAppear()` and `panelDidDisappear()`. `DashboardView` must not duplicate those callbacks with `onAppear`/`onDisappear`; SwiftUI view lifecycle is not authoritative popover visibility.
+
 ### Native preferences toolbar
 
 For multi-section app preferences, keep the SwiftUI `Settings` scene and make its root navigation a `TabView`. Declare each preference page with an SF Symbol `Label` in `.tabItem`; macOS promotes these items into the window's native preferences toolbar and owns selection, hover, spacing, titlebar material, separators, traffic lights, and dark mode.
@@ -43,9 +52,9 @@ Do not simulate this navigation with an in-content `HStack`, buttons, segmented 
 
 ### Opening the settings scene
 
-Use SwiftUI's `@Environment(\.openSettings)` action on macOS 14 and newer. Because `openSettings` is unavailable on macOS 13, isolate the environment property inside a view annotated `@available(macOS 14.0, *)`; an availability check around a call is not enough if the property is stored on a view available to macOS 13.
+SwiftUI-originated controls may use `@Environment(\.openSettings)` on macOS 14 and newer, with the environment property isolated in an `@available(macOS 14.0, *)` view. From the AppKit status menu, activate the app and first invoke the SwiftUI-owned Settings command via the main menu's standard Command-Comma key equivalent; this reliably reaches the Settings scene without title matching. If the command is unavailable, send `showSettingsWindow:` through the responder chain and fall back to `showPreferencesWindow:` only when unhandled for macOS 13 compatibility.
 
-For the macOS 13 fallback, activate the app and send `showSettingsWindow:` through the responder chain, then fall back to `showPreferencesWindow:` if it is not handled. Do not find or raise the settings window by matching its localized title.
+In every path, keep the SwiftUI `Settings` scene as the owner of the settings window, native chrome, and traffic-light controls.
 
 Required checks:
 
@@ -66,7 +75,7 @@ Required checks:
 
 ## Dashboard viewport contract
 
-The 380×680 menu panel has a fixed outer VStack. Identity/status, the all/day/week/month segmented picker, metrics, five-category breakdown, client section heading and footer stay outside scrolling. Only client cards use ScrollView/LazyVStack. Bound long feedback text and provide help text so failures cannot consume the entire viewport.
+The 380×680 dashboard popover has a fixed outer VStack. Identity/status (including shared snapshot freshness), the all/day/week/month segmented picker, metrics, five-category breakdown, and client section heading stay outside scrolling. Only client cards use ScrollView/LazyVStack. There is no dashboard footer: diagnostics, Settings, and Quit belong to the secondary-click status menu. Bound long feedback text so failures cannot consume the entire viewport.
 
 Each client defaults to its top five models in existing token-descending order. Expand/collapse affects visible rows only. Reset the client subtree identity on scope change so expansion and scroll position reset. Use Tokens in user-facing copy.
 
@@ -74,6 +83,6 @@ Check light and dark renderings, zero/absent breakdown data, long client lists, 
 
 Cache-first loading keeps the header button reserved for explicit submit/refresh feedback. A silent read with cached content must not spin or disable that button, clear metrics, reset the selected scope, or show a success/error banner. First load without data may use the existing loading/failure state.
 
-Use the actual dashboard panel's `onAppear`/`onDisappear` lifecycle to start and stop the five-minute refresh timer. Do not equate Settings activity or application `scenePhase` with menu-panel visibility. Closing the panel stops future timer triggers but may let an already-started, time-bounded batch finish.
+Popover delegate callbacks start and stop the five-minute refresh timer. Closing the popover stops future timer triggers but may let an already-started, time-bounded batch or manual operation finish. A completed manual-operation banner clears on close; if closing races with an in-flight operation, its eventual result remains available to non-dashboard consumers but must not appear after the popover is reopened.
 
-Show the last successful statistics fetch time in the fixed footer using low-contrast text. If the selected server `dateRange.end` differs from today's displayed date, include that actual data date. Put statistics/status/persistence failures behind a small accessible diagnostic control; explicit submit/run/settings failures retain their normal operation feedback.
+Use one snapshot-freshness formatter for both the dashboard header and the dynamically built status menu. It reports the last successful statistics fetch and includes the selected server `dateRange.end` when that day differs from today. Compare the server `yyyy-MM-dd` string against today using a Gregorian calendar in the user's local timezone, regardless of the user's preferred calendar. No successful snapshot means no fabricated freshness item. Statistics/status/persistence failures remain diagnostics in the status menu; explicit operation failures retain normal in-panel feedback while the originating popover remains visible.
