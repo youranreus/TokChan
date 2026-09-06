@@ -24,6 +24,10 @@ No persistence requirement exists yet. Choose the smallest durable storage that 
 - Do not add a database before the app has data that needs one.
 - Do not let views know file paths, database contexts, or serialization formats directly.
 
+## Scenario: Status-item presentation preferences
+
+Keep `statusTextEnabled`, `statusTextTemplate`, and `statusTextPeriod` in `UserPreferences` through `UserDefaultsPreferencesStore`; they are small user choices, not dashboard cache fields. Missing keys decode as `false`, `{token} · {cost}`, and `.day`; an unknown period raw value also falls back to `.day`. Preserve template bytes as entered, including empty strings and unknown placeholders. Round-trip all keys in tests and assert old stores remain compatible.
+
 ## Scenario: Dashboard snapshot cache
 
 ### 1. Scope / Trigger
