@@ -49,7 +49,9 @@ final class TokChanUITests: XCTestCase {
 
         statusItem.rightClick()
         XCTAssertFalse(application.otherElements["dashboard-panel"].exists)
-        XCTAssertTrue(application.menuItems["设置…"].waitForExistence(timeout: 3))
+        XCTAssertTrue(application.menuItems["立刻推送"].waitForExistence(timeout: 3))
+        XCTAssertTrue(application.menuItems["立刻拉取"].exists)
+        XCTAssertTrue(application.menuItems["设置…"].exists)
         XCTAssertTrue(application.menuItems["退出 TokChan"].exists)
     }
 

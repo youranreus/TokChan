@@ -25,6 +25,9 @@ struct SettingsView: View {
     @State private var username: String
     @State private var version: String
     @State private var npxPath: String
+    @State private var statusTextEnabled: Bool
+    @State private var statusTextTemplate: String
+    @State private var statusTextPeriod: ProfilePeriod
     @State private var isNpxOverrideExpanded: Bool
     @State private var autosubmitEnabled: Bool
     @State private var intervalMinutes: Int
@@ -58,6 +61,9 @@ struct SettingsView: View {
         _username = State(initialValue: preferences.username)
         _version = State(initialValue: preferences.tokscaleVersion)
         _npxPath = State(initialValue: preferences.npxPath)
+        _statusTextEnabled = State(initialValue: preferences.statusTextEnabled)
+        _statusTextTemplate = State(initialValue: preferences.statusTextTemplate)
+        _statusTextPeriod = State(initialValue: preferences.statusTextPeriod)
         _isNpxOverrideExpanded = State(
             initialValue: viewModel.npxPathStatus(for: preferences.npxPath).shouldExpandOverride
         )
@@ -149,7 +155,7 @@ struct SettingsView: View {
     private var operationFeedback: some View {
         switch viewModel.operation {
         case .idle: EmptyView()
-        case .submitting, .runningAutosubmit, .savingSettings:
+        case .submitting, .pushing, .pulling, .runningAutosubmit, .savingSettings:
             ProgressView().controlSize(.small)
             Text(viewModel.operation == .savingSettings ? "正在保存…" : "正在运行…")
                 .font(.caption)
@@ -180,6 +186,27 @@ struct SettingsView: View {
                 if isNpxOverrideExpanded {
                     npxOverrideControls
                 }
+            }
+
+            Section("状态栏文案") {
+                Toggle("显示用量摘要", isOn: $statusTextEnabled)
+                    .accessibilityIdentifier("status-text-enabled")
+
+                TextField("文案模板", text: $statusTextTemplate)
+                    .disabled(!statusTextEnabled)
+                    .accessibilityIdentifier("status-text-template")
+
+                Picker("统计范围", selection: $statusTextPeriod) {
+                    ForEach(ProfilePeriod.allCases) { period in
+                        Text(period.title).tag(period)
+                    }
+                }
+                .disabled(!statusTextEnabled)
+                .accessibilityIdentifier("status-text-period")
+
+                Text("支持 {token} 与 {cost}；其他内容会原样显示。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             launchAtLoginSettings
@@ -438,7 +465,14 @@ struct SettingsView: View {
     }
 
     private var enteredPreferences: UserPreferences {
-        UserPreferences(username: username, tokscaleVersion: version, npxPath: npxPath)
+        UserPreferences(
+            username: username,
+            tokscaleVersion: version,
+            npxPath: npxPath,
+            statusTextEnabled: statusTextEnabled,
+            statusTextTemplate: statusTextTemplate,
+            statusTextPeriod: statusTextPeriod
+        )
     }
 
     private var enteredAutosubmit: AutosubmitConfiguration {

@@ -24,6 +24,8 @@ enum NpxPathStatus: Equatable {
 enum DashboardOperation: Equatable {
     case idle
     case submitting
+    case pushing
+    case pulling
     case runningAutosubmit
     case savingSettings
     case succeeded(String)
@@ -31,7 +33,7 @@ enum DashboardOperation: Equatable {
 
     var isRunning: Bool {
         switch self {
-        case .submitting, .runningAutosubmit, .savingSettings: return true
+        case .submitting, .pushing, .pulling, .runningAutosubmit, .savingSettings: return true
         default: return false
         }
     }
@@ -49,6 +51,7 @@ final class DashboardViewModel: ObservableObject {
     @Published private(set) var loadErrorMessage: String?
     @Published private(set) var autosubmitLoadErrorMessage: String?
     @Published private(set) var cacheWriteErrorMessage: String?
+    @Published private(set) var pushErrorMessage: String?
     @Published private(set) var cacheSavedAt: Date?
     @Published private(set) var autosubmitObservedAt: Date?
     #if DEBUG
@@ -96,6 +99,25 @@ final class DashboardViewModel: ObservableObject {
 
     var currentAutosubmitStatus: AutosubmitStatus? { autosubmitState.loadedValue }
 
+    var statusItemTitle: String? {
+        statusItemTitle(for: preferences)
+    }
+
+    func statusItemTitle(for preferences: UserPreferences) -> String? {
+        let username = preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard preferences.statusTextEnabled,
+              cacheIsComplete(for: username),
+              let cached = cachedProfiles[preferences.statusTextPeriod],
+              cached.data.username.caseInsensitiveCompare(username) == .orderedSame else {
+            return nil
+        }
+        let title = StatusItemTextRenderer.render(
+            template: preferences.statusTextTemplate,
+            data: cached.data
+        )
+        return title.isEmpty ? nil : title
+    }
+
     var dashboardOperation: DashboardOperation {
         suppressDashboardOperationBanner ? .idle : operation
     }
@@ -104,7 +126,8 @@ final class DashboardViewModel: ObservableObject {
         [
             loadErrorMessage.map { "统计读取：\($0)" },
             autosubmitLoadErrorMessage.map { "自动提交状态：\($0)" },
-            cacheWriteErrorMessage.map { "本地保存：\($0)" }
+            cacheWriteErrorMessage.map { "本地保存：\($0)" },
+            pushErrorMessage.map { "即时推送：\($0)" }
         ].compactMap { $0 }
     }
 
@@ -277,6 +300,34 @@ final class DashboardViewModel: ObservableObject {
         _ = await reloadProfiles(force: true, automatic: false)
     }
 
+    func pushUsageNow() async {
+        guard !operation.isRunning else { return }
+        invalidateProfileRefresh()
+        beginOperation(.pushing)
+        pushErrorMessage = nil
+        do {
+            let context = try commandContext(for: preferences)
+            _ = try await resolvedUsername(context: context)
+            try await cli.submit(context: context)
+            completeSilentOperation()
+        } catch {
+            let message = Self.message(for: error)
+            pushErrorMessage = message
+            completeOperation(.failed(message))
+        }
+    }
+
+    func pullStatisticsNow() async {
+        guard !operation.isRunning else { return }
+        beginOperation(.pulling)
+        switch await reloadProfiles(force: true, automatic: false) {
+        case .updated, .superseded:
+            completeSilentOperation()
+        case let .failed(message):
+            completeOperation(.failed(message))
+        }
+    }
+
     func runAutosubmitNow() async {
         guard !operation.isRunning else { return }
         invalidateProfileRefresh()
@@ -308,7 +359,10 @@ final class DashboardViewModel: ObservableObject {
             let normalized = UserPreferences(
                 username: newPreferences.username.trimmingCharacters(in: .whitespacesAndNewlines),
                 tokscaleVersion: newPreferences.tokscaleVersion.trimmingCharacters(in: .whitespacesAndNewlines),
-                npxPath: newPreferences.npxPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                npxPath: newPreferences.npxPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                statusTextEnabled: newPreferences.statusTextEnabled,
+                statusTextTemplate: newPreferences.statusTextTemplate,
+                statusTextPeriod: newPreferences.statusTextPeriod
             )
             let context = try commandContext(for: normalized)
             guard !normalized.username.isEmpty else { throw TokscaleAPIError.invalidUsername }
@@ -366,6 +420,11 @@ final class DashboardViewModel: ObservableObject {
                 || !isPanelVisible
         }
         operation = result
+    }
+
+    private func completeSilentOperation() {
+        operation = .idle
+        operationPresentationGeneration = nil
     }
 
     private func reloadProfiles(force: Bool, automatic: Bool) async -> ProfileReloadResult {
@@ -480,8 +539,15 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private var cacheIsComplete: Bool {
+        let username = preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cacheIsComplete(for: username)
+    }
+
+    private func cacheIsComplete(for username: String) -> Bool {
         Set(cachedProfiles.keys) == Set(ProfilePeriod.allCases)
-            && cachedProfiles.values.allSatisfy { matchesUsername($0.data.username) }
+            && cachedProfiles.values.allSatisfy {
+                $0.data.username.caseInsensitiveCompare(username) == .orderedSame
+            }
     }
 
     private func startTimerIfNeeded() {
