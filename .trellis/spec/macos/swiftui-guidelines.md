@@ -72,4 +72,8 @@ Each client defaults to its top five models in existing token-descending order. 
 
 Check light and dark renderings, zero/absent breakdown data, long client lists, and rapid scope changes. DashboardLayoutTests renders the real SwiftUI view at its fixed dimensions without remote dependencies.
 
-Cache-first loading uses one header submit/refresh button for both data reads and explicit submit operations, including first-load identity discovery. Disable it while loading; do not render separate spinners or background-refresh narration. Cached scope changes and reopening stay idle.
+Cache-first loading keeps the header button reserved for explicit submit/refresh feedback. A silent read with cached content must not spin or disable that button, clear metrics, reset the selected scope, or show a success/error banner. First load without data may use the existing loading/failure state.
+
+Use the actual dashboard panel's `onAppear`/`onDisappear` lifecycle to start and stop the five-minute refresh timer. Do not equate Settings activity or application `scenePhase` with menu-panel visibility. Closing the panel stops future timer triggers but may let an already-started, time-bounded batch finish.
+
+Show the last successful statistics fetch time in the fixed footer using low-contrast text. If the selected server `dateRange.end` differs from today's displayed date, include that actual data date. Put statistics/status/persistence failures behind a small accessible diagnostic control; explicit submit/run/settings failures retain their normal operation feedback.

@@ -34,10 +34,16 @@ Use this contract when changing dashboard loading, profile display models, autos
 
 ```swift
 struct DashboardCacheSnapshot: Codable, Equatable {
+    static let currentSchemaVersion: Int
+    let schemaVersion: Int
+    let username: String?
+    let generation: UInt64
     let profile: DashboardData? // Compatibility field for the previous file format.
     let profiles: [CachedDashboardProfile]
     let selectedPeriod: ProfilePeriod
     let autosubmit: AutosubmitStatus?
+    let autosubmitObservedAt: Date?
+    let fetchedAt: Date? // Present only for a complete all/day/week/month batch.
     let savedAt: Date
 }
 
@@ -51,12 +57,16 @@ The production implementation is `FileDashboardCacheStore`; tests use an in-memo
 
 ### 3. Contracts
 
-- Store one compact JSON file at `~/Library/Caches/com.youranreus.TokChan/dashboard-snapshot.json` (or the equivalent user caches URL returned by Foundation).
+- Store one compact, versioned JSON file under Foundation's Application Support directory at `com.youranreus.TokChan/dashboard-snapshot.json`. The previous Caches path is a read-only migration fallback when the new file is missing or invalid.
 - Cache only mapped `DashboardData`, `AutosubmitStatus`, and `savedAt`; do not cache raw contribution history, credentials, environment variables, or autosubmit configuration as a second source of truth.
-- `DashboardData.period` remains required. Migrate the preceding single-profile file into a one-entry map when profiles/selectedPeriod are absent. Restore the persisted selection when present. Truly unscoped legacy profiles are incompatible and disposable.
-- Entries are scope-specific and checked against the current username. Persist the complete map and selected scope after reads and cached selection changes; restore all scopes on relaunch. Each CachedDashboardProfile retains its own savedAt. Account changes invalidate the map; submissions update the selected scope without deleting the others. Keep request generation guards.
+- `DashboardData.period` remains required. Migrate preceding single-profile and unversioned multi-profile files for stale display, but never infer that independent legacy entries are one fresh batch. Truly unscoped legacy profiles are incompatible and disposable.
+- A fresh snapshot contains exactly one entry for each of all/day/week/month, one case-insensitive username, one generation, and one shared `fetchedAt`. Duplicate/missing scopes or a missing batch timestamp are incomplete and must refresh.
+- Entries are checked against the current username. Persist the complete map and selected scope after successful batch reads and cached selection changes; restore all available scopes on relaunch. Account changes invalidate the map and request generation before a new account can publish.
 - Hydrate `DashboardViewModel` synchronously from the small snapshot during initialization so its first rendered state can already be `.loaded`.
-- On panel open, perform profile/status reads only for missing cached resources. A scope switch with a matching cache performs no request. Explicit submit refreshes the current scope; preserve other scope entries. Opening or closing a panel never invalidates the map.
+- On panel open, show cached values first. A complete batch is fresh for 300 seconds; a missing, expired, or clock-rollback snapshot starts one read-only whole-batch refresh without clearing visible data. Scope switches consume the in-memory batch and never start independent scope requests.
+- Statistics publish only after all remote inputs succeed. A failed or superseded batch preserves the previous map and `fetchedAt`. Explicit submit/run/settings operations force a new whole-batch read after the mutation and cannot reuse a pre-mutation request.
+- The 30-second failure cooldown applies only to automatic triggers. A user-initiated error-state retry is read-only, forces a new whole batch immediately, and never runs submit.
+- Autosubmit status has its own `autosubmitObservedAt` and error path. Status-only saves and selected-scope saves must not advance statistics `fetchedAt`.
 - If the selected username differs from the cached profile username, ignore the cached profile. Autosubmit status remains machine-local and may still be displayed.
 - Use atomic file replacement for writes. A cache write failure must not fail a successful Tokscale operation.
 
@@ -67,25 +77,30 @@ The production implementation is `FileDashboardCacheStore`; tests use an in-memo
 | Cache file missing | Return `nil`; perform normal first-load placeholders and online reads |
 | Cached scope differs from selected scope | Keep identity only; load the selected scope, never show mismatched metrics |
 | Cache JSON corrupt or schema-incompatible | Return `nil`; never crash or block online loading |
+| New Application Support file invalid, legacy Caches file valid | Return the legacy snapshot and migrate only after a successful new-path write |
 | Cached username differs from preference | Ignore cached profile; do not show another user's totals |
-| Background refresh fails with valid cache | Keep cached content and show a non-destructive background error |
-| Fresh profile or status succeeds | Update UI and atomically replace the available snapshot fields |
+| Any statistics request fails | Keep every old scope and the old statistics `fetchedAt`; expose a light diagnostic |
+| Complete statistics batch succeeds | Replace all four scopes in memory together, then atomically persist the versioned snapshot |
+| Autosubmit status succeeds/fails | Update or retain status independently; never block a successful statistics batch |
 | Cache directory/write fails | Keep fresh UI result; do not convert the operation to failure |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: panel reopens or the app relaunches, every cached scope renders immediately with zero network requests. The header submit button is the single loading indicator when a missing scope is fetched or a manual submission runs.
-- Base: first launch has no snapshot, so only the missing resources show loading placeholders until their first success.
-- Bad: setting both states to `.loading` on every panel open, caching API credentials, or treating a corrupt optional cache as a fatal load error.
+- Good: a fresh complete snapshot renders every scope immediately; an expired snapshot stays visible while one silent read-only batch replaces all scopes.
+- Base: first launch has no snapshot, so real loading/failure state remains until the first complete batch succeeds.
+- Bad: publishing all/week/month independently, advancing `fetchedAt` on a selection/status save, deleting a readable stale batch on refresh failure, or caching credentials.
 
 ### 6. Tests Required
 
-- File-store round trip: save a complete snapshot and assert decoded equality.
-- Legacy migration: remove required period metadata and assert snapshot decoding fails.
-- Corruption: write invalid JSON and assert `load()` returns `nil` without throwing.
+- File-store round trip: save a versioned complete snapshot and assert decoded equality and completeness.
+- Legacy migration: decode single/multi-scope legacy snapshots as stale; remove required period metadata and assert decoding fails.
+- Corruption: write invalid new JSON and assert a valid legacy-path snapshot is used; without a backup return `nil`.
 - View-model hydration: construct with a snapshot and assert profile/status are `.loaded` before calling `load()`.
-- Background failure: make API and CLI reads fail, then assert cached states remain `.loaded` and a refresh error is exposed.
-- Fresh load: assert successful profile/status reads populate the cache.
+- TTL/cooldown: assert `<300s` skips statistics, `>=300s` refreshes, clock rollback refreshes, and automatic failures retry no sooner than 30 seconds.
+- Batch failure: fail any one remote scope and assert every cached scope and the old `fetchedAt` remain.
+- Concurrency: assert duplicate triggers coalesce and old account/generation results cannot publish.
+- Lifecycle: assert a visible panel ticks and a hidden panel schedules no additional reads.
+- Write failure: assert fresh memory data remains usable and the previous on-disk snapshot is preserved.
 
 ### 7. Wrong vs Correct
 
@@ -103,13 +118,13 @@ func load() async {
 
 ```swift
 func load() async {
-    if profileState.loadedValue == nil { profileState = .loading }
-    if autosubmitState.loadedValue == nil { autosubmitState = .loading }
-    isRefreshing = true
-    // Cached values remain visible while fresh reads run.
+    // Keep a loaded snapshot visible while freshness is evaluated.
+    async let statistics = reloadProfiles(force: false, automatic: true)
+    async let status = reloadAutosubmitIfNeeded()
+    _ = await (statistics, status)
 }
 ```
 
 ### Cache-first regression requirements
 
-Round-trip all/day/week/month through JSON, reconstruct the view model, select every scope and reopen with load(); assert no API/CLI calls. Submit once and assert submit precedes one selected-scope fetch while all cached entries remain. Decode previous single-profile snapshots and verify migration. Do not display background refresh narration or a second spinner.
+Round-trip a complete all/day/week/month batch through JSON, reconstruct the view model, and select every scope without requests. At 299 seconds assert no statistics request; at 300 seconds assert one read-only batch. Submit once and assert submit precedes one whole-batch fetch. Decode previous single-profile/multi-profile snapshots as stale migration input. Do not display background refresh narration or make the submit button spin for a cached silent read.

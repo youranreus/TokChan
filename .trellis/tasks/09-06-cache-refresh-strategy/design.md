@@ -1,6 +1,6 @@
 # 缓存与统一刷新设计
 
-状态：待最终审阅。需求依据 prd.md R1–R6；调研依据 research/cache-refresh.md。
+状态：已实施。需求依据 prd.md R1–R6；调研依据 research/cache-refresh.md。
 
 ## 数据边界
 维持无外部依赖的 SwiftUI / ObservableObject / JSON 架构。API 服务提供整组读取能力：并发请求 all、week、month；同一个解码后的 week 响应派生 week 和 day，保留现有服务端日期规则。三次请求都成功并验证范围、账号后返回完整统计集合。请求要有有限超时，不允许慢请求永久占用批次。

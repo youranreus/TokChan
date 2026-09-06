@@ -1,6 +1,6 @@
 # 实施与验证清单
 
-状态：待最终方案批准，不执行 task.py start。
+状态：已实施并通过代码审查与自动化验证。
 
 1. 最终审阅后再进入实施；加载 trellis-before-dev 以及 macOS 状态、网络、持久化、SwiftUI、Tokscale 集成和测试规范。记录本任务明确取代的旧契约。
 2. 增加全组 API 读取及测试：all/week/month 三次请求、共享 week 派生 day、范围/账号校验、一个失败整组失败、有限超时与 HTTP 缓存重验证行为。
@@ -29,3 +29,13 @@ Swift 编译检查由 Xcode 构建覆盖；如仓库存在实际 lint 配置再�
 
 ## 退回点
 先稳定服务与模型测试，再接入调度和 UI；生命周期不可靠时先解决面板可见性，不以应用整体活跃状态代替。产品行为若需改变，回到最终方案审阅。数据层仅触及展示快照，可回滚代码，不删除旧缓存或修改远端数据。
+
+## 实施结果（2026-09-06）
+
+- 已完成全组 API、版本化快照、Application Support/旧 Caches 回退、TTL/冷却/请求合并、账号与 generation 隔离、各手动入口提交后全组刷新、独立 autosubmit 状态与静默 UI。
+- 已补齐生产文件存储的原子写失败回归：失败后旧文件字节不变，新 store 实例可恢复旧快照。
+- `xcodebuild test ...`：119 个单元测试通过；完整套件在当前 SystemUIServer 不暴露菜单栏层级时按预期跳过该环境专属 UI 用例；`git diff --check` 通过。
+- 独立运行 `TokChanUITests/testApplicationLaunchesAndMenuBarPanelClosesAndReopens` 已通过，实际状态项开关及生命周期计数断言生效。
+- Release 构建通过。Xcode 仅报告多架构 destination 选择及测试库最低系统版本警告。
+- trellis-check 未发现新的可复现功能缺陷。
+- 已通过真实 `.menuBarExtraStyle(.window)` UI 测试关闭并重开菜单面板；DEBUG 生命周期计数断言确认 `onAppear` / `onDisappear` 顺序为首次 `1:0`、重开 `2:1`，对应模型测试验证关闭停止定时、重开恢复调度。

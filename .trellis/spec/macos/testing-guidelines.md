@@ -10,6 +10,8 @@ No test target exists yet. When the Xcode project is created, include unit tests
 - Test view models by injecting fake services.
 - Cover loading, success, empty, and failure states for async flows.
 - Test JSON decoding and persistence migration when those features exist.
+- For dashboard refresh tests, inject the clock and sleep boundary. Cover the 300-second TTL edge, 30-second automatic-failure cooldown, trigger coalescing, panel visibility cancellation, and old account/generation responses without wall-clock sleeps.
+- Treat an all/day/week/month refresh as one publication unit. Fail one remote request and assert no partial range becomes observable.
 
 ## UI tests
 

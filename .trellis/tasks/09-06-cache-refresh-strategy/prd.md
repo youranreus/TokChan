@@ -1,6 +1,6 @@
 # 本地缓存与统一静默刷新策略
 
-状态：需求已收敛，待最终方案审阅；尚未进入实施。
+状态：已实施并完成自动化验证。
 
 ## 目标
 让 TokChan 在已有历史数据时打开即可阅读，更新过程安静，四个统计范围保持同批更新。
@@ -49,4 +49,4 @@
 - 从旧格式迁移时保留已有范围供阅读，但缺失范围仍需首次成功获取；旧缓存不被伪装成完整新批次。
 
 ## 产物与阶段
-research/cache-refresh.md、design.md、implement.md 已形成，实施/检查上下文已列入 JSONL。无阻塞产品问题。下一步为用户审阅最终方案；本轮未执行 task.py start，未修改产品代码。
+research/cache-refresh.md、design.md、implement.md 已形成，实施/检查上下文已列入 JSONL。代码与规范同步完成，最新 119 个单元测试及 Release 构建通过；真实 MenuBarExtra 关闭/重开 UI 测试验证了实际 `onAppear` / `onDisappear` 回调，定时启停由对应模型测试覆盖。

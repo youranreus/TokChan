@@ -25,7 +25,7 @@ Swift boundaries:
 
 ```swift
 protocol TokscaleAPIService {
-    func fetchProfile(username: String, period: ProfilePeriod) async throws -> DashboardData
+    func fetchDashboardBatch(username: String) async throws -> DashboardProfileBatch
 }
 
 protocol TokscaleCLIService {
@@ -47,14 +47,15 @@ protocol TokscaleCLIService {
 - Settings present an empty override as automatic discovery and display the resolved executable path. Keep manual selection collapsed when automatic discovery succeeds; expand recovery controls for missing discovery or an invalid saved override. Clearing the override restores automatic mode without changing the persisted schema.
 - Before launching `npx`, prepend its containing directory to the child `PATH`. NVM's `npx` uses `#!/usr/bin/env node`; finding the script alone is insufficient in a Finder-launched GUI environment.
 - Profile mapping reads `period`, `dateRange`, `user`, `stats`, `updatedAt`, and `contributions[].clients[]`. The request and response period must match. The API supports only `all`, `week` (trailing 7 days), and `month` (trailing 30 days); it does not accept `day` as a remote period. The visible day tab fetches week and projects the contribution whose date equals dateRange.end. Use its totals/tokenBreakdown/clients verbatim; return nil rank because there is no daily rank. No matching day means zero usage. Use returned date boundaries, not local calendar calculations.
+- Dashboard refresh issues all/week/month concurrently with a finite request timeout and HTTP cache revalidation. Decode the week response once and derive both day and week. Return only an exact four-scope, single-account `DashboardProfileBatch`; one transport, status, decode, period, or account failure fails the whole batch.
 - Metric cards and rank use the selected response directly. In `all`, upstream activeDays follows its chart window; never silently recompute it as lifetime days.
 - Overall breakdown comes from stats inputTokens/outputTokens/cacheReadTokens/cacheWriteTokens/reasoningTokens. Missing stats categories produce an unavailable breakdown, not fabricated zeros. Sparse client buckets retain zero defaults for existing aggregation compatibility.
 - TokenCategory fixes the five legend/segment order. Bar fractions use the sum of finite nonnegative categories, normalized before summation to avoid overflow. Do not replace API totalTokens with that sum.
 - Profile reloads return an explicit updated/failed/superseded outcome to mutation callers; do not infer their success from a shared error cleared by another request. Re-resolve CLI context after suspended identity discovery, since Settings may have changed npx/version.
-- Switching scope is read-only; it neither submits nor reads/modifies autosubmit. Guard profile requests by generation, account and scope so late responses cannot replace the selected view. Keep identity visible while missing scoped data loads.
+- Switching scope is a pure projection from the latest complete batch; it neither submits, fetches one remote period, nor reads/modifies autosubmit. Guard batch requests by generation and account, but do not invalidate a batch merely because selection changed.
 - Autosubmit status details and run-now live in Settings, with progress/success/failure feedback. Run-now uses persisted CLI settings, not unsaved form drafts.
 - `AutosubmitStatus` reads enablement, interval, scheduler, clients, date flags/range, managed executable/version/staleness, last run milliseconds, and last error.
-- Only username, Tokscale version, and optional `npx` path belong in `UserDefaults`. A separate disposable caches-directory snapshot may contain mapped display data and the last observed autosubmit status; see `data-persistence.md`.
+- Only username, Tokscale version, and optional `npx` path belong in `UserDefaults`. A separate versioned Application Support snapshot may contain mapped display data and the last observed autosubmit status; it is stale-readable state, never a configuration source. See `data-persistence.md`.
 - Custom pricing management first resolves the effective path through `pricing list-overrides --json`, then reads and mutates only that `custom-pricing.json`. Credentials, `settings.json`, LaunchAgents, and scheduler state remain out of bounds.
 - Treat the raw JSON document as the lossless source of truth; the CLI list response is only a path/effective-entry projection. Preserve unedited metadata, unknown keys, tier fields, compatible aliases, and decimal number semantics without routing untouched JSON numbers through binary floating-point. A missing file may become a minimal `models` document, but malformed documents must never be rebuilt as empty.
 - Custom-pricing writes compare the previously loaded bytes immediately before an atomic replacement. External changes stop the write and require reload. Editing a base rate removes all aliases for that selected rate and writes the canonical per-million key; untouched rates retain their original representation.
@@ -69,6 +70,8 @@ protocol TokscaleCLIService {
 |---|---|
 | Blank username | `TokscaleAPIError.invalidUsername`; prompt for Settings |
 | Response period differs from request | Reject with mismatchedPeriod; never relabel the response |
+| Any all/week/month member fails | Throw the member error and publish no partial `DashboardProfileBatch` |
+| Batch scopes or usernames differ | Reject as invalid response before the view model can publish |
 | Profile HTTP 404 | `profileNotFound` |
 | Other non-2xx response | Preserve HTTP status in `server(statusCode:)` |
 | Missing/non-executable `npx` | `TokscaleCLIError.missingNpx` |
@@ -87,7 +90,7 @@ protocol TokscaleCLIService {
 
 ### 5. Good / Base / Bad Cases
 
-- Good: requesting `period=week` displays the returned range, stats and contribution groups together.
+- Good: one dashboard refresh requests all/week/month, derives day from that same week payload, validates one username, and publishes all four scopes together.
 - Bad: requesting `day`, calculating local week boundaries, or showing lifetime cached totals beneath a selected week tab.
 - Good: `npx --yes tokscale@4.15.0 autosubmit enable --interval 120m --client codex --week` is built as individual arguments, then status is re-read.
 - Base: opening the panel concurrently fetches profile data and reads autosubmit status; it performs no submission.
@@ -116,8 +119,8 @@ if #available(macOS 14.0, *) {
 **Test**: Keep a stable `settings-button` accessibility identifier and cover the supported-system view path with a regression test.
 ### 6. Tests Required
 
-- Verify exact URL period/username encoding and reject mismatched response scope.
-- Resolve month before an earlier week request; assert month remains visible. Test failed scope loads never reuse a different scope cache.
+- Verify exact URL period/username encoding, revalidation policy, finite timeout, and rejection of mismatched response scope.
+- Assert one batch makes exactly three remote requests, derives day from week, rejects mixed accounts/scopes, and throws when any one request fails.
 - Assert five-category fractions, empty values, malformed values and bundled icon resolution.
 - Decode current and sparse public profile fixtures; assert grouped client/model totals, percentages, and token-descending order.
 - Decode current and sparse autosubmit JSON; assert defaults and date summary.
@@ -127,7 +130,7 @@ if #available(macOS 14.0, *) {
 - Settings tests must cover automatic/custom/fallback/unavailable presentation, including whether override controls start collapsed or expanded; locator tests separately prove executable discovery and precedence.
 - Custom-pricing file tests use temporary directories and cover missing/malformed files, add/edit/delete, zero versus nil, aliases, unknown/tier field preservation, duplicate IDs, and external-change conflicts.
 - Fixture tests cover legacy excluded-unpriced output, current zero-cost unpriced output, all-unpriced zero summaries, no data, degraded sources, ANSI output, and unknown formats. A fake runner must assert the exact `pricing list-overrides --json` and `submit --dry-run` suffixes and prove no real submit command runs.
-- With fake services, assert panel load performs only `fetch` and `status`; manual refresh orders `submit` before `fetch`; run-now orders `run` before profile/status reload.
+- With fake services, assert panel load performs only one batch `fetch` and one `status`; manual refresh orders `submit` before a forced batch; run-now orders `run` before batch/status reload.
 - UI smoke tests must use `--ui-testing` fixture dependencies and never access the network, `npx`, or `launchd`.
 
 ### 7. Wrong vs Correct

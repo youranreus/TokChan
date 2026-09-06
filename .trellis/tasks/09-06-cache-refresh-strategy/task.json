@@ -2,8 +2,8 @@
   "id": "cache-refresh-strategy",
   "name": "cache-refresh-strategy",
   "title": "优化本地缓存与统一静默刷新策略",
-  "description": "调研缓存优先展示、静默刷新与全周期一致更新，形成待确认方案",
-  "status": "planning",
+  "description": "实现缓存优先展示、静默刷新与全周期一致更新",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -12,7 +12,7 @@
   "assignee": "季悠然",
   "createdAt": "2026-09-06",
   "completedAt": null,
-  "branch": null,
+  "branch": "master",
   "base_branch": "master",
   "worktree_path": null,
   "commit": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "实现、规范同步、119 个单元测试、真实 MenuBarExtra 生命周期 UI 测试与 Release 构建已完成。",
   "meta": {}
 }
