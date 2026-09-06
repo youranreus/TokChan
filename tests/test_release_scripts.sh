@@ -106,7 +106,12 @@ set -euo pipefail
 [[ -L "$2/Applications" && "$(readlink "$2/Applications")" == /Applications ]]
 [[ -z "${MOCK_OSASCRIPT_LOG:-}" ]] || printf '%s\n' "$*" >> "$MOCK_OSASCRIPT_LOG"
 [[ "${MOCK_LAYOUT_FAILURE:-}" != 1 ]] || exit 1
-cat >/dev/null
+layout_script=$(cat)
+if [[ "${MOCK_REQUIRE_EXPLICIT_LAYOUT_WINDOW:-}" == 1 ]]; then
+  grep -F 'set targetWindow to make new Finder window' <<< "$layout_script" >/dev/null
+  grep -F 'set target of targetWindow to targetFolder' <<< "$layout_script" >/dev/null
+  ! grep -F 'container window of targetFolder' <<< "$layout_script" >/dev/null
+fi
 [[ "${MOCK_LAYOUT_MISSING:-}" == 1 ]] || printf fixture > "$2/.DS_Store"
 MOCK
   cat > "$fixture/mock-bin/hdiutil" <<'MOCK'
@@ -494,6 +499,7 @@ hdiutil_log="$test_tmp/hdiutil.log"
 osascript_log="$test_tmp/osascript.log"
 build_output=$(PATH="$fixture/mock-bin:$PATH" MOCK_CODESIGN_LOG="$codesign_log" \
   MOCK_HDIUTIL_LOG="$hdiutil_log" MOCK_OSASCRIPT_LOG="$osascript_log" \
+  MOCK_REQUIRE_EXPLICIT_LAYOUT_WINDOW=1 \
   "$fixture/scripts/build-release.sh" --skip-tests --output output)
 [[ -f "$dmg" && -f "$checksum" ]]
 (

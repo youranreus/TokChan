@@ -397,8 +397,10 @@ on run argv
   with timeout of 20 seconds
     tell application "Finder"
       set targetFolder to POSIX file mountPath as alias
-      open targetFolder
-      set targetWindow to container window of targetFolder
+      -- Creating a dedicated window avoids Finder resolving container window via
+      -- the volume name, which can target a different mounted "TokChan" disk.
+      set targetWindow to make new Finder window
+      set target of targetWindow to targetFolder
       set current view of targetWindow to icon view
       set toolbar visible of targetWindow to false
       set statusbar visible of targetWindow to false
