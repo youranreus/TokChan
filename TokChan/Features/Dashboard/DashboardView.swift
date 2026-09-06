@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DashboardView: View {
     @ObservedObject var viewModel: DashboardViewModel
+    @State private var showsDiagnostics = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,7 +17,6 @@ struct DashboardView: View {
                         refreshButton
                     }
                 }
-                backgroundLoadBanner
                 operationBanner
                 Picker("时间范围", selection: Binding(
                     get: { viewModel.selectedPeriod },
@@ -54,7 +54,11 @@ struct DashboardView: View {
         .background(.background)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dashboard-panel")
-        .task { await viewModel.load() }
+        #if DEBUG
+        .accessibilityValue("\(viewModel.panelAppearanceCount):\(viewModel.panelDisappearanceCount)")
+        #endif
+        .onAppear { viewModel.panelDidAppear() }
+        .onDisappear { viewModel.panelDidDisappear() }
     }
 
     private func header(_ profile: DashboardData) -> some View {
@@ -99,7 +103,7 @@ struct DashboardView: View {
         .frame(width: 20, height: 20)
         .buttonStyle(.borderless)
         .disabled(viewModel.isLoading)
-        .help("提交本地用量并刷新当前范围")
+        .help("提交本地用量并刷新全部范围")
         .accessibilityLabel("提交并刷新")
         .accessibilityIdentifier("submit-refresh-button")
     }
@@ -110,14 +114,6 @@ struct DashboardView: View {
             MetricView(title: "成本", value: DisplayFormatters.currency(profile.totalCost))
             MetricView(title: "排名", value: profile.rank.map { "#\($0)" } ?? "—")
             MetricView(title: "活跃天数", value: "\(profile.activeDays)")
-        }
-    }
-
-    @ViewBuilder
-    private var backgroundLoadBanner: some View {
-        if let message = viewModel.loadErrorMessage,
-           viewModel.profileState.loadedValue != nil {
-            StatusBanner(text: "读取失败：\(message)", color: .orange, showsProgress: false)
         }
     }
 
@@ -142,7 +138,7 @@ struct DashboardView: View {
             Color.clear
         case let .failed(message):
             ErrorStateView(title: "资料暂不可用", message: message) {
-                Task { await viewModel.load() }
+                Task { await viewModel.retryStatistics() }
             }
             .padding(.horizontal, 14)
         case let .loaded(profile):
@@ -172,6 +168,46 @@ struct DashboardView: View {
 
             Spacer()
 
+            if let updateText {
+                Text(updateText)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help(updateText)
+                    .accessibilityIdentifier("snapshot-updated-at")
+            }
+
+            if !viewModel.diagnosticMessages.isEmpty {
+                Button {
+                    showsDiagnostics.toggle()
+                } label: {
+                    Image(systemName: "info.circle")
+                }
+                .buttonStyle(.borderless)
+                .help("查看刷新详情")
+                .accessibilityLabel("查看刷新详情")
+                .accessibilityIdentifier("refresh-diagnostics-button")
+                .popover(isPresented: $showsDiagnostics) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("刷新详情").font(.headline)
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(Array(viewModel.diagnosticMessages.enumerated()), id: \.offset) { _, message in
+                                    Text(message)
+                                        .font(.caption)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
+                        .frame(maxHeight: 260)
+                    }
+                    .padding(12)
+                    .frame(width: 300, alignment: .leading)
+                }
+            }
+
+            Spacer()
+
             Button("退出 TokChan") {
                 NSApplication.shared.terminate(nil)
             }
@@ -181,6 +217,17 @@ struct DashboardView: View {
         .padding(.horizontal, 14)
         .frame(height: 38)
         .background(Color.secondary.opacity(0.06))
+    }
+
+    private var updateText: String? {
+        guard let fetchedAt = viewModel.cacheSavedAt else { return nil }
+        let fetched = "更新于 \(DisplayFormatters.relativeDate(fetchedAt))"
+        guard let dataDate = viewModel.profileState.loadedValue?.dateRange?.end else { return fetched }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard dataDate != formatter.string(from: Date()) else { return fetched }
+        return "数据日期 \(dataDate) · \(fetched)"
     }
 
     @ViewBuilder

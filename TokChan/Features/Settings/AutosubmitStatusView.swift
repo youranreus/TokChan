@@ -53,6 +53,13 @@ struct AutosubmitStatusView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
 
+                    if let observedAt = viewModel.autosubmitObservedAt {
+                        Text("状态读取于 \(DisplayFormatters.relativeDate(observedAt))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("autosubmit-observed-at")
+                    }
+
                     if !status.clients.isEmpty {
                         Text("客户端：\(status.clients.joined(separator: ", "))")
                             .font(.caption2)

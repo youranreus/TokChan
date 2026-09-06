@@ -3,7 +3,15 @@ import Foundation
 import SwiftUI
 
 struct PreviewAPIService: TokscaleAPIService {
-    func fetchProfile(username: String, period: ProfilePeriod) async throws -> DashboardData {
+    func fetchDashboardBatch(username: String) async throws -> DashboardProfileBatch {
+        var profiles: [ProfilePeriod: DashboardData] = [:]
+        for period in ProfilePeriod.allCases {
+            profiles[period] = try makeProfile(username: username, period: period)
+        }
+        return try DashboardProfileBatch(username: username, profiles: profiles)
+    }
+
+    private func makeProfile(username: String, period: ProfilePeriod) throws -> DashboardData {
         let scale: Double = period == .all ? 100 : (period == .month ? 10 : (period == .week ? 1 : 0.2))
         let clientIDs = ["codex", "cursor", "hermes", "pi", "unknown-agent"]
         let clients: [[String: Any]] = clientIDs.enumerated().map { index, client in
@@ -30,7 +38,6 @@ struct PreviewAPIService: TokscaleAPIService {
         let data = try JSONSerialization.data(withJSONObject: json)
         return DashboardData(response: try JSONDecoder().decode(PublicProfileResponse.self, from: data))
     }
-
 }
 
 struct PreviewCLIService: TokscaleCLIService, CustomPricingCLIService {

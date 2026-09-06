@@ -77,14 +77,18 @@ private actor DiscoveryCLI: TokscaleCLIService {
 }
 
 private struct DiscoveryAPI: TokscaleAPIService {
-    func fetchProfile(username: String, period: ProfilePeriod) async throws -> DashboardData {
-        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ProfileModelsTests.profileJSON.utf8)) as? [String: Any])
-        json["period"] = period.rawValue
-        var user = try XCTUnwrap(json["user"] as? [String: Any])
-        user["username"] = username
-        json["user"] = user
-        let response = try JSONDecoder().decode(PublicProfileResponse.self, from: JSONSerialization.data(withJSONObject: json))
-        return DashboardData(response: response)
+    func fetchDashboardBatch(username: String) async throws -> DashboardProfileBatch {
+        var profiles: [ProfilePeriod: DashboardData] = [:]
+        for period in ProfilePeriod.allCases {
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ProfileModelsTests.profileJSON.utf8)) as? [String: Any])
+            json["period"] = period.rawValue
+            var user = try XCTUnwrap(json["user"] as? [String: Any])
+            user["username"] = username
+            json["user"] = user
+            let response = try JSONDecoder().decode(PublicProfileResponse.self, from: JSONSerialization.data(withJSONObject: json))
+            profiles[period] = DashboardData(response: response)
+        }
+        return try DashboardProfileBatch(username: username, profiles: profiles)
     }
 }
 

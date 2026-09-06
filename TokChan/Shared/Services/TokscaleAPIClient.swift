@@ -9,7 +9,27 @@ private extension CharacterSet {
 }
 
 protocol TokscaleAPIService {
-    func fetchProfile(username: String, period: ProfilePeriod) async throws -> DashboardData
+    func fetchDashboardBatch(username: String) async throws -> DashboardProfileBatch
+}
+
+struct DashboardProfileBatch: Equatable {
+    let username: String
+    let profiles: [ProfilePeriod: DashboardData]
+
+    init(username: String, profiles: [ProfilePeriod: DashboardData]) throws {
+        let expected = Set(ProfilePeriod.allCases)
+        guard Set(profiles.keys) == expected,
+              profiles.values.allSatisfy({
+                  $0.username.caseInsensitiveCompare(username) == .orderedSame
+              }) else {
+            throw TokscaleAPIError.invalidResponse
+        }
+        for period in ProfilePeriod.allCases where profiles[period]?.period != period {
+            throw TokscaleAPIError.mismatchedPeriod
+        }
+        self.username = username
+        self.profiles = profiles
+    }
 }
 
 enum TokscaleAPIError: LocalizedError {
@@ -53,7 +73,31 @@ final class LiveTokscaleAPIClient: TokscaleAPIService {
         decoder = JSONDecoder()
     }
 
+    func fetchDashboardBatch(username: String) async throws -> DashboardProfileBatch {
+        let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw TokscaleAPIError.invalidUsername }
+
+        async let allResponse = fetchResponse(username: trimmed, period: .all)
+        async let weekResponse = fetchResponse(username: trimmed, period: .week)
+        async let monthResponse = fetchResponse(username: trimmed, period: .month)
+        let (all, week, month) = try await (allResponse, weekResponse, monthResponse)
+        let profiles: [ProfilePeriod: DashboardData] = [
+            .all: DashboardData(response: all),
+            .day: try DashboardData.day(from: week),
+            .week: DashboardData(response: week),
+            .month: DashboardData(response: month)
+        ]
+        return try DashboardProfileBatch(username: trimmed, profiles: profiles)
+    }
+
+    // Kept as a focused seam for period mapping tests and future single-response diagnostics.
     func fetchProfile(username: String, period: ProfilePeriod) async throws -> DashboardData {
+        let remotePeriod: ProfilePeriod = period == .day ? .week : period
+        let response = try await fetchResponse(username: username, period: remotePeriod)
+        return try period == .day ? DashboardData.day(from: response) : DashboardData(response: response)
+    }
+
+    private func fetchResponse(username: String, period: ProfilePeriod) async throws -> PublicProfileResponse {
         let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw TokscaleAPIError.invalidUsername }
 
@@ -67,10 +111,15 @@ final class LiveTokscaleAPIClient: TokscaleAPIService {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             throw TokscaleAPIError.invalidUsername
         }
-        let remotePeriod: ProfilePeriod = period == .day ? .week : period
-        components.queryItems = [URLQueryItem(name: "period", value: remotePeriod.rawValue)]
+        components.queryItems = [URLQueryItem(name: "period", value: period.rawValue)]
         guard let requestURL = components.url else { throw TokscaleAPIError.invalidUsername }
-        let (data, response) = try await session.data(from: requestURL)
+        var request = URLRequest(
+            url: requestURL,
+            cachePolicy: .reloadRevalidatingCacheData,
+            timeoutInterval: 30
+        )
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw TokscaleAPIError.invalidResponse
         }
@@ -86,8 +135,10 @@ final class LiveTokscaleAPIClient: TokscaleAPIService {
 
         do {
             let profile = try decoder.decode(PublicProfileResponse.self, from: data)
-            guard profile.period == remotePeriod else { throw TokscaleAPIError.mismatchedPeriod }
-            return try period == .day ? DashboardData.day(from: profile) : DashboardData(response: profile)
+            guard profile.period == period else { throw TokscaleAPIError.mismatchedPeriod }
+            return profile
+        } catch let error as TokscaleAPIError {
+            throw error
         } catch {
             throw TokscaleAPIError.decoding(error)
         }

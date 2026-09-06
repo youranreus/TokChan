@@ -3,172 +3,148 @@ import XCTest
 
 @MainActor
 final class DashboardViewModelTests: XCTestCase {
-    func testHydratesCachedContentBeforeRefreshing() throws {
-        let cachedProfile = try makeDashboardData()
-        let cachedStatus = try makeAutosubmitStatus()
-        let cache = InMemoryCache(
-            snapshot: DashboardCacheSnapshot(
-                profile: cachedProfile,
-                autosubmit: cachedStatus,
-                savedAt: Date(timeIntervalSince1970: 1_788_425_600)
-            )
-        )
+    private let referenceDate = Date(timeIntervalSince1970: 1_788_425_600)
+
+    func testHydratesCompleteCachedContentBeforeRefreshing() throws {
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
+        let viewModel = makeViewModel(cache: InMemoryCache(snapshot: snapshot), now: { self.referenceDate })
+
+        XCTAssertEqual(viewModel.profileState.loadedValue, snapshot.profile)
+        XCTAssertEqual(viewModel.cacheSavedAt, referenceDate)
+        XCTAssertFalse(viewModel.isRefreshing)
+    }
+
+    func testUnresolvedIdentityDoesNotDisplayAnAccountSnapshot() throws {
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
         let viewModel = DashboardViewModel(
             api: FakeAPI(recorder: EventRecorder()),
             cli: FakeCLI(recorder: EventRecorder()),
             preferencesStore: InMemoryPreferences(
-                value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: "")
+                value: UserPreferences(username: "", tokscaleVersion: "latest", npxPath: "")
             ),
             npxLocator: FakeNpxLocator(),
-            cacheStore: cache
+            cacheStore: InMemoryCache(snapshot: snapshot),
+            now: { self.referenceDate }
         )
 
-        guard case let .loaded(profile) = viewModel.profileState,
-              case let .loaded(status) = viewModel.autosubmitState else {
-            return XCTFail("Expected cached content to be visible immediately")
-        }
-        XCTAssertEqual(profile, cachedProfile)
-        XCTAssertEqual(status, cachedStatus)
-        XCTAssertNotNil(viewModel.cacheSavedAt)
-        XCTAssertFalse(viewModel.isRefreshing)
+        XCTAssertNil(viewModel.profileState.loadedValue)
+        XCTAssertNil(viewModel.identityProfile)
+        XCTAssertNil(viewModel.cacheSavedAt)
+        XCTAssertEqual(viewModel.currentAutosubmitStatus, snapshot.autosubmit)
     }
 
-    func testSuccessfulLoadPersistsProfileAndAutosubmitSnapshot() async {
+    func testFreshCompleteCacheSkipsStatisticsButRefreshesStatus() async throws {
         let recorder = EventRecorder()
-        let cache = InMemoryCache()
-        let viewModel = DashboardViewModel(
-            api: FakeAPI(recorder: recorder),
-            cli: FakeCLI(recorder: recorder),
-            preferencesStore: InMemoryPreferences(
-                value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: "")
-            ),
-            npxLocator: FakeNpxLocator(),
-            cacheStore: cache
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
+        let viewModel = makeViewModel(
+            recorder: recorder,
+            cache: InMemoryCache(snapshot: snapshot),
+            now: { self.referenceDate.addingTimeInterval(299) }
         )
 
         await viewModel.load()
 
-        XCTAssertNotNil(cache.snapshot?.profile)
-        XCTAssertNotNil(cache.snapshot?.autosubmit)
-        XCTAssertFalse(viewModel.isRefreshing)
-    }
-
-    func testCachedResourcesAreShownWithoutNetworkRequests() async throws {
-        let cachedProfile = try makeDashboardData()
-        let cachedStatus = try makeAutosubmitStatus()
-        let cache = InMemoryCache(
-            snapshot: DashboardCacheSnapshot(
-                profile: cachedProfile,
-                autosubmit: cachedStatus,
-                savedAt: Date(timeIntervalSince1970: 1_788_425_600)
-            )
-        )
-        let recorder = EventRecorder()
-        let viewModel = DashboardViewModel(
-            api: FakeAPI(recorder: recorder, fetchError: TestFailure.unavailable),
-            cli: FakeCLI(recorder: recorder, statusError: TestFailure.unavailable),
-            preferencesStore: InMemoryPreferences(
-                value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: "")
-            ),
-            npxLocator: FakeNpxLocator(),
-            cacheStore: cache
-        )
-
-        await viewModel.load()
-
-        guard case let .loaded(profile) = viewModel.profileState,
-              case let .loaded(status) = viewModel.autosubmitState else {
-            return XCTFail("Expected stale cache to remain visible")
-        }
-        XCTAssertEqual(profile, cachedProfile)
-        XCTAssertEqual(status, cachedStatus)
-        XCTAssertNil(viewModel.loadErrorMessage)
         let events = await recorder.snapshot()
-        XCTAssertTrue(events.isEmpty)
+        XCTAssertEqual(events, ["status"])
+        XCTAssertEqual(viewModel.profileState.loadedValue, snapshot.profile)
     }
 
-    func testInitialLoadOnlyReadsProfileAndAutosubmitStatus() async {
+    func testTTLBoundaryTriggersOneReadOnlyBatch() async throws {
         let recorder = EventRecorder()
-        let viewModel = makeViewModel(recorder: recorder)
+        let viewModel = makeViewModel(
+            recorder: recorder,
+            cache: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            now: { self.referenceDate.addingTimeInterval(300) }
+        )
 
         await viewModel.load()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events.filter { $0 == "fetch" }.count, 1)
+        XCTAssertEqual(events.filter { $0 == "status" }.count, 1)
+        XCTAssertFalse(events.contains("submit"))
+    }
+
+    func testFailedBatchKeepsEveryCachedRangeAndFetchedTime() async throws {
+        let recorder = EventRecorder()
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
+        let model = makeViewModel(
+            recorder: recorder,
+            api: FakeAPI(recorder: recorder, fetchError: TestFailure.unavailable),
+            cache: InMemoryCache(snapshot: snapshot),
+            now: { self.referenceDate.addingTimeInterval(301) }
+        )
+
+        await model.load()
+        for period in ProfilePeriod.allCases {
+            await model.selectPeriod(period)
+            XCTAssertEqual(model.profileState.loadedValue?.period, period)
+        }
+        XCTAssertEqual(model.cacheSavedAt, referenceDate)
+        XCTAssertNotNil(model.loadErrorMessage)
+    }
+
+    func testInitialLoadReadsOnlyBatchAndAutosubmitStatus() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(recorder: recorder)
+
+        await model.load()
 
         let events = await recorder.snapshot()
         XCTAssertEqual(Set(events), Set(["fetch", "status"]))
-        XCTAssertFalse(events.contains("submit"))
-        guard case .loaded = viewModel.profileState,
-              case .loaded = viewModel.autosubmitState else {
-            return XCTFail("Expected both read-only resources to load")
-        }
+        XCTAssertEqual(model.profileState.loadedValue?.period, .all)
+        XCTAssertNotNil(model.currentAutosubmitStatus)
     }
 
-    func testManualRefreshSubmitsBeforeFetchingProfile() async throws {
+    func testManualRefreshSubmitsBeforeFetchingAllRanges() async {
         let recorder = EventRecorder()
-        let cli = FakeCLI(recorder: recorder)
-        let api = FakeAPI(recorder: recorder)
-        let preferences = InMemoryPreferences(
-            value: UserPreferences(username: "youranreus", tokscaleVersion: "4.15.0", npxPath: "")
-        )
-        let viewModel = DashboardViewModel(
-            api: api,
-            cli: cli,
-            preferencesStore: preferences,
-            npxLocator: FakeNpxLocator(),
-            cacheStore: InMemoryCache()
-        )
+        let cache = InMemoryCache()
+        let model = makeViewModel(recorder: recorder, cache: cache)
 
-        await viewModel.refresh()
+        await model.refresh()
 
         let events = await recorder.snapshot()
         XCTAssertEqual(events, ["submit", "fetch"])
-        guard case .loaded = viewModel.profileState else {
-            return XCTFail("Expected a loaded profile")
-        }
+        XCTAssertEqual(Set(cache.snapshot?.profiles.map(\.data.period) ?? []), Set(ProfilePeriod.allCases))
+        XCTAssertNotNil(cache.snapshot?.fetchedAt)
+        XCTAssertEqual(model.operation, .succeeded("用量已提交，全部范围已更新。"))
     }
 
-    func testSubmitFailureStopsProfileFetch() async {
+    func testSubmitFailureStopsStatisticsRead() async {
         let recorder = EventRecorder()
-        let cli = FakeCLI(recorder: recorder, submitError: TokscaleCLIError.failed(exitCode: 1, message: "failed"))
-        let viewModel = DashboardViewModel(
+        let model = DashboardViewModel(
             api: FakeAPI(recorder: recorder),
-            cli: cli,
-            preferencesStore: InMemoryPreferences(
-                value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: "")
-            ),
+            cli: FakeCLI(recorder: recorder, submitError: TestFailure.unavailable),
+            preferencesStore: standardPreferences(),
             npxLocator: FakeNpxLocator(),
             cacheStore: InMemoryCache()
         )
 
-        await viewModel.refresh()
+        await model.refresh()
 
         let events = await recorder.snapshot()
         XCTAssertEqual(events, ["submit"])
-        guard case .failed = viewModel.operation else {
-            return XCTFail("Expected a failed operation")
-        }
+        guard case .failed = model.operation else { return XCTFail("Expected failed operation") }
     }
 
-    func testRunNowReloadsStatusAndProfileAfterCLICompletes() async {
+    func testRunNowCompletesBeforeRefreshingStatisticsAndStatus() async {
         let recorder = EventRecorder()
-        let viewModel = makeViewModel(recorder: recorder)
+        let model = makeViewModel(recorder: recorder)
 
-        await viewModel.runAutosubmitNow()
+        await model.runAutosubmitNow()
 
         let events = await recorder.snapshot()
         XCTAssertEqual(events.first, "run")
-        XCTAssertEqual(Set(events.dropFirst()), Set(["status", "fetch"]))
-        guard case .loaded = viewModel.profileState,
-              case .loaded = viewModel.autosubmitState else {
-            return XCTFail("Expected run-now to reload profile and status")
-        }
+        XCTAssertEqual(Set(events.dropFirst()), Set(["fetch", "status"]))
+        XCTAssertEqual(model.profileState.loadedValue?.period, .all)
+        XCTAssertNotNil(model.currentAutosubmitStatus)
+        XCTAssertEqual(model.operation, .succeeded("自动提交已完成。"))
     }
 
-    func testSavingEnabledAutosubmitAppliesConfigurationBeforeReloading() async {
+    func testSavingSettingsConfiguresBeforeRefreshingTheWholeBatch() async {
         let recorder = EventRecorder()
-        let preferences = InMemoryPreferences(
-            value: UserPreferences(username: "old", tokscaleVersion: "latest", npxPath: "")
-        )
-        let viewModel = DashboardViewModel(
+        let preferences = standardPreferences()
+        let model = DashboardViewModel(
             api: FakeAPI(recorder: recorder),
             cli: FakeCLI(recorder: recorder),
             preferencesStore: preferences,
@@ -190,143 +166,338 @@ final class DashboardViewModelTests: XCTestCase {
             until: ""
         )
 
-        let saved = await viewModel.saveSettings(preferences: updated, autosubmit: configuration)
+        let saved = await model.saveSettings(preferences: updated, autosubmit: configuration)
 
         XCTAssertTrue(saved)
         let events = await recorder.snapshot()
         XCTAssertEqual(events.first, "configure")
-        XCTAssertEqual(Set(events.dropFirst()), Set(["status", "fetch"]))
+        XCTAssertEqual(Set(events.dropFirst()), Set(["fetch", "status"]))
         XCTAssertEqual(preferences.value, updated)
     }
 
-    func testLateWeekResponseCannotReplaceMonthAndSelectionDoesNotRunCLI() async throws {
-        let api = ControlledAPI()
+    func testStatusFailureDoesNotBlockSuccessfulStatisticsBatch() async {
         let recorder = EventRecorder()
-        let model = DashboardViewModel(api: api, cli: FakeCLI(recorder: recorder),
-            preferencesStore: InMemoryPreferences(value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: "")),
-            npxLocator: FakeNpxLocator(), cacheStore: InMemoryCache())
-        let week = Task { await model.selectPeriod(.week) }
-        await api.waitForRequest(.week)
-        let month = Task { await model.selectPeriod(.month) }
-        await api.waitForRequest(.month)
-        await api.resolve(.month)
-        await month.value
-        XCTAssertEqual(model.profileState.loadedValue?.period, .month)
-        await api.resolve(.week)
-        await week.value
-        XCTAssertEqual(model.selectedPeriod, .month)
-        XCTAssertEqual(model.profileState.loadedValue?.period, .month)
-        let events = await recorder.snapshot()
-        XCTAssertTrue(events.isEmpty)
-    }
-
-    func testSupersededRefreshDoesNotClaimSelectedProfileWasUpdated() async {
-        let api = ControlledAPI()
-        let model = DashboardViewModel(api: api, cli: FakeCLI(recorder: EventRecorder()),
-            preferencesStore: InMemoryPreferences(value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: "")),
-            npxLocator: FakeNpxLocator(), cacheStore: InMemoryCache())
-        let refresh = Task { await model.refresh() }
-        await api.waitForRequest(.all)
-        let week = Task { await model.selectPeriod(.week) }
-        await api.waitForRequest(.week)
-        await api.resolve(.all)
-        await refresh.value
-        XCTAssertEqual(model.operation, .succeeded("用量已提交。"))
-        XCTAssertNil(model.profileState.loadedValue)
-        XCTAssertEqual(model.selectedPeriod, .week)
-        await api.resolve(.week)
-        await week.value
-        XCTAssertEqual(model.profileState.loadedValue?.period, .week)
-    }
-
-    func testScopeFailureNeverUsesOtherScopeCache() async throws {
-        let cachedProfile = try makeDashboardData()
-        let model = DashboardViewModel(api: FakeAPI(recorder: EventRecorder(), fetchError: TestFailure.unavailable),
-            cli: FakeCLI(recorder: EventRecorder()),
-            preferencesStore: InMemoryPreferences(value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: "")),
-            npxLocator: FakeNpxLocator(),
-            cacheStore: InMemoryCache(snapshot: DashboardCacheSnapshot(profile: cachedProfile, autosubmit: nil, savedAt: Date())))
-        await model.selectPeriod(.week)
-        XCTAssertNil(model.profileState.loadedValue)
-        XCTAssertEqual(model.identityProfile?.username, "youranreus")
-        await model.selectPeriod(.all)
-        XCTAssertEqual(model.profileState.loadedValue?.period, .all)
-        XCTAssertNil(model.loadErrorMessage)
-    }
-
-    func testAllScopesSurviveDiskRoundTripAndReopeningWithoutRequests() async throws {
-        let recorder = EventRecorder()
-        let cache = InMemoryCache()
-        let preferences = InMemoryPreferences(value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: ""))
-        let model = DashboardViewModel(api: FakeAPI(recorder: recorder), cli: FakeCLI(recorder: recorder),
-            preferencesStore: preferences, npxLocator: FakeNpxLocator(), cacheStore: cache)
-        await model.load()
-        await model.selectPeriod(.day)
-        await model.selectPeriod(.week)
-        await model.selectPeriod(.month)
-        let saved = try XCTUnwrap(cache.snapshot)
-        XCTAssertEqual(Set(saved.profiles.map { $0.data.period }), Set(ProfilePeriod.allCases))
-        cache.snapshot = try JSONDecoder().decode(DashboardCacheSnapshot.self, from: JSONEncoder().encode(saved))
-        let reopenRecorder = EventRecorder()
-        let reopened = DashboardViewModel(api: FakeAPI(recorder: reopenRecorder), cli: FakeCLI(recorder: reopenRecorder),
-            preferencesStore: preferences, npxLocator: FakeNpxLocator(), cacheStore: cache)
-        XCTAssertEqual(reopened.selectedPeriod, .month)
-        XCTAssertEqual(reopened.profileState.loadedValue?.period, .month)
-        for period in ProfilePeriod.allCases {
-            await reopened.selectPeriod(period)
-            await reopened.load()
-            XCTAssertEqual(reopened.profileState.loadedValue?.period, period)
-        }
-        let events = await reopenRecorder.snapshot()
-        XCTAssertTrue(events.isEmpty)
-        await reopened.refresh()
-        let refreshEvents = await reopenRecorder.snapshot()
-        XCTAssertEqual(refreshEvents, ["submit", "fetch"])
-        XCTAssertEqual(Set(cache.snapshot?.profiles.map { $0.data.period } ?? []), Set(ProfilePeriod.allCases))
-    }
-
-    func testFailedUncachedSelectionPersistsWithoutLosingOtherScopes() async throws {
-        let cache = InMemoryCache(snapshot: DashboardCacheSnapshot(profile: try makeDashboardData(), autosubmit: nil, savedAt: Date()))
-        let preferences = InMemoryPreferences(value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: ""))
-        let api = FakeAPI(recorder: EventRecorder(), fetchError: TestFailure.unavailable)
-        let model = DashboardViewModel(api: api, cli: FakeCLI(recorder: EventRecorder()),
-            preferencesStore: preferences, npxLocator: FakeNpxLocator(), cacheStore: cache)
-        await model.selectPeriod(.day)
-        XCTAssertEqual(cache.snapshot?.selectedPeriod, .day)
-        XCTAssertEqual(cache.snapshot?.profiles.map { $0.data.period }, [.all])
-        let reopened = DashboardViewModel(api: api, cli: FakeCLI(recorder: EventRecorder()),
-            preferencesStore: preferences, npxLocator: FakeNpxLocator(), cacheStore: cache)
-        XCTAssertEqual(reopened.selectedPeriod, .day)
-        XCTAssertNil(reopened.profileState.loadedValue)
-        await reopened.selectPeriod(.all)
-        XCTAssertEqual(reopened.profileState.loadedValue?.period, .all)
-    }
-
-    private func makeViewModel(recorder: EventRecorder) -> DashboardViewModel {
-        DashboardViewModel(
+        let model = DashboardViewModel(
             api: FakeAPI(recorder: recorder),
-            cli: FakeCLI(recorder: recorder),
-            preferencesStore: InMemoryPreferences(
-                value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: "")
-            ),
+            cli: FakeCLI(recorder: recorder, statusError: TestFailure.unavailable),
+            preferencesStore: standardPreferences(),
             npxLocator: FakeNpxLocator(),
             cacheStore: InMemoryCache()
         )
+
+        await model.load()
+
+        XCTAssertEqual(model.profileState.loadedValue?.period, .all)
+        XCTAssertNotNil(model.autosubmitLoadErrorMessage)
+        XCTAssertNil(model.loadErrorMessage)
     }
 
-    private func makeDashboardData() throws -> DashboardData {
-        let response = try JSONDecoder().decode(
-            PublicProfileResponse.self,
-            from: Data(ProfileModelsTests.profileJSON.utf8)
+    func testStatusFailureKeepsPreviouslyObservedStatus() async throws {
+        let recorder = EventRecorder()
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder, statusError: TestFailure.unavailable),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: snapshot),
+            now: { self.referenceDate.addingTimeInterval(1) }
         )
-        return DashboardData(response: response)
+
+        await model.load()
+
+        XCTAssertEqual(model.currentAutosubmitStatus, snapshot.autosubmit)
+        XCTAssertEqual(model.autosubmitObservedAt, snapshot.autosubmitObservedAt)
+        XCTAssertNotNil(model.autosubmitLoadErrorMessage)
+    }
+
+    func testInitialStatisticsFailureShowsARealFailureState() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(
+            recorder: recorder,
+            api: FakeAPI(recorder: recorder, fetchError: TestFailure.unavailable)
+        )
+
+        await model.load()
+
+        XCTAssertNil(model.profileState.loadedValue)
+        guard case .failed = model.profileState else {
+            return XCTFail("A first load without cached data must expose a failure state")
+        }
+        XCTAssertNotNil(model.loadErrorMessage)
+    }
+
+    func testManualStatisticsRetryBypassesAutomaticFailureCooldownWithoutSubmitting() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(
+            recorder: recorder,
+            api: FakeAPI(recorder: recorder, fetchError: TestFailure.unavailable)
+        )
+
+        await model.load()
+        await model.retryStatistics()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events.filter { $0 == "fetch" }.count, 2)
+        XCTAssertFalse(events.contains("submit"))
+    }
+
+    func testRangeSwitchUsesSameBatchWithoutAdditionalRead() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(recorder: recorder)
+        await model.load()
+
+        for period in ProfilePeriod.allCases {
+            await model.selectPeriod(period)
+            XCTAssertEqual(model.profileState.loadedValue?.period, period)
+        }
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events.filter { $0 == "fetch" }.count, 1)
+    }
+
+    func testConcurrentLoadsAreCoalescedIntoOneBatch() async {
+        let api = ControlledBatchAPI()
+        let recorder = EventRecorder()
+        let model = makeViewModel(recorder: recorder, api: api)
+
+        let first = Task { await model.load() }
+        await api.waitForRequest(username: "youranreus")
+        let second = Task { await model.load() }
+        await api.resolve(username: "youranreus")
+        await first.value
+        await second.value
+
+        let count = await api.requestCount()
+        XCTAssertEqual(count, 1)
+    }
+
+    func testManualMutationNeverReusesAPreMutationBatch() async {
+        let api = QueuedBatchAPI()
+        let recorder = EventRecorder()
+        let model = makeViewModel(recorder: recorder, api: api)
+
+        let load = Task { await model.load() }
+        await waitForRequestCount(1, api: api)
+        let refresh = Task { await model.refresh() }
+        await waitForRequestCount(2, api: api)
+
+        var requestCount = await api.requestCount()
+        if requestCount < 2 {
+            await api.resolveNext()
+            await load.value
+            await refresh.value
+            return XCTFail("The post-submit refresh reused a pre-submit batch")
+        }
+
+        await api.resolveNext()
+        await load.value
+        XCTAssertNil(model.profileState.loadedValue)
+
+        await api.resolveNext()
+        await refresh.value
+        requestCount = await api.requestCount()
+        XCTAssertEqual(requestCount, 2)
+        XCTAssertEqual(model.profileState.loadedValue?.period, .all)
+        XCTAssertEqual(model.operation, .succeeded("用量已提交，全部范围已更新。"))
+    }
+
+    func testOldAccountBatchCannotOverwriteNewSettingsBatch() async throws {
+        let api = ControlledBatchAPI()
+        let recorder = EventRecorder()
+        let preferences = InMemoryPreferences(
+            value: UserPreferences(username: "old", tokscaleVersion: "latest", npxPath: "")
+        )
+        let model = DashboardViewModel(api: api, cli: FakeCLI(recorder: recorder),
+            preferencesStore: preferences, npxLocator: FakeNpxLocator(), cacheStore: InMemoryCache())
+
+        let load = Task { await model.load() }
+        await api.waitForRequest(username: "old")
+        let save = Task {
+            await model.saveSettings(
+                preferences: UserPreferences(username: "new", tokscaleVersion: "latest", npxPath: ""),
+                autosubmit: AutosubmitConfiguration(enabled: false, intervalMinutes: 120, clients: [],
+                    filterKind: .all, year: "", since: "", until: "")
+            )
+        }
+        await api.waitForRequest(username: "new")
+        await api.resolve(username: "new")
+        let saved = await save.value
+        XCTAssertTrue(saved)
+        await api.resolve(username: "old")
+        await load.value
+
+        XCTAssertEqual(model.profileState.loadedValue?.username, "new")
+        XCTAssertEqual(model.preferences.username, "new")
+    }
+
+    func testCacheWriteFailureDoesNotDiscardSuccessfulMemoryBatch() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(recorder: recorder, cache: InMemoryCache(saveError: TestFailure.unavailable))
+
+        await model.load()
+
+        XCTAssertEqual(model.profileState.loadedValue?.period, .all)
+        XCTAssertNotNil(model.cacheWriteErrorMessage)
+    }
+
+    func testAutomaticFailureCooldownSuppressesImmediateRetry() async throws {
+        let recorder = EventRecorder()
+        let clock = TestClock(referenceDate.addingTimeInterval(301))
+        let model = makeViewModel(
+            recorder: recorder,
+            api: FakeAPI(recorder: recorder, fetchError: TestFailure.unavailable),
+            cache: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            now: { clock.value }
+        )
+
+        await model.load()
+        await model.load()
+        var fetchCount = await recorder.snapshot().filter { $0 == "fetch" }.count
+        XCTAssertEqual(fetchCount, 1)
+
+        clock.value.addTimeInterval(30)
+        await model.load()
+        fetchCount = await recorder.snapshot().filter { $0 == "fetch" }.count
+        XCTAssertEqual(fetchCount, 2)
+    }
+
+    func testVisibleTimerRefreshesAndStopsAfterPanelDisappears() async {
+        let recorder = EventRecorder()
+        let clock = TestClock(referenceDate)
+        let sleeper = ManualSleeper()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(),
+            now: { clock.value },
+            refreshInterval: 300,
+            retryInterval: 0,
+            sleep: { await sleeper.sleep($0) }
+        )
+        await model.load()
+
+        model.panelDidAppear()
+        await sleeper.waitUntilSleeping()
+        clock.value.addTimeInterval(300)
+        await sleeper.advance()
+        await waitForFetchCount(2, recorder: recorder)
+        var fetchCount = await recorder.snapshot().filter { $0 == "fetch" }.count
+        XCTAssertEqual(fetchCount, 2)
+
+        await sleeper.waitUntilSleeping()
+        model.panelDidDisappear()
+        clock.value.addTimeInterval(300)
+        await sleeper.advance()
+        for _ in 0..<10 { await Task.yield() }
+        fetchCount = await recorder.snapshot().filter { $0 == "fetch" }.count
+        XCTAssertEqual(fetchCount, 2)
+    }
+
+    func testVisibleTimerUsesTheRemainingFreshnessWindow() async throws {
+        let clock = TestClock(referenceDate.addingTimeInterval(240))
+        let sleeper = ManualSleeper()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: EventRecorder()),
+            cli: FakeCLI(recorder: EventRecorder()),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            now: { clock.value },
+            refreshInterval: 300,
+            sleep: { await sleeper.sleep($0) }
+        )
+
+        model.panelDidAppear()
+        await sleeper.waitUntilSleeping()
+
+        let requestedNanoseconds = await sleeper.requestedNanoseconds()
+        XCTAssertEqual(requestedNanoseconds, 60_000_000_000)
+        model.panelDidDisappear()
+        await sleeper.advance()
+    }
+
+    func testVisibleTimerSleepsForFailureCooldownAfterAStaleRefreshFails() async throws {
+        let recorder = EventRecorder()
+        let clock = TestClock(referenceDate.addingTimeInterval(301))
+        let sleeper = ManualSleeper()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder, fetchError: TestFailure.unavailable),
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            now: { clock.value },
+            refreshInterval: 300,
+            retryInterval: 30,
+            sleep: { await sleeper.sleep($0) }
+        )
+
+        model.panelDidAppear()
+        await sleeper.waitUntilSleeping()
+
+        let requestedNanoseconds = await sleeper.requestedNanoseconds()
+        XCTAssertEqual(requestedNanoseconds, 30_000_000_000)
+        model.panelDidDisappear()
+        await sleeper.advance()
+    }
+
+    private func waitForFetchCount(_ expected: Int, recorder: EventRecorder) async {
+        for _ in 0..<100 {
+            if await recorder.snapshot().filter({ $0 == "fetch" }).count >= expected { return }
+            await Task.yield()
+        }
+    }
+
+    private func waitForRequestCount(_ expected: Int, api: QueuedBatchAPI) async {
+        for _ in 0..<100 {
+            if await api.requestCount() >= expected { return }
+            await Task.yield()
+        }
+    }
+
+    private func makeViewModel(
+        recorder: EventRecorder = EventRecorder(),
+        api: TokscaleAPIService? = nil,
+        cache: InMemoryCache = InMemoryCache(),
+        now: @escaping () -> Date = Date.init
+    ) -> DashboardViewModel {
+        DashboardViewModel(
+            api: api ?? FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: cache,
+            now: now
+        )
+    }
+
+    private func standardPreferences() -> InMemoryPreferences {
+        InMemoryPreferences(
+            value: UserPreferences(username: "youranreus", tokscaleVersion: "latest", npxPath: "")
+        )
+    }
+
+    private func completeSnapshot(fetchedAt: Date) throws -> DashboardCacheSnapshot {
+        let batch = try makeBatch(username: "youranreus")
+        let profiles = ProfilePeriod.allCases.compactMap { period in
+            batch.profiles[period].map { CachedDashboardProfile(data: $0, savedAt: fetchedAt) }
+        }
+        return DashboardCacheSnapshot(
+            profile: batch.profiles[.all],
+            autosubmit: try makeAutosubmitStatus(),
+            savedAt: fetchedAt,
+            profiles: profiles,
+            username: "youranreus",
+            fetchedAt: fetchedAt,
+            autosubmitObservedAt: fetchedAt
+        )
     }
 
     private func makeAutosubmitStatus() throws -> AutosubmitStatus {
-        try JSONDecoder().decode(
-            AutosubmitStatus.self,
-            from: Data(#"{"enabled":true,"intervalMinutes":120}"#.utf8)
-        )
+        try JSONDecoder().decode(AutosubmitStatus.self, from: Data(#"{"enabled":true,"intervalMinutes":120}"#.utf8))
     }
 }
 
@@ -345,18 +516,26 @@ private final class FakeAPI: TokscaleAPIService {
         self.fetchError = fetchError
     }
 
-    func fetchProfile(username: String, period: ProfilePeriod) async throws -> DashboardData {
+    func fetchDashboardBatch(username: String) async throws -> DashboardProfileBatch {
         await recorder.append("fetch")
         if let fetchError { throw fetchError }
+        return try makeBatch(username: username)
+    }
+}
+
+private func makeBatch(username: String) throws -> DashboardProfileBatch {
+    var profiles: [ProfilePeriod: DashboardData] = [:]
+    for period in ProfilePeriod.allCases {
         let response = try JSONDecoder().decode(
             PublicProfileResponse.self,
             from: try scopedFixture(period: period, username: username)
         )
-        return DashboardData(response: response)
+        profiles[period] = DashboardData(response: response)
     }
+    return try DashboardProfileBatch(username: username, profiles: profiles)
 }
 
-private func scopedFixture(period: ProfilePeriod, username: String = "youranreus") throws -> Data {
+private func scopedFixture(period: ProfilePeriod, username: String) throws -> Data {
     var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ProfileModelsTests.profileJSON.utf8)) as? [String: Any])
     json["period"] = period.rawValue
     var user = try XCTUnwrap(json["user"] as? [String: Any])
@@ -370,50 +549,62 @@ private final class FakeCLI: TokscaleCLIService {
     let submitError: Error?
     let statusError: Error?
 
-    init(
-        recorder: EventRecorder,
-        submitError: Error? = nil,
-        statusError: Error? = nil
-    ) {
+    init(recorder: EventRecorder, submitError: Error? = nil, statusError: Error? = nil) {
         self.recorder = recorder
         self.submitError = submitError
         self.statusError = statusError
     }
 
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
-
     func submit(context: TokscaleCommandContext) async throws {
         await recorder.append("submit")
         if let submitError { throw submitError }
     }
-
     func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus {
         await recorder.append("status")
         if let statusError { throw statusError }
-        return try JSONDecoder().decode(
-            AutosubmitStatus.self,
-            from: Data(#"{"enabled":false}"#.utf8)
-        )
+        return try JSONDecoder().decode(AutosubmitStatus.self, from: Data(#"{"enabled":false}"#.utf8))
     }
-
-    func configureAutosubmit(
-        _ configuration: AutosubmitConfiguration,
-        context: TokscaleCommandContext
-    ) async throws {
+    func configureAutosubmit(_ configuration: AutosubmitConfiguration, context: TokscaleCommandContext) async throws {
         await recorder.append("configure")
     }
-
-    func disableAutosubmit(context: TokscaleCommandContext) async throws {
-        await recorder.append("disable")
-    }
-
-    func runAutosubmitNow(context: TokscaleCommandContext) async throws {
-        await recorder.append("run")
-    }
+    func disableAutosubmit(context: TokscaleCommandContext) async throws { await recorder.append("disable") }
+    func runAutosubmitNow(context: TokscaleCommandContext) async throws { await recorder.append("run") }
 }
 
-private enum TestFailure: Error {
-    case unavailable
+private enum TestFailure: Error { case unavailable }
+
+@MainActor
+private final class TestClock {
+    var value: Date
+    init(_ value: Date) { self.value = value }
+}
+
+private actor ManualSleeper {
+    private var sleepContinuation: CheckedContinuation<Void, Never>?
+    private var arrivalContinuation: CheckedContinuation<Void, Never>?
+    private var latestNanoseconds: UInt64?
+
+    func sleep(_ nanoseconds: UInt64) async {
+        await withCheckedContinuation { continuation in
+            latestNanoseconds = nanoseconds
+            sleepContinuation = continuation
+            arrivalContinuation?.resume()
+            arrivalContinuation = nil
+        }
+    }
+
+    func waitUntilSleeping() async {
+        if sleepContinuation != nil { return }
+        await withCheckedContinuation { arrivalContinuation = $0 }
+    }
+
+    func advance() {
+        sleepContinuation?.resume()
+        sleepContinuation = nil
+    }
+
+    func requestedNanoseconds() -> UInt64? { latestNanoseconds }
 }
 
 private final class InMemoryPreferences: PreferencesStoring {
@@ -424,43 +615,67 @@ private final class InMemoryPreferences: PreferencesStoring {
 }
 
 private struct FakeNpxLocator: NpxLocating {
-    func locate(preferredPath: String?) -> URL? {
-        URL(fileURLWithPath: "/usr/bin/npx")
-    }
+    func locate(preferredPath: String?) -> URL? { URL(fileURLWithPath: "/usr/bin/npx") }
 }
 
 private final class InMemoryCache: DashboardCacheStoring {
     var snapshot: DashboardCacheSnapshot?
+    let saveError: Error?
 
-    init(snapshot: DashboardCacheSnapshot? = nil) {
+    init(snapshot: DashboardCacheSnapshot? = nil, saveError: Error? = nil) {
+        self.snapshot = snapshot
+        self.saveError = saveError
+    }
+    func load() -> DashboardCacheSnapshot? { snapshot }
+    func save(_ snapshot: DashboardCacheSnapshot) throws {
+        if let saveError { throw saveError }
         self.snapshot = snapshot
     }
-
-    func load() -> DashboardCacheSnapshot? { snapshot }
-    func save(_ snapshot: DashboardCacheSnapshot) throws { self.snapshot = snapshot }
 }
 
-private actor ControlledAPI: TokscaleAPIService {
-    private var pending: [ProfilePeriod: CheckedContinuation<DashboardData, Error>] = [:]
-    private var arrivals: [ProfilePeriod: CheckedContinuation<Void, Never>] = [:]
+private actor ControlledBatchAPI: TokscaleAPIService {
+    private var pending: [String: CheckedContinuation<DashboardProfileBatch, Error>] = [:]
+    private var arrivals: [String: CheckedContinuation<Void, Never>] = [:]
+    private var count = 0
 
-    func fetchProfile(username: String, period: ProfilePeriod) async throws -> DashboardData {
-        try await withCheckedThrowingContinuation { continuation in
-            pending[period] = continuation
-            arrivals.removeValue(forKey: period)?.resume()
+    func fetchDashboardBatch(username: String) async throws -> DashboardProfileBatch {
+        count += 1
+        return try await withCheckedThrowingContinuation { continuation in
+            pending[username] = continuation
+            arrivals.removeValue(forKey: username)?.resume()
         }
     }
 
-    func waitForRequest(_ period: ProfilePeriod) async {
-        if pending[period] != nil { return }
-        await withCheckedContinuation { arrivals[period] = $0 }
+    func waitForRequest(username: String) async {
+        if pending[username] != nil { return }
+        await withCheckedContinuation { arrivals[username] = $0 }
     }
 
-    func resolve(_ period: ProfilePeriod) {
-        do {
-            let data = try scopedFixture(period: period)
-            let response = try JSONDecoder().decode(PublicProfileResponse.self, from: data)
-            pending.removeValue(forKey: period)?.resume(returning: DashboardData(response: response))
-        } catch { pending.removeValue(forKey: period)?.resume(throwing: error) }
+    func resolve(username: String) {
+        do { pending.removeValue(forKey: username)?.resume(returning: try makeBatch(username: username)) }
+        catch { pending.removeValue(forKey: username)?.resume(throwing: error) }
+    }
+
+    func requestCount() -> Int { count }
+}
+
+private actor QueuedBatchAPI: TokscaleAPIService {
+    private var pending: [(String, CheckedContinuation<DashboardProfileBatch, Error>)] = []
+    private var count = 0
+
+    func fetchDashboardBatch(username: String) async throws -> DashboardProfileBatch {
+        count += 1
+        return try await withCheckedThrowingContinuation { continuation in
+            pending.append((username, continuation))
+        }
+    }
+
+    func requestCount() -> Int { count }
+
+    func resolveNext() {
+        guard !pending.isEmpty else { return }
+        let (username, continuation) = pending.removeFirst()
+        do { continuation.resume(returning: try makeBatch(username: username)) }
+        catch { continuation.resume(throwing: error) }
     }
 }
