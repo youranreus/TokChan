@@ -1,0 +1,8 @@
+{"file":".trellis/spec/macos/index.md","reason":"Verify the implementation preserves the project architecture and dependency baseline."}
+{"file":".trellis/spec/macos/swiftui-guidelines.md","reason":"Check status-item ownership, native menu behavior, Settings controls and accessibility."}
+{"file":".trellis/spec/macos/state-management.md","reason":"Check MainActor publication and avoidance of redundant derived mutable state."}
+{"file":".trellis/spec/macos/data-persistence.md","reason":"Check preference compatibility and stale whole-batch cache behavior."}
+{"file":".trellis/spec/macos/tokscale-integration.md","reason":"Check push-only and pull-only command isolation and no new scheduler."}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"Run Swift quality, concurrency, error and accessibility review."}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"Verify deterministic unit/UI coverage and required build checks."}
+{"file":".trellis/tasks/09-07-status-text-and-mail-actions/research/status-text-and-actions.md","reason":"Compare implementation against task-specific repository findings and risks."}
