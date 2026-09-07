@@ -9,7 +9,15 @@ enum StatusItemTextRenderer {
             )
             .replacingOccurrences(
                 of: "{cost}",
-                with: DisplayFormatters.currency(data.totalCost)
+                with: statusItemCurrency(data.totalCost)
             )
+    }
+
+    private static func statusItemCurrency(_ value: Double) -> String {
+        value.formatted(
+            .currency(code: "USD")
+                .precision(.fractionLength(value >= 1_000 ? 0 : 2))
+                .locale(Locale(identifier: "en_US"))
+        )
     }
 }

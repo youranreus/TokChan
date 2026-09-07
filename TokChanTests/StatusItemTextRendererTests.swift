@@ -5,14 +5,13 @@ final class StatusItemTextRendererTests: XCTestCase {
     func testReplacesEverySupportedPlaceholderAndPreservesUnknownContent() throws {
         let data = try dashboardData()
         let token = DisplayFormatters.compactNumber(data.totalTokens)
-        let cost = DisplayFormatters.currency(data.totalCost)
 
         XCTAssertEqual(
             StatusItemTextRenderer.render(
                 template: "{token} / {cost} / {token} / {unknown} / {cost}",
                 data: data
             ),
-            "\(token) / \(cost) / \(token) / {unknown} / \(cost)"
+            "\(token) / $12.50 / \(token) / {unknown} / $12.50"
         )
     }
 
@@ -23,7 +22,7 @@ final class StatusItemTextRendererTests: XCTestCase {
         XCTAssertEqual(StatusItemTextRenderer.render(template: "", data: data), "")
     }
 
-    func testUsesExistingFormattersForZeroValues() throws {
+    func testUsesCompactTokensAndDollarPrefixedCostForZeroValues() throws {
         var json = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(ProfileModelsTests.profileJSON.utf8))
                 as? [String: Any]
@@ -40,7 +39,7 @@ final class StatusItemTextRendererTests: XCTestCase {
 
         XCTAssertEqual(
             StatusItemTextRenderer.render(template: "{token} · {cost}", data: data),
-            "\(DisplayFormatters.compactNumber(0)) · \(DisplayFormatters.currency(0))"
+            "\(DisplayFormatters.compactNumber(0)) · $0.00"
         )
     }
 

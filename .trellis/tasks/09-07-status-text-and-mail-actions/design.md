@@ -12,7 +12,7 @@ struct StatusItemTextRenderer {
 }
 ```
 
-渲染器只将模板中所有字面 `{token}`、`{cost}` 分别替换为 `DisplayFormatters.compactNumber(data.totalTokens)` 和 `DisplayFormatters.currency(data.totalCost)`。不解析其他花括号、不报错、不截断；未知内容原样保留。
+渲染器只将模板中所有字面 `{token}`、`{cost}` 分别替换为 `DisplayFormatters.compactNumber(data.totalTokens)` 和使用 `en_US` locale 生成的 `$` 前缀 USD 成本。成本精度规则保持既有行为，但不复用或修改 Dashboard 的本地化 `DisplayFormatters.currency` 输出。不解析其他花括号、不报错、不截断；未知内容原样保留。
 
 ## 偏好模型与兼容
 
@@ -35,8 +35,8 @@ struct StatusItemTextRenderer {
 
 Coordinator 观察 `preferences` 与足以代表缓存发布的既有 published 状态（实现时优先复用 `$preferences` / `$profileState`，不得建立轮询）。每次变化后在 MainActor 重算：
 
-- 有非空标题：`statusItem.length = NSStatusItem.variableLength`，设置 `button.title`，保持模板图标位于文字左侧；
-- 无标题：清空 `button.title`，恢复 `squareLength`；
+- 有非空标题：`statusItem.length = NSStatusItem.variableLength`，先让 AppKit 生成原生 `attributedTitle`，再仅添加 `-1pt` baseline offset，保持模板图标位于文字左侧及原生字体、颜色；
+- 无标题：清空 `button.title`，恢复 `squareLength`，不应用文字 baseline 调整；
 - accessibility label 保持 TokChan 身份，并在有标题时包含当前可读摘要。
 
 初始化 coordinator 时立即同步一次，保证冷启动缓存可直接显示。设置保存发布新 preferences 后立即重算，无需重启。
