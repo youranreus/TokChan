@@ -55,6 +55,47 @@ final class TokChanUITests: XCTestCase {
         XCTAssertTrue(application.menuItems["退出 TokChan"].exists)
     }
 
+    func testSettingsOnlyAutosubmitTabHasAnApplyAction() throws {
+        let application = XCUIApplication()
+        application.launchArguments = ["--ui-testing"]
+        application.launch()
+        defer { application.terminate() }
+
+        let systemUI = XCUIApplication(bundleIdentifier: "com.apple.systemuiserver")
+        let statusItem = systemUI.menuBars.statusItems["TokChan"]
+        guard statusItem.waitForExistence(timeout: 10) else {
+            throw XCTSkip("SystemUIServer did not expose menu bar items; run this UI test in isolation")
+        }
+
+        statusItem.rightClick()
+        let settingsItem = application.menuItems["设置…"]
+        XCTAssertTrue(settingsItem.waitForExistence(timeout: 3))
+        settingsItem.click()
+
+        XCTAssertTrue(
+            application.descendants(matching: .any)["settings-general-page"]
+                .waitForExistence(timeout: 5)
+        )
+        XCTAssertFalse(application.buttons["保存"].exists)
+        XCTAssertFalse(application.buttons["apply-autosubmit-settings"].exists)
+
+        let autosubmitTab = application.toolbars.buttons["自动提交"]
+        XCTAssertTrue(autosubmitTab.waitForExistence(timeout: 3))
+        autosubmitTab.click()
+        XCTAssertTrue(application.buttons["apply-autosubmit-settings"].waitForExistence(timeout: 3))
+        XCTAssertFalse(application.buttons["保存"].exists)
+
+        let aboutTab = application.toolbars.buttons["关于"]
+        XCTAssertTrue(aboutTab.waitForExistence(timeout: 3))
+        aboutTab.click()
+        XCTAssertTrue(
+            application.descendants(matching: .any)["settings-about-page"]
+                .waitForExistence(timeout: 3)
+        )
+        XCTAssertFalse(application.buttons["保存"].exists)
+        XCTAssertFalse(application.buttons["apply-autosubmit-settings"].exists)
+    }
+
     private func lifecycleCounts(of panel: XCUIElement) -> (appearances: Int, disappearances: Int)? {
         guard let value = panel.value as? String else { return nil }
         let components = value.split(separator: ":").compactMap { Int($0) }
