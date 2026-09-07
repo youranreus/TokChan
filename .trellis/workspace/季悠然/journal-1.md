@@ -354,3 +354,25 @@
 ### Next Steps
 
 - 合并前可按需推送分支并创建 PR
+
+
+## Session 12: 优化首次使用引导
+<!-- trellis-session: v=2 fp=1218ddd554834218 -->
+
+**Date**: 2026-09-07
+**Task**: 优化首次使用引导
+**Branch**: `feat/first-use-onboarding`
+
+### Summary
+
+实现浮窗内两步首次引导：保留 whoami 自动发现，支持手填用户名并强制验证，按 all totalTokens 判断完成或进入首次提交；提交后重新拉取并处理零数据、404、延迟可见及账号切换竞态。新增原生 SwiftUI 引导、明确重试文案、状态菜单忙碌保护、完整 ViewModel/布局测试，并更新 Tokscale integration 规范。175 个单元测试通过，3 个 UI 测试按 SystemUIServer 条件跳过，Release 构建通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `29349dc` | feat: add first-use onboarding flow |
+
+### Status
+
+[OK] **Completed**
