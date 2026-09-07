@@ -376,3 +376,34 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 13: 修复浮窗外侧点击不关闭
+<!-- trellis-session: v=2 -->
+
+**Date**: 2026-09-07
+**Task**: 修复浮窗外侧点击不关闭
+**Branch**: `master`
+
+### Summary
+
+修复 LSUIElement 状态栏浮窗偶发无法通过外侧点击关闭的问题。保留显示前激活应用，并在 `NSPopover.show` 创建窗口后显式调用 `makeKey()`，确保 AppKit 建立完整的 `.transient` 关闭生命周期；未引入事件监听器。同步补充操作顺序测试和 macOS 浮窗规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6b660e0` | fix(macos): restore popover outside-click dismissal |
+| `f25fd8d` | chore(task): archive fix-popover-outside-click |
+
+### Testing
+
+- [OK] 175 个单元测试通过
+- [OK] Universal Release 构建通过
+- [OK] `git diff --check` 通过
+- [OK] 用户手动验收桌面/其他应用外侧点击、状态栏左键切换、右键菜单和关闭生命周期
+- [INFO] 3 个状态栏 UI 测试因当前 SystemUIServer 未暴露状态项而明确跳过
+
+### Status
+
+[OK] **Completed**
