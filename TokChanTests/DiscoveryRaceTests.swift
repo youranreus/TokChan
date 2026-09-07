@@ -11,6 +11,30 @@ final class DiscoveryRaceTests: XCTestCase {
         try await checkSavedContext(discoveryFails: true)
     }
 
+    func testSettingsAccountWithZeroUsageWinsWhenInitialDiscoveryFails() async {
+        let cli = DiscoveryCLI()
+        let model = DashboardViewModel(
+            api: DiscoveryAPI(totalTokens: 0),
+            cli: cli,
+            preferencesStore: DiscoveryPreferences(),
+            npxLocator: DiscoveryLocator(),
+            cacheStore: DiscoveryCache()
+        )
+        let initialLoad = Task { await model.load() }
+        await cli.waitForDiscovery()
+
+        model.updatePreferences(
+            UserPreferences(username: "youranreus", tokscaleVersion: "4.15.0", npxPath: "/new/npx")
+        )
+        await cli.finishDiscovery(fails: true)
+        await initialLoad.value
+
+        XCTAssertEqual(
+            model.firstUseOnboardingState,
+            .firstSubmission(username: "youranreus", message: nil)
+        )
+    }
+
     private func checkSavedContext(discoveryFails: Bool) async throws {
         let cli = DiscoveryCLI()
         let preferences = DiscoveryPreferences()
@@ -33,6 +57,7 @@ final class DiscoveryRaceTests: XCTestCase {
         XCTAssertEqual(model.preferences, updated)
         XCTAssertNil(model.autosubmitLoadErrorMessage)
         XCTAssertEqual(model.profileState.loadedValue?.username, "youranreus")
+        XCTAssertEqual(model.firstUseOnboardingState, .hidden)
     }
 }
 
@@ -74,6 +99,12 @@ private actor DiscoveryCLI: TokscaleCLIService {
 }
 
 private struct DiscoveryAPI: TokscaleAPIService {
+    var totalTokens: Double?
+
+    init(totalTokens: Double? = nil) {
+        self.totalTokens = totalTokens
+    }
+
     func fetchDashboardBatch(username: String) async throws -> DashboardProfileBatch {
         var profiles: [ProfilePeriod: DashboardData] = [:]
         for period in ProfilePeriod.allCases {
@@ -82,6 +113,11 @@ private struct DiscoveryAPI: TokscaleAPIService {
             var user = try XCTUnwrap(json["user"] as? [String: Any])
             user["username"] = username
             json["user"] = user
+            if let totalTokens {
+                var stats = try XCTUnwrap(json["stats"] as? [String: Any])
+                stats["totalTokens"] = totalTokens
+                json["stats"] = stats
+            }
             let response = try JSONDecoder().decode(PublicProfileResponse.self, from: JSONSerialization.data(withJSONObject: json))
             profiles[period] = DashboardData(response: response)
         }

@@ -7,6 +7,22 @@ enum LoadState<Value> {
     case failed(String)
 }
 
+enum FirstUseOnboardingState: Equatable {
+    case discoveringIdentity
+    case usernameEntry(message: String?)
+    case verifying(username: String)
+    case firstSubmission(username: String, message: String?)
+    case submitting(username: String)
+    case hidden
+
+    var isBusy: Bool {
+        switch self {
+        case .discoveringIdentity, .verifying, .submitting: return true
+        case .usernameEntry, .firstSubmission, .hidden: return false
+        }
+    }
+}
+
 enum NpxPathStatus: Equatable {
     case automatic(URL)
     case custom(URL)
@@ -42,6 +58,7 @@ enum DashboardOperation: Equatable {
 @MainActor
 final class DashboardViewModel: ObservableObject {
     @Published private(set) var profileState: LoadState<DashboardData> = .idle
+    @Published private(set) var firstUseOnboardingState: FirstUseOnboardingState = .discoveringIdentity
     @Published private(set) var autosubmitState: LoadState<AutosubmitStatus> = .idle
     @Published private(set) var operation: DashboardOperation = .idle
     @Published private(set) var preferences: UserPreferences
@@ -71,12 +88,15 @@ final class DashboardViewModel: ObservableObject {
 
     private enum ProfileReloadResult {
         case updated
+        case profileNotFound(String)
         case failed(String)
         case superseded
 
         var errorMessage: String? {
-            if case let .failed(message) = self { return message }
-            return nil
+            switch self {
+            case let .profileNotFound(message), let .failed(message): return message
+            case .updated, .superseded: return nil
+            }
         }
     }
 
@@ -95,6 +115,11 @@ final class DashboardViewModel: ObservableObject {
 
     var isLoading: Bool {
         operation.isRunning || (profileState.loadedValue == nil && (isRefreshing || isLoadingServices))
+    }
+
+    var isPerformingOperation: Bool {
+        operation.isRunning
+            || (firstUseOnboardingState.isBusy && (isLoadingServices || isRefreshing))
     }
 
     var currentAutosubmitStatus: AutosubmitStatus? { autosubmitState.loadedValue }
@@ -175,6 +200,7 @@ final class DashboardViewModel: ObservableObject {
             if let status = snapshot.autosubmit { autosubmitState = .loaded(status) }
             autosubmitObservedAt = snapshot.autosubmitObservedAt
         }
+        reconcileInitialOnboardingState()
     }
 
     deinit {
@@ -239,21 +265,28 @@ final class DashboardViewModel: ObservableObject {
 
     func load() async {
         guard !isLoadingServices, !operation.isRunning else { return }
-        let hadCachedAutosubmitStatus = autosubmitState.loadedValue != nil
         isLoadingServices = true
         defer { isLoadingServices = false }
         if autosubmitState.loadedValue == nil { autosubmitState = .loading }
 
+        let requiresIdentityDiscovery = normalizedUsername.isEmpty
         var context: TokscaleCommandContext?
-        do {
-            context = try commandContext(for: preferences)
-            if preferences.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               let context {
-                _ = try await resolvedUsername(context: context)
-            }
-        } catch {
-            if preferences.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                recordAutosubmitError(error)
+        if requiresIdentityDiscovery {
+            firstUseOnboardingState = .discoveringIdentity
+            do {
+                context = try commandContext(for: preferences)
+                if let context {
+                    let username = try await resolvedUsername(context: context)
+                    firstUseOnboardingState = .verifying(username: username)
+                }
+            } catch {
+                if normalizedUsername.isEmpty {
+                    let message = "无法自动识别 Tokscale 账号：\(Self.message(for: error))"
+                    firstUseOnboardingState = .usernameEntry(message: message)
+                } else {
+                    // A Settings edit that completed while whoami was suspended wins.
+                    firstUseOnboardingState = .verifying(username: normalizedUsername)
+                }
             }
         }
 
@@ -264,16 +297,90 @@ final class DashboardViewModel: ObservableObject {
             recordAutosubmitError(error)
         }
 
-        if let context {
-            async let profiles = reloadProfiles(force: false, automatic: true)
-            if hadCachedAutosubmitStatus || autosubmitState.loadedValue == nil {
-                async let status = reloadAutosubmit(context: context)
-                _ = await (profiles, status)
-            } else {
-                _ = await profiles
+        let shouldLoadProfiles = !normalizedUsername.isEmpty
+        if let context, shouldLoadProfiles {
+            async let profiles = reloadProfiles(force: requiresIdentityDiscovery, automatic: true)
+            async let status = reloadAutosubmit(context: context)
+            let (profileResult, _) = await (profiles, status)
+            handleOnboardingProfileResult(profileResult)
+        } else if let context {
+            _ = await reloadAutosubmit(context: context)
+        } else if shouldLoadProfiles {
+            handleOnboardingProfileResult(await reloadProfiles(force: false, automatic: true))
+        }
+    }
+
+    func saveAndVerifyUsername(_ username: String) async {
+        guard !operation.isRunning else { return }
+        switch firstUseOnboardingState {
+        case .verifying, .submitting: return
+        case .discoveringIdentity, .usernameEntry, .firstSubmission, .hidden: break
+        }
+
+        let normalized = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            firstUseOnboardingState = .usernameEntry(message: "请输入 Tokscale 用户名后继续。")
+            return
+        }
+
+        var updatedPreferences = preferences
+        updatedPreferences.username = normalized
+        updatePreferences(updatedPreferences)
+        guard matchesUsername(normalized) else { return }
+
+        firstUseOnboardingState = .verifying(username: normalized)
+        handleOnboardingProfileResult(await reloadProfiles(force: true, automatic: false))
+    }
+
+    func editOnboardingUsername() {
+        guard case .firstSubmission = firstUseOnboardingState else { return }
+        invalidateProfileRefresh()
+        firstUseOnboardingState = .usernameEntry(message: nil)
+    }
+
+    func submitFirstUsage() async {
+        guard !operation.isRunning,
+              case let .firstSubmission(username, _) = firstUseOnboardingState,
+              matchesUsername(username) else { return }
+
+        invalidateProfileRefresh()
+        beginOperation(.submitting)
+        defer { completeSilentOperation() }
+        firstUseOnboardingState = .submitting(username: username)
+        do {
+            let context = try commandContext(for: preferences)
+            try await cli.submit(context: context)
+            guard matchesUsername(username) else { return }
+            let result = await reloadProfiles(force: true, automatic: false)
+            guard matchesUsername(username) else { return }
+            switch result {
+            case .updated:
+                if case .firstSubmission = firstUseOnboardingState {
+                    firstUseOnboardingState = .firstSubmission(
+                        username: username,
+                        message: "提交已完成，但暂未读取到 Tokens。请检查用户名或稍后重试。"
+                    )
+                }
+            case .profileNotFound:
+                clearProfileNotFoundForOnboarding()
+                firstUseOnboardingState = .firstSubmission(
+                    username: username,
+                    message: "提交已完成，但仍未找到该资料。请检查用户名或稍后重试。"
+                )
+            case let .failed(message):
+                firstUseOnboardingState = .firstSubmission(
+                    username: username,
+                    message: "提交已完成，但统计读取失败：\(message)"
+                )
+            case .superseded:
+                break
             }
-        } else {
-            _ = await reloadProfiles(force: false, automatic: true)
+        } catch {
+            guard matchesUsername(username) else { return }
+            firstUseOnboardingState = .firstSubmission(
+                username: username,
+                message: "提交失败：\(Self.message(for: error))"
+            )
         }
     }
 
@@ -288,7 +395,7 @@ final class DashboardViewModel: ObservableObject {
             switch await reloadProfiles(force: true, automatic: false) {
             case .updated:
                 completeOperation(.succeeded("用量已提交，全部范围已更新。"))
-            case let .failed(message):
+            case let .profileNotFound(message), let .failed(message):
                 completeOperation(.failed("用量已提交，但统计读取失败：\(message)"))
             case .superseded:
                 completeOperation(.succeeded("用量已提交。"))
@@ -324,7 +431,7 @@ final class DashboardViewModel: ObservableObject {
         switch await reloadProfiles(force: true, automatic: false) {
         case .updated, .superseded:
             completeSilentOperation()
-        case let .failed(message):
+        case let .profileNotFound(message), let .failed(message):
             completeOperation(.failed(message))
         }
     }
@@ -376,6 +483,9 @@ final class DashboardViewModel: ObservableObject {
         preferences = normalized
         preferencesStore.save(normalized)
         if accountChanged {
+            firstUseOnboardingState = normalized.username.isEmpty
+                ? .usernameEntry(message: nil)
+                : .verifying(username: normalized.username)
             persistCurrentSnapshot()
         }
     }
@@ -433,6 +543,77 @@ final class DashboardViewModel: ObservableObject {
         operationPresentationGeneration = nil
     }
 
+    private func reconcileInitialOnboardingState() {
+        let username = normalizedUsername
+        guard !username.isEmpty else {
+            firstUseOnboardingState = .discoveringIdentity
+            return
+        }
+        guard cacheSavedAt != nil, cacheIsComplete(for: username) else {
+            firstUseOnboardingState = .verifying(username: username)
+            return
+        }
+        firstUseOnboardingState = hasUsageInCompleteCache(for: username)
+            ? .hidden
+            : .firstSubmission(username: username, message: nil)
+    }
+
+    private func reconcileOnboardingWithCompleteCache(username: String) {
+        guard cacheSavedAt != nil, cacheIsComplete(for: username) else { return }
+        if hasUsageInCompleteCache(for: username) {
+            firstUseOnboardingState = .hidden
+        } else if firstUseOnboardingState == .usernameEntry(message: nil) {
+            // Keep an explicit edit flow stable while the user is changing accounts.
+        } else {
+            firstUseOnboardingState = .firstSubmission(username: username, message: nil)
+        }
+    }
+
+    private func hasUsageInCompleteCache(for username: String) -> Bool {
+        guard cacheSavedAt != nil,
+              cacheIsComplete(for: username),
+              let all = cachedProfiles[.all]?.data else { return false }
+        return all.totalTokens > 0
+    }
+
+    private func handleOnboardingProfileResult(_ result: ProfileReloadResult) {
+        switch firstUseOnboardingState {
+        case let .verifying(username):
+            guard matchesUsername(username) else { return }
+            switch result {
+            case .updated:
+                break
+            case .profileNotFound:
+                clearProfileNotFoundForOnboarding()
+                firstUseOnboardingState = .firstSubmission(username: username, message: nil)
+            case let .failed(message):
+                firstUseOnboardingState = .usernameEntry(message: message)
+            case .superseded:
+                reconcileInitialOnboardingState()
+            }
+        case let .firstSubmission(username, _):
+            guard matchesUsername(username) else { return }
+            switch result {
+            case .updated, .superseded:
+                break
+            case .profileNotFound:
+                clearProfileNotFoundForOnboarding()
+            case let .failed(message):
+                firstUseOnboardingState = .firstSubmission(
+                    username: username,
+                    message: "统计读取失败：\(message)"
+                )
+            }
+        case .discoveringIdentity, .usernameEntry, .submitting, .hidden:
+            break
+        }
+    }
+
+    private func clearProfileNotFoundForOnboarding() {
+        loadErrorMessage = nil
+        if profileState.loadedValue == nil { profileState = .idle }
+    }
+
     private func reloadProfiles(force: Bool, automatic: Bool) async -> ProfileReloadResult {
         if automatic, operation.isRunning { return .superseded }
         if force {
@@ -483,6 +664,7 @@ final class DashboardViewModel: ObservableObject {
                 if let selected = batch.profiles[self.selectedPeriod] {
                     self.profileState = .loaded(selected)
                 }
+                self.reconcileOnboardingWithCompleteCache(username: username)
                 self.persistCurrentSnapshot()
                 return .updated
             } catch is CancellationError {
@@ -494,6 +676,7 @@ final class DashboardViewModel: ObservableObject {
                 let message = Self.message(for: error)
                 self.loadErrorMessage = message
                 if self.profileState.loadedValue == nil { self.profileState = .failed(message) }
+                if Self.isProfileNotFound(error) { return .profileNotFound(message) }
                 return .failed(message)
             }
         }
@@ -545,8 +728,11 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private var cacheIsComplete: Bool {
-        let username = preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
-        return cacheIsComplete(for: username)
+        cacheIsComplete(for: normalizedUsername)
+    }
+
+    private var normalizedUsername: String {
+        preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func cacheIsComplete(for username: String) -> Bool {
@@ -598,14 +784,20 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private func resolvedUsername(context: TokscaleCommandContext) async throws -> String {
-        let saved = preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let saved = normalizedUsername
         if !saved.isEmpty { return saved }
+
         let discovered = try await cli.whoAmI(context: context)
-        if preferences.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            preferences.username = discovered
-            preferencesStore.save(preferences)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !discovered.isEmpty else { throw TokscaleAPIError.invalidUsername }
+
+        // Settings may have supplied an account while whoami was suspended.
+        if normalizedUsername.isEmpty {
+            var updatedPreferences = preferences
+            updatedPreferences.username = discovered
+            updatePreferences(updatedPreferences)
         }
-        return preferences.username
+        return normalizedUsername
     }
 
     private func commandContext(for preferences: UserPreferences) throws -> TokscaleCommandContext {
@@ -654,6 +846,12 @@ final class DashboardViewModel: ObservableObject {
             statusTextTemplate: preferences.statusTextTemplate,
             statusTextPeriod: preferences.statusTextPeriod
         )
+    }
+
+    private static func isProfileNotFound(_ error: Error) -> Bool {
+        guard let apiError = error as? TokscaleAPIError else { return false }
+        if case .profileNotFound = apiError { return true }
+        return false
     }
 
     private static func message(for error: Error) -> String {

@@ -4,6 +4,22 @@ struct DashboardView: View {
     @ObservedObject var viewModel: DashboardViewModel
 
     var body: some View {
+        Group {
+            if viewModel.firstUseOnboardingState == .hidden {
+                dashboardContent
+            } else {
+                FirstUseOnboardingView(viewModel: viewModel)
+            }
+        }
+        .frame(width: 380, height: 680)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("dashboard-panel")
+        #if DEBUG
+        .accessibilityValue("\(viewModel.panelAppearanceCount):\(viewModel.panelDisappearanceCount)")
+        #endif
+    }
+
+    private var dashboardContent: some View {
         VStack(spacing: 0) {
             VStack(spacing: 10) {
                 if let profile = viewModel.identityProfile {
@@ -47,12 +63,6 @@ struct DashboardView: View {
             usageContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .frame(width: 380, height: 680)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("dashboard-panel")
-        #if DEBUG
-        .accessibilityValue("\(viewModel.panelAppearanceCount):\(viewModel.panelDisappearanceCount)")
-        #endif
     }
 
     private func header(_ profile: DashboardData) -> some View {
@@ -138,7 +148,7 @@ struct DashboardView: View {
         case .idle, .loading:
             Color.clear
         case let .failed(message):
-            ErrorStateView(title: "资料暂不可用", message: message) {
+            ErrorStateView(title: "资料暂不可用", message: message, actionTitle: "重试") {
                 Task { await viewModel.retryStatistics() }
             }
             .padding(.horizontal, 14)
