@@ -270,7 +270,7 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
         let descriptors = StatusMenuBuilder.descriptors(
             freshness: freshness,
             diagnostics: viewModel.diagnosticMessages,
-            actionsEnabled: !viewModel.operation.isRunning
+            actionsEnabled: !viewModel.isPerformingOperation
         )
         let menu = NSMenu(title: "TokChan")
         for descriptor in descriptors {

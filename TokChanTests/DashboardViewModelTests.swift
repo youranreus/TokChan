@@ -181,6 +181,373 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.currentAutosubmitStatus, snapshot.autosubmit)
     }
 
+    func testAutomaticIdentityDiscoveryPersistsUsernameAndVerifiesUsage() async {
+        let recorder = EventRecorder()
+        let preferences = InMemoryPreferences(
+            value: UserPreferences(username: "", tokscaleVersion: "latest", npxPath: "")
+        )
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder, discoveredUsername: "  youranreus  "),
+            preferencesStore: preferences,
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        XCTAssertEqual(model.firstUseOnboardingState, .discoveringIdentity)
+
+        await model.load()
+
+        XCTAssertEqual(preferences.value.username, "youranreus")
+        XCTAssertEqual(model.firstUseOnboardingState, .hidden)
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events.first, "whoami")
+        XCTAssertEqual(events.filter { $0 == "fetch" }.count, 1)
+        XCTAssertEqual(events.filter { $0 == "status" }.count, 1)
+    }
+
+    func testAutomaticIdentityFailureFallsBackToUsernameEntryWithoutStatisticsRetryDeadEnd() async {
+        let recorder = EventRecorder()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder, whoAmIError: TestFailure.unavailable),
+            preferencesStore: InMemoryPreferences(
+                value: UserPreferences(username: "", tokscaleVersion: "latest", npxPath: "")
+            ),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        await model.load()
+
+        guard case let .usernameEntry(message) = model.firstUseOnboardingState else {
+            return XCTFail("Identity discovery failure must allow manual username entry")
+        }
+        XCTAssertNotNil(message)
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events.filter { $0 == "whoami" }.count, 1)
+        XCTAssertFalse(events.contains("fetch"))
+    }
+
+    func testManualUsernameIsTrimmedPersistedAndForceVerifiedOnce() async {
+        let api = ControlledBatchAPI()
+        let recorder = EventRecorder()
+        let preferences = InMemoryPreferences(
+            value: UserPreferences(username: "", tokscaleVersion: "latest", npxPath: "")
+        )
+        let model = DashboardViewModel(
+            api: api,
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: preferences,
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        XCTAssertFalse(model.isPerformingOperation)
+        let verification = Task { await model.saveAndVerifyUsername("  youranreus  ") }
+        await api.waitForRequest(username: "youranreus")
+        XCTAssertEqual(model.firstUseOnboardingState, .verifying(username: "youranreus"))
+        XCTAssertTrue(model.isPerformingOperation)
+
+        await model.saveAndVerifyUsername("youranreus")
+        let requestCount = await api.requestCount()
+        XCTAssertEqual(requestCount, 1)
+
+        await api.resolve(username: "youranreus")
+        await verification.value
+
+        XCTAssertEqual(preferences.value.username, "youranreus")
+        XCTAssertEqual(model.firstUseOnboardingState, .hidden)
+        XCTAssertFalse(model.isPerformingOperation)
+    }
+
+    func testBlankManualUsernameCannotContinueOrPersist() async {
+        let recorder = EventRecorder()
+        let preferences = InMemoryPreferences(
+            value: UserPreferences(username: "", tokscaleVersion: "latest", npxPath: "")
+        )
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: preferences,
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        await model.saveAndVerifyUsername(" \n ")
+
+        XCTAssertEqual(preferences.value.username, "")
+        guard case let .usernameEntry(message) = model.firstUseOnboardingState else {
+            return XCTFail("Blank input must remain on username entry")
+        }
+        XCTAssertNotNil(message)
+        let events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testPositiveAllTokensHideOnboardingEvenWithoutClientDetails() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(
+            recorder: recorder,
+            api: FakeAPI(recorder: recorder, includesClients: false)
+        )
+
+        await model.load()
+
+        XCTAssertEqual(model.firstUseOnboardingState, .hidden)
+        XCTAssertTrue(model.profileState.loadedValue?.clients.isEmpty == true)
+        XCTAssertTrue((model.profileState.loadedValue?.totalTokens ?? 0) > 0)
+    }
+
+    func testZeroUsageAndProfileNotFoundBothAdvanceToFirstSubmission() async {
+        let zeroRecorder = EventRecorder()
+        let zeroModel = makeViewModel(
+            recorder: zeroRecorder,
+            api: FakeAPI(recorder: zeroRecorder, totalTokens: 0)
+        )
+
+        await zeroModel.load()
+
+        XCTAssertEqual(
+            zeroModel.firstUseOnboardingState,
+            .firstSubmission(username: "youranreus", message: nil)
+        )
+
+        let missingRecorder = EventRecorder()
+        let missingModel = makeViewModel(
+            recorder: missingRecorder,
+            api: FakeAPI(recorder: missingRecorder, fetchError: TokscaleAPIError.profileNotFound)
+        )
+
+        await missingModel.load()
+
+        XCTAssertEqual(
+            missingModel.firstUseOnboardingState,
+            .firstSubmission(username: "youranreus", message: nil)
+        )
+    }
+
+    func testOtherInitialVerificationFailureReturnsToPrefilledUsernameEntry() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(
+            recorder: recorder,
+            api: FakeAPI(recorder: recorder, fetchError: TestFailure.unavailable)
+        )
+
+        await model.load()
+
+        guard case let .usernameEntry(message) = model.firstUseOnboardingState else {
+            return XCTFail("A retryable verification error must return to username entry")
+        }
+        XCTAssertNotNil(message)
+        XCTAssertEqual(model.preferences.username, "youranreus")
+    }
+
+    func testSuccessfulZeroUsageRetryLeavesVerificationErrorForFirstSubmission() async {
+        let api = ControlledBatchAPI()
+        let recorder = EventRecorder()
+        let model = makeViewModel(recorder: recorder, api: api)
+
+        let initialLoad = Task { await model.load() }
+        await api.waitForRequest(username: "youranreus")
+        await api.reject(username: "youranreus")
+        await initialLoad.value
+        guard case .usernameEntry(message: .some) = model.firstUseOnboardingState else {
+            return XCTFail("Expected a retryable username verification error")
+        }
+
+        let retry = Task { await model.retryStatistics() }
+        await api.waitForRequest(username: "youranreus")
+        await api.resolve(username: "youranreus", totalTokens: 0)
+        await retry.value
+
+        XCTAssertEqual(
+            model.firstUseOnboardingState,
+            .firstSubmission(username: "youranreus", message: nil)
+        )
+    }
+
+    func testFirstSubmissionSubmitsThenFetchesAndHidesOnPositiveUsage() async {
+        let recorder = EventRecorder()
+        let api = SequencedBatchAPI(recorder: recorder, totalTokens: [0, nil])
+        let model = makeViewModel(recorder: recorder, api: api)
+        await model.load()
+        await recorder.reset()
+
+        await model.submitFirstUsage()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["submit", "fetch"])
+        XCTAssertEqual(model.firstUseOnboardingState, .hidden)
+    }
+
+    func testFirstSubmissionRejectsDuplicateActionWhileSubmitIsRunning() async throws {
+        let recorder = EventRecorder()
+        let cli = SuspendedPushCLI(recorder: recorder)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: cli,
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: try completeSnapshot(
+                fetchedAt: referenceDate,
+                totalTokens: 0
+            )),
+            now: { self.referenceDate }
+        )
+
+        let submission = Task { await model.submitFirstUsage() }
+        await cli.waitForSubmit()
+        XCTAssertEqual(model.firstUseOnboardingState, .submitting(username: "youranreus"))
+
+        await model.submitFirstUsage()
+        var events = await recorder.snapshot()
+        XCTAssertEqual(events, ["submit"])
+
+        await cli.resumeSubmit()
+        await submission.value
+        events = await recorder.snapshot()
+        XCTAssertEqual(events, ["submit", "fetch"])
+        XCTAssertEqual(model.firstUseOnboardingState, .hidden)
+    }
+
+    func testUsernameChangeDuringFirstSubmissionDoesNotFetchForTheNewAccount() async throws {
+        let recorder = EventRecorder()
+        let cli = SuspendedPushCLI(recorder: recorder)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: cli,
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: try completeSnapshot(
+                fetchedAt: referenceDate,
+                totalTokens: 0
+            )),
+            now: { self.referenceDate }
+        )
+
+        let submission = Task { await model.submitFirstUsage() }
+        await cli.waitForSubmit()
+        model.updatePreferences(
+            UserPreferences(username: "new-account", tokscaleVersion: "latest", npxPath: "")
+        )
+        await cli.resumeSubmit()
+        await submission.value
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["submit"])
+        XCTAssertEqual(model.firstUseOnboardingState, .verifying(username: "new-account"))
+        XCTAssertNil(model.profileState.loadedValue)
+    }
+
+    func testFirstSubmissionFailureCanRetryWithoutFetching() async {
+        let recorder = EventRecorder()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder, totalTokens: 0),
+            cli: FakeCLI(recorder: recorder, submitError: TestFailure.unavailable),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+        await model.load()
+        await recorder.reset()
+
+        await model.submitFirstUsage()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["submit"])
+        guard case let .firstSubmission(username, message) = model.firstUseOnboardingState else {
+            return XCTFail("A failed submit must remain retryable")
+        }
+        XCTAssertEqual(username, "youranreus")
+        XCTAssertNotNil(message)
+    }
+
+    func testFirstSubmissionFetchFailureStaysInSecondStepWithRetryableMessage() async throws {
+        let recorder = EventRecorder()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder, fetchError: TestFailure.unavailable),
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: try completeSnapshot(
+                fetchedAt: referenceDate,
+                totalTokens: 0
+            )),
+            now: { self.referenceDate }
+        )
+
+        await model.submitFirstUsage()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["submit", "fetch"])
+        guard case let .firstSubmission(_, message) = model.firstUseOnboardingState else {
+            return XCTFail("A post-submit read failure must remain on the second step")
+        }
+        XCTAssertTrue(message?.contains("统计读取失败") == true)
+    }
+
+    func testFirstSubmissionRemainingZeroOrMissingStaysInSecondStepWithGuidance() async {
+        for error in [nil, TokscaleAPIError.profileNotFound as Error?] {
+            let recorder = EventRecorder()
+            let api = FakeAPI(recorder: recorder, fetchError: error, totalTokens: 0)
+            let model = DashboardViewModel(
+                api: api,
+                cli: FakeCLI(recorder: recorder),
+                preferencesStore: standardPreferences(),
+                npxLocator: FakeNpxLocator(),
+                cacheStore: InMemoryCache()
+            )
+            await model.load()
+            await recorder.reset()
+
+            await model.submitFirstUsage()
+
+            let events = await recorder.snapshot()
+            XCTAssertEqual(events, ["submit", "fetch"])
+            guard case let .firstSubmission(username, message) = model.firstUseOnboardingState else {
+                return XCTFail("No visible usage must remain on the second step")
+            }
+            XCTAssertEqual(username, "youranreus")
+            XCTAssertNotNil(message)
+        }
+    }
+
+    func testModifyUsernameReturnsToEntryWithoutClearingSavedValue() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(
+            recorder: recorder,
+            api: FakeAPI(recorder: recorder, totalTokens: 0)
+        )
+        await model.load()
+
+        model.editOnboardingUsername()
+
+        XCTAssertEqual(model.firstUseOnboardingState, .usernameEntry(message: nil))
+        XCTAssertEqual(model.preferences.username, "youranreus")
+    }
+
+    func testProfileNotFoundDuringOrdinaryCachedRefreshKeepsDashboardAndRetrySemantics() async throws {
+        let recorder = EventRecorder()
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
+        let model = makeViewModel(
+            recorder: recorder,
+            api: FakeAPI(recorder: recorder, fetchError: TokscaleAPIError.profileNotFound),
+            cache: InMemoryCache(snapshot: snapshot),
+            now: { self.referenceDate.addingTimeInterval(301) }
+        )
+
+        await model.load()
+
+        XCTAssertEqual(model.firstUseOnboardingState, .hidden)
+        XCTAssertEqual(model.profileState.loadedValue, snapshot.profile)
+        XCTAssertNotNil(model.loadErrorMessage)
+        await model.retryStatistics()
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events.filter { $0 == "fetch" }.count, 2)
+        XCTAssertFalse(events.contains("submit"))
+    }
+
     func testFreshCompleteCacheSkipsStatisticsButRefreshesStatus() async throws {
         let recorder = EventRecorder()
         let snapshot = try completeSnapshot(fetchedAt: referenceDate)
@@ -775,6 +1142,7 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertNil(model.identityProfile)
         XCTAssertNil(model.cacheSavedAt)
         XCTAssertEqual(model.preferences.username, "new")
+        XCTAssertEqual(model.firstUseOnboardingState, .verifying(username: "new"))
         XCTAssertEqual(cache.snapshot?.username, "new")
         XCTAssertTrue(cache.snapshot?.profiles.isEmpty == true)
         XCTAssertNil(cache.snapshot?.fetchedAt)
@@ -941,9 +1309,10 @@ final class DashboardViewModelTests: XCTestCase {
 
     private func completeSnapshot(
         fetchedAt: Date,
-        username: String = "youranreus"
+        username: String = "youranreus",
+        totalTokens: Double? = nil
     ) throws -> DashboardCacheSnapshot {
-        let batch = try makeBatch(username: username)
+        let batch = try makeBatch(username: username, totalTokens: totalTokens)
         let profiles = ProfilePeriod.allCases.compactMap { period in
             batch.profiles[period].map { CachedDashboardProfile(data: $0, savedAt: fetchedAt) }
         }
@@ -967,42 +1336,76 @@ private actor EventRecorder {
     private var values: [String] = []
     func append(_ value: String) { values.append(value) }
     func snapshot() -> [String] { values }
+    func reset() { values.removeAll() }
 }
 
 private final class FakeAPI: TokscaleAPIService {
     let recorder: EventRecorder
     let fetchError: Error?
+    let totalTokens: Double?
+    let includesClients: Bool
 
-    init(recorder: EventRecorder, fetchError: Error? = nil) {
+    init(
+        recorder: EventRecorder,
+        fetchError: Error? = nil,
+        totalTokens: Double? = nil,
+        includesClients: Bool = true
+    ) {
         self.recorder = recorder
         self.fetchError = fetchError
+        self.totalTokens = totalTokens
+        self.includesClients = includesClients
     }
 
     func fetchDashboardBatch(username: String) async throws -> DashboardProfileBatch {
         await recorder.append("fetch")
         if let fetchError { throw fetchError }
-        return try makeBatch(username: username)
+        return try makeBatch(
+            username: username,
+            totalTokens: totalTokens,
+            includesClients: includesClients
+        )
     }
 }
 
-private func makeBatch(username: String) throws -> DashboardProfileBatch {
+private func makeBatch(
+    username: String,
+    totalTokens: Double? = nil,
+    includesClients: Bool = true
+) throws -> DashboardProfileBatch {
     var profiles: [ProfilePeriod: DashboardData] = [:]
     for period in ProfilePeriod.allCases {
         let response = try JSONDecoder().decode(
             PublicProfileResponse.self,
-            from: try scopedFixture(period: period, username: username)
+            from: try scopedFixture(
+                period: period,
+                username: username,
+                totalTokens: totalTokens,
+                includesClients: includesClients
+            )
         )
         profiles[period] = DashboardData(response: response)
     }
     return try DashboardProfileBatch(username: username, profiles: profiles)
 }
 
-private func scopedFixture(period: ProfilePeriod, username: String) throws -> Data {
+private func scopedFixture(
+    period: ProfilePeriod,
+    username: String,
+    totalTokens: Double? = nil,
+    includesClients: Bool = true
+) throws -> Data {
     var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ProfileModelsTests.profileJSON.utf8)) as? [String: Any])
     json["period"] = period.rawValue
     var user = try XCTUnwrap(json["user"] as? [String: Any])
     user["username"] = username
     json["user"] = user
+    if let totalTokens {
+        var stats = try XCTUnwrap(json["stats"] as? [String: Any])
+        stats["totalTokens"] = totalTokens
+        json["stats"] = stats
+    }
+    if !includesClients { json["contributions"] = [] }
     return try JSONSerialization.data(withJSONObject: json)
 }
 
@@ -1011,20 +1414,30 @@ private final class FakeCLI: TokscaleCLIService {
     let submitError: Error?
     let statusError: Error?
     let autosubmitMutationError: Error?
+    let discoveredUsername: String
+    let whoAmIError: Error?
 
     init(
         recorder: EventRecorder,
         submitError: Error? = nil,
         statusError: Error? = nil,
-        autosubmitMutationError: Error? = nil
+        autosubmitMutationError: Error? = nil,
+        discoveredUsername: String = "youranreus",
+        whoAmIError: Error? = nil
     ) {
         self.recorder = recorder
         self.submitError = submitError
         self.statusError = statusError
         self.autosubmitMutationError = autosubmitMutationError
+        self.discoveredUsername = discoveredUsername
+        self.whoAmIError = whoAmIError
     }
 
-    func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
+    func whoAmI(context: TokscaleCommandContext) async throws -> String {
+        await recorder.append("whoami")
+        if let whoAmIError { throw whoAmIError }
+        return discoveredUsername
+    }
     func submit(context: TokscaleCommandContext) async throws {
         await recorder.append("submit")
         if let submitError { throw submitError }
@@ -1188,6 +1601,22 @@ private final class InMemoryCache: DashboardCacheStoring {
     }
 }
 
+private actor SequencedBatchAPI: TokscaleAPIService {
+    private let recorder: EventRecorder
+    private var totalTokens: [Double?]
+
+    init(recorder: EventRecorder, totalTokens: [Double?]) {
+        self.recorder = recorder
+        self.totalTokens = totalTokens
+    }
+
+    func fetchDashboardBatch(username: String) async throws -> DashboardProfileBatch {
+        await recorder.append("fetch")
+        let nextTotal = totalTokens.isEmpty ? nil : totalTokens.removeFirst()
+        return try makeBatch(username: username, totalTokens: nextTotal)
+    }
+}
+
 private actor ControlledBatchAPI: TokscaleAPIService {
     private var pending: [String: CheckedContinuation<DashboardProfileBatch, Error>] = [:]
     private var arrivals: [String: CheckedContinuation<Void, Never>] = [:]
@@ -1206,9 +1635,18 @@ private actor ControlledBatchAPI: TokscaleAPIService {
         await withCheckedContinuation { arrivals[username] = $0 }
     }
 
-    func resolve(username: String) {
-        do { pending.removeValue(forKey: username)?.resume(returning: try makeBatch(username: username)) }
-        catch { pending.removeValue(forKey: username)?.resume(throwing: error) }
+    func resolve(username: String, totalTokens: Double? = nil) {
+        do {
+            pending.removeValue(forKey: username)?.resume(
+                returning: try makeBatch(username: username, totalTokens: totalTokens)
+            )
+        } catch {
+            pending.removeValue(forKey: username)?.resume(throwing: error)
+        }
+    }
+
+    func reject(username: String) {
+        pending.removeValue(forKey: username)?.resume(throwing: TestFailure.unavailable)
     }
 
     func requestCount() -> Int { count }

@@ -3,7 +3,16 @@ import Foundation
 import SwiftUI
 
 struct PreviewAPIService: TokscaleAPIService {
+    var totalTokens: Double?
+    var shouldFail = false
+
+    init(totalTokens: Double? = nil, shouldFail: Bool = false) {
+        self.totalTokens = totalTokens
+        self.shouldFail = shouldFail
+    }
+
     func fetchDashboardBatch(username: String) async throws -> DashboardProfileBatch {
+        if shouldFail { throw TokscaleAPIError.server(statusCode: 503) }
         var profiles: [ProfilePeriod: DashboardData] = [:]
         for period in ProfilePeriod.allCases {
             profiles[period] = try makeProfile(username: username, period: period)
@@ -29,7 +38,7 @@ struct PreviewAPIService: TokscaleAPIService {
             "period": period.rawValue,
             "dateRange": ["start": period == .week ? "2026-08-29" : "2026-08-06", "end": "2026-09-04"],
             "user": ["username": username, "displayName": "季悠然", "rank": period == .day ? NSNull() : (period == .all ? 42 : 12) as Any],
-            "stats": ["totalTokens": total, "totalCost": scale * 5, "activeDays": period == .week ? 7 : 30,
+            "stats": ["totalTokens": totalTokens ?? total, "totalCost": scale * 5, "activeDays": period == .week ? 7 : 30,
                       "inputTokens": total * 0.1, "outputTokens": total * 0.05,
                       "cacheReadTokens": total * 0.8, "cacheWriteTokens": total * 0.03,
                       "reasoningTokens": total * 0.02],
@@ -85,34 +94,93 @@ struct PreviewCLIService: TokscaleCLIService, CustomPricingCLIService {
 }
 
 final class PreviewPreferencesStore: PreferencesStoring {
-    private var value = UserPreferences(
-        username: "youranreus",
-        tokscaleVersion: "4.15.0",
-        npxPath: "/opt/homebrew/bin/npx"
-    )
+    private var value: UserPreferences
+
+    init(username: String = "youranreus") {
+        value = UserPreferences(
+            username: username,
+            tokscaleVersion: "4.15.0",
+            npxPath: "/opt/homebrew/bin/npx"
+        )
+    }
 
     func load() -> UserPreferences { value }
     func save(_ preferences: UserPreferences) { value = preferences }
 }
 
 struct PreviewNpxLocator: NpxLocating {
+    var isAvailable = true
+
     func locate(preferredPath: String?) -> URL? {
-        URL(fileURLWithPath: "/opt/homebrew/bin/npx")
+        isAvailable ? URL(fileURLWithPath: "/opt/homebrew/bin/npx") : nil
     }
 }
 
 struct DashboardView_Previews: PreviewProvider {
     @MainActor
     static var previews: some View {
-        DashboardView(
-            viewModel: DashboardViewModel(
-                api: PreviewAPIService(),
-                cli: PreviewCLIService(),
-                preferencesStore: PreviewPreferencesStore(),
-                npxLocator: PreviewNpxLocator(),
-                cacheStore: PreviewCacheStore()
+        Group {
+            loadedPreview(
+                DashboardViewModel(
+                    api: PreviewAPIService(),
+                    cli: PreviewCLIService(),
+                    preferencesStore: PreviewPreferencesStore(),
+                    npxLocator: PreviewNpxLocator(),
+                    cacheStore: PreviewCacheStore()
+                )
             )
-        )
+            .previewDisplayName("Dashboard")
+
+            loadedPreview(
+                DashboardViewModel(
+                    api: PreviewAPIService(),
+                    cli: PreviewCLIService(),
+                    preferencesStore: PreviewPreferencesStore(username: ""),
+                    npxLocator: PreviewNpxLocator(isAvailable: false),
+                    cacheStore: PreviewCacheStore()
+                )
+            )
+            .previewDisplayName("Onboarding · Username")
+
+            loadedPreview(
+                DashboardViewModel(
+                    api: PreviewAPIService(totalTokens: 0),
+                    cli: PreviewCLIService(),
+                    preferencesStore: PreviewPreferencesStore(),
+                    npxLocator: PreviewNpxLocator(),
+                    cacheStore: PreviewCacheStore()
+                )
+            )
+            .previewDisplayName("Onboarding · First Submit")
+
+            DashboardView(
+                viewModel: DashboardViewModel(
+                    api: PreviewAPIService(),
+                    cli: PreviewCLIService(),
+                    preferencesStore: PreviewPreferencesStore(),
+                    npxLocator: PreviewNpxLocator(),
+                    cacheStore: PreviewCacheStore()
+                )
+            )
+            .previewDisplayName("Onboarding · Verifying")
+
+            loadedPreview(
+                DashboardViewModel(
+                    api: PreviewAPIService(shouldFail: true),
+                    cli: PreviewCLIService(),
+                    preferencesStore: PreviewPreferencesStore(),
+                    npxLocator: PreviewNpxLocator(),
+                    cacheStore: PreviewCacheStore()
+                )
+            )
+            .previewDisplayName("Onboarding · Error")
+        }
+    }
+
+    @MainActor
+    private static func loadedPreview(_ viewModel: DashboardViewModel) -> some View {
+        DashboardView(viewModel: viewModel)
+            .task { await viewModel.load() }
     }
 }
 
