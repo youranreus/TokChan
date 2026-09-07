@@ -1,89 +1,184 @@
-# TokChan
+<p align="center">
+  <img src="BrandAssets/Sources/TokChan_transparent.png" width="160" alt="TokChan 图标">
+</p>
 
-TokChan is a compact native macOS menu-bar companion for [Tokscale](https://tokscale.ai). It shows Tokscale all-time, daily, trailing-week, and trailing-month totals plus client/model detail and manages Tokscale's built-in autosubmit through its official CLI.
+<h1 align="center">TokChan</h1>
 
-## Requirements
+<p align="center">把 Tokscale 的用量统计与常用操作放进 macOS 菜单栏</p>
 
-- macOS 13 or later
-- Xcode 26 (the project uses Xcode 26 project format)
-- Node.js with an executable `npx`
-- An existing Tokscale login for submission and autosubmit operations
+<p align="center">
+  <a href="https://github.com/youranreus/TokChan/releases/latest"><img src="https://img.shields.io/github/v/release/youranreus/TokChan?display_name=tag&amp;sort=semver" alt="最新版本"></a>
+  <img src="https://img.shields.io/badge/macOS-13%2B-000000?logo=apple" alt="支持 macOS 13 及以上版本">
+  <img src="https://img.shields.io/badge/Swift-5-F05138?logo=swift&amp;logoColor=white" alt="使用 Swift 5">
+</p>
 
-## Run
+<p align="center">
+  <img src="docs/images/tokchan-dashboard.png" width="420" alt="TokChan 主面板演示截图">
+</p>
 
-Open `TokChan.xcodeproj` and run the `TokChan` scheme, or build from the repository root:
+<p align="center"><sub>截图使用应用内置演示数据</sub></p>
+
+## 这是什么
+
+TokChan 是一款原生 macOS 菜单栏应用，用来查看 [Tokscale](https://tokscale.ai) 汇总的 AI 编程工具用量。打开菜单栏面板，就能看到 Token、成本、排名、活跃天数，以及客户端和模型明细。提交数据、管理自动提交和维护自定义价格，也可以在同一个界面里完成。
+
+它适合已经在使用 Tokscale，又希望少开几次终端的人。应用没有 Dock 图标，平时安静地待在菜单栏，需要时点开即可。
+
+### 目前支持
+
+- 查看全部、今天、本周和本月四个统计范围
+- 查看总 Tokens、总成本、排名和活跃天数
+- 区分输入、输出、缓存读取、缓存写入和推理五类 Token
+- 按客户端和模型查看用量，较长列表可以展开
+- 自定义菜单栏文字，可选择统计范围，并使用 `{token}` 和 `{cost}` 占位符
+- 一键提交本地用量并刷新全部统计范围
+- 从菜单栏右键立刻推送或拉取数据
+- 缓存最近一次统计结果，减少重复等待
+- 登录时自动启动
+- 查看、开启、关闭和立即运行 Tokscale 自动提交
+- 设置自动提交间隔、客户端和日期范围
+- 为模型补充输入、输出、缓存读取和缓存写入价格
+- 自动查找 `npx`，也可以指定它的绝对路径
+
+## TokChan 和 Tokscale 怎样配合
+
+TokChan 是独立维护的第三方项目，不是 Tokscale 的官方客户端。它没有另写一套数据扫描和提交逻辑，本地会话、成本与账号状态由 Tokscale 处理。
+
+| 工作 | 负责方 |
+| --- | --- |
+| 扫描本地客户端数据、计算成本、登录、提交和自动提交 | Tokscale |
+| 提供菜单栏界面、公开统计展示、快捷操作和本地快照 | TokChan |
+
+需要执行本地操作时，TokChan 会通过 `npx --yes tokscale@<版本>` 调用 Tokscale CLI。统计面板则从 Tokscale 的公开资料接口读取数据。Tokscale 是账号状态、数据采集和提交结果的最终来源，TokChan 负责把这些能力接到更顺手的 macOS 界面上。
+
+## 功能详情
+
+### 用量面板
+
+面板提供全部、今天、本周和本月四种范围。每个范围都包含总 Tokens、预估成本、公开排名和活跃天数，并进一步拆分为输入、输出、缓存读取、缓存写入与推理用量。
+
+客户端和模型会分别汇总。列表默认先展示主要项目，需要时可以展开查看其余条目。切换范围后，菜单栏摘要也会按所选范围更新。
+
+### 菜单栏与快捷操作
+
+菜单栏可以只显示图标，也可以显示自定义摘要。摘要支持 `{token}` 和 `{cost}`，例如把格式写成 `{token} · {cost}`，便能同时看到用量和成本。
+
+左键打开完整面板。右键菜单提供立刻推送、立刻拉取、设置和退出，适合不打开主面板时快速操作。
+
+### 提交与刷新
+
+面板中的刷新按钮会先调用 Tokscale 提交本地用量，再重新读取全部统计范围。这和单纯刷新页面不同，执行前应确认自己愿意把 Tokscale 扫描到的数据提交到服务端。
+
+如果只想单独执行某一步，可以使用菜单栏右键菜单中的立刻推送或立刻拉取。
+
+### 自动提交
+
+TokChan 可以读取 Tokscale 当前的自动提交状态，也能在图形界面中开启、关闭或立即运行。你可以设置执行间隔、参与统计的客户端，以及今天、昨天、本周、本月、本年或自定义日期范围。
+
+自动提交仍由 Tokscale 管理。TokChan 只是编辑对应配置并调用上游命令，因此终端里看到的 Tokscale 状态与应用内应当一致。
+
+### 自定义价格
+
+当 Tokscale 没有某个模型的价格时，可以在 TokChan 中填写输入、输出、缓存读取和缓存写入单价，并附上来源与备注。保存前还可以检查当前数据中是否存在缺失价格的模型。
+
+价格最终交给 Tokscale 使用。修改后重新提交数据，新的成本计算才会反映在统计结果中。
+
+### 本地数据
+
+TokChan 会在本机保存 Tokscale 用户名、选用的 Tokscale 版本、可选的 `npx` 路径、界面偏好和最近一次统计快照。Tokscale 的凭据不由 TokChan 保存，具体位置和格式以 Tokscale 为准。
+
+## 安装
+
+### 准备工作
+
+- macOS 13 或更高版本
+- 已安装 Node.js，并且系统中可以运行 `npx`
+- 如需提交数据或使用自动提交，先完成 Tokscale 登录
+
+可以在终端确认环境并登录。
 
 ```bash
-xcodebuild -project TokChan.xcodeproj -scheme TokChan -destination 'platform=macOS' build
+node --version
+npx --version
+npx tokscale@latest login
 ```
 
-TokChan is an agent-style app, so it appears in the menu bar and does not create a Dock icon. The first panel load discovers the current Tokscale username with `whoami` when no override is saved.
+### 安装应用
 
-## Build a personal-use release
+1. 前往 [Releases](https://github.com/youranreus/TokChan/releases/latest) 下载最新的 DMG。
+2. 打开 DMG，把 TokChan 拖进“应用程序”文件夹。
+3. 启动 TokChan，在菜单栏中找到应用图标。
+4. 首次使用时填写或确认 Tokscale 用户名。应用通常会自动找到 `npx`，找不到时可在设置里填写绝对路径。
 
-The shared release entry point runs `TokChanTests`, performs a credential-free Release build for both Apple Silicon and Intel, validates its metadata and architectures, ad-hoc signs and strictly verifies the complete app bundle, then creates and re-verifies a native drag-to-install DMG plus SHA-256 checksum:
+> [!IMPORTANT]
+> 当前发布包使用 ad-hoc 签名，没有使用 Apple Developer ID 签名，也没有经过 Apple 公证。首次启动时，macOS 可能阻止应用打开。请进入“系统设置”中的“隐私与安全性”，在安全性区域找到 TokChan 的提示，点击“仍要打开”并再次确认。这个操作通常只需完成一次。
+
+## 常见问题
+
+### 为什么第一次打开需要在系统设置中手动允许
+
+当前 Release 没有 Developer ID 签名和 Apple 公证，Gatekeeper 因此可能把它拦下。这不等同于系统发现了恶意代码，只表示 macOS 无法通过 Apple 的签名与公证链验证发布者。
+
+确认安装包来自本仓库的 [Releases](https://github.com/youranreus/TokChan/releases/latest) 后，打开“系统设置”，进入“隐私与安全性”，向下找到安全性提示，点击“仍要打开”。如果没有看到按钮，可以先再启动一次 TokChan，让系统重新显示拦截记录。
+
+### 为什么统计里默认没有 Cursor 数据
+
+Tokscale 不会直接解析 `~/.cursor` 中的本地会话。Cursor 用量需要通过 Cursor 账号完成授权，再由 Tokscale 调用 Cursor API 同步到本地缓存。没有做过这一步时，TokChan 自然读不到 Cursor 统计。
+
+先在终端执行登录和同步。
 
 ```bash
-scripts/build-release.sh
-# Local iteration only; never use this for a Tag release:
-scripts/build-release.sh --skip-tests --output dist-local
+npx tokscale@latest cursor login --name work
+npx tokscale@latest cursor sync
 ```
 
-The default assets are:
+登录时 Tokscale 可能自动读取 Cursor 桌面端的登录状态，也可能要求粘贴浏览器 Cookie。会话令牌应当按密码保管，不要发给他人。同步结果通常写入 `~/.config/tokscale/cursor-cache/usage*.csv`，随后重新提交并刷新 TokChan 即可。
 
-```text
-dist/TokChan-vX.Y.Z-macos-universal.dmg
-dist/TokChan-vX.Y.Z-macos-universal.dmg.sha256
-```
+Cursor 的认证方式可能随上游版本变化，遇到差异时请查看 [Tokscale 的最新说明](https://github.com/junhoyeo/tokscale)。
 
-Existing final-named assets are never overwritten. Verify a downloaded pair from the directory containing both files with:
+### 为什么程序坞里没有 TokChan
+
+TokChan 按菜单栏应用设计，不会常驻程序坞。启动后请在屏幕右上角的菜单栏查找图标。如果图标被隐藏，可以检查菜单栏空间，或退出后重新启动应用。
+
+### 刷新按钮到底会做什么
+
+它会先运行 Tokscale 提交，再拉取公开资料并刷新全部、今天、本周和本月的数据。提交可能需要一点时间。如果你只想读取服务端现有结果，可以从右键菜单选择立刻拉取。
+
+### 为什么必须安装 Node.js 和 npx
+
+TokChan 通过 `npx` 运行指定版本的 Tokscale CLI，登录、扫描、提交、自动提交和价格管理都依赖这条调用链。应用会从常见位置寻找 `npx`，也支持在设置中填写绝对路径。
+
+如果应用提示找不到 `npx`，先在终端执行 `which npx`。把输出的完整路径填入 TokChan 设置后再试。
+
+### TokChan 会把哪些数据保存在本地
+
+应用保存用户名、Tokscale 版本、可选的 `npx` 路径、界面偏好和统计快照。Tokscale 的登录凭据与客户端缓存由 Tokscale 自己管理。TokChan 发起提交时，上传内容和服务端处理规则也以 Tokscale 为准。
+
+### 自定义价格保存后为什么成本没有马上变化
+
+价格用于 Tokscale 的成本计算，保存设置不会改写已经提交的统计结果。请重新提交相关日期的数据，再刷新面板。如果仍有缺失，可以先运行价格检查，确认模型名称与规则是否匹配。
+
+### 可以只查看别人的公开资料吗
+
+可以。在设置中填写对方的 Tokscale 用户名后，TokChan 能读取其公开统计。提交、自动提交和本地价格管理仍然使用当前电脑上的 Tokscale 环境，不会替对方操作账号。
+
+## 从源码构建
+
+使用 Xcode 打开 `TokChan.xcodeproj` 后，选择 TokChan scheme 运行即可。也可以在仓库根目录执行下面的命令。
 
 ```bash
-shasum -a 256 -c TokChan-vX.Y.Z-macos-universal.dmg.sha256
-hdiutil verify TokChan-vX.Y.Z-macos-universal.dmg
+xcodebuild -project TokChan.xcodeproj \
+  -scheme TokChan \
+  -destination 'platform=macOS' \
+  build
 ```
 
-To install, open the DMG and drag `TokChan.app` onto the `Applications` folder shown beside it, then eject the `TokChan` volume. Do not replace an existing installed copy unless that is intentional.
+项目当前使用 Swift 5，最低部署目标为 macOS 13。由于 Tokscale 需要读取本机客户端数据并管理自动提交，应用没有启用 App Sandbox。
 
-> **Warning:** the packaged app bundle has a complete ad-hoc signature, but it is not Developer ID signed and is not Apple-notarized. DMG packaging improves installation convenience only. Ad-hoc signing lets macOS verify bundle integrity and its designated identifier; it does not establish an Apple-verified developer identity or guarantee Gatekeeper acceptance for downloads. This format is intended only for the maintainer's personal use. Gatekeeper may block or warn on first launch, and the artifact is not suitable for ordinary public distribution.
+## 致谢
 
-## Prepare and publish a release
+TokChan 的数据采集、成本计算和提交能力来自 [Tokscale](https://github.com/junhoyeo/tokscale)。感谢 Tokscale 作者 [Junho Yeo](https://github.com/junhoyeo) 和所有上游贡献者，让不同 AI 编程工具的用量可以用统一方式查看。
 
-Versions are source-controlled in `TokChan.xcodeproj/project.pbxproj`. The app uses stable `X.Y.Z` marketing versions, positive integer build numbers, and annotated Tags named exactly `vX.Y.Z`.
+应用中的客户端原始图标取自 Tokscale 仓库，来源提交记录保存在 [`provenance.json`](TokChan/Resources/ClientOriginals/provenance.json)，对应的 MIT 许可证副本见 [`Tokscale-LICENSE.txt`](TokChan/Resources/ClientOriginals/Tokscale-LICENSE.txt)。这份许可证只说明所引用上游资源的授权情况，不代表 TokChan 仓库已经声明了项目许可证。
 
-Start from a clean `master` checkout whose `HEAD` exactly matches `origin/master`. Local release preparation requires only Git and Python:
-
-```bash
-scripts/release.sh patch
-scripts/release.sh minor
-scripts/release.sh major
-```
-
-Choose `patch` for `X.Y.(Z+1)`, `minor` for `X.(Y+1).0`, or `major` for `(X+1).0.0`. The command fetches Tags, checks local/remote Tag availability, increments the build number, runs the complete release build, shows the project diff, and asks before creating `chore(release): vX.Y.Z` plus its annotated Tag. By default it does not push. After review, use the exact atomic push command printed by the script, or add `--push` to any release type for a second push confirmation:
-
-```bash
-scripts/release.sh patch --push
-```
-
-Pushing the Tag triggers `.github/workflows/release.yml`. The workflow validates the Tag against the project version and `origin/master`, runs the same tested build script, creates or resumes a draft GitHub Release, verifies its exact two assets, and only then publishes it. A published Release is immutable to the workflow; source or artifact corrections require a new patch version. Infrastructure-only failures may rerun the same workflow while its Release remains a draft.
-
-### GitHub repository setup
-
-- In **Settings → Actions → General**, allow workflows effective read/write access so the ephemeral `GITHUB_TOKEN` can receive `contents: write`. No personal access token, Apple certificate, or other private signing credential is used by this personal-use workflow.
-- Add a Tag ruleset for `v*` that limits Tag creation, update, and deletion to maintainers. Published Tags must never be moved.
-- Consider GitHub immutable Releases after rehearsing the workflow in a disposable repository.
-
-Before distributing TokChan to ordinary users, complete a separate hardening effort covering Developer ID Application signing, Hardened Runtime compatibility, Xcode archive/export, App Store Connect API-key notarization, stapling, `spctl`/Gatekeeper validation, credential rotation, incident recovery, and in-app updates. PKG distribution remains outside this personal-use release flow.
-
-## Integration behavior
-
-- The panel keeps statistics fixed while the client list scrolls. Each client starts with its top five models and can expand; client logos ship in the app.
-- Period tabs use Tokscale’s own range boundaries and five-category Tokens breakdown. Daily usage comes from the server’s end-date contribution bucket; daily rank is unavailable.
-- Opening the panel only reads the public profile and `autosubmit status --json`.
-- All scope snapshots and the selected tab are cached in a local JSON file. Reopening or switching to a cached scope does not fetch again; submit/refresh updates the selected scope.
-- Refresh runs `submit` first, then reloads the public profile.
-- Autosubmit status and “Run now” appear in Settings. Settings apply autosubmit changes through `enable` or `disable`; “Run now” uses `autosubmit run --force`.
-- Every command uses `npx --yes tokscale@<configured-version>` with an argument array, without shell interpolation.
-- TokChan stores only username, package version, and an optional absolute `npx` path. Tokscale remains the source of truth for credentials and autosubmit state.
-
-The app intentionally does not enable App Sandbox because Tokscale needs local client-data access and manages its own macOS LaunchAgent.
+TokChan 由 [季悠然](https://blog.mitsuha.space) 创建并维护。欢迎通过 Issue 反馈问题或分享建议。
