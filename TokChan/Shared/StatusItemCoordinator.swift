@@ -61,6 +61,17 @@ struct StatusItemPresentation: Equatable {
             usesVariableLength = false
         }
     }
+
+    func baselineAdjustedTitle(from nativeTitle: NSAttributedString) -> NSAttributedString {
+        guard usesVariableLength, nativeTitle.length > 0 else { return nativeTitle }
+        let adjustedTitle = NSMutableAttributedString(attributedString: nativeTitle)
+        adjustedTitle.addAttribute(
+            .baselineOffset,
+            value: -1,
+            range: NSRange(location: 0, length: adjustedTitle.length)
+        )
+        return adjustedTitle
+    }
 }
 
 @MainActor
@@ -296,6 +307,9 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
             : NSStatusItem.squareLength
         guard let button = statusItem.button else { return }
         button.title = presentation.title
+        if presentation.usesVariableLength {
+            button.attributedTitle = presentation.baselineAdjustedTitle(from: button.attributedTitle)
+        }
         button.imagePosition = presentation.usesVariableLength ? .imageLeading : .imageOnly
         button.setAccessibilityLabel(presentation.accessibilityLabel)
     }

@@ -39,7 +39,8 @@ git diff --check
 
 ## 实施结果（2026-09-07）
 
-- 已实现默认关闭的状态栏文案偏好、`{token}` / `{cost}` 字面模板渲染、全部/日/周/月范围选择和 UserDefaults 向后兼容。
-- 唯一 coordinator 订阅已保存偏好与缓存发布，在 square/variable length 间切换并同步可访问名称；检查阶段修复了 `@Published` 在 `willSet` 发出新值时重读旧 preferences 导致标题滞后的问题。
+- 已实现默认关闭的状态栏文案偏好、`{token}` / `{cost}` 字面模板渲染、全部/日/周/月范围选择和 UserDefaults 向后兼容；状态栏 `{cost}` 固定使用 `$` 前缀，不改变 Dashboard 的本地化货币格式。
+- 唯一 coordinator 订阅已保存偏好与缓存发布，在 square/variable length 间切换并同步可访问名称；有文案时基于 AppKit 原生 attributed title 添加 `-1pt` baseline offset，使文字与图标视觉对齐且不影响 icon-only 模式；检查阶段修复了 `@Published` 在 `willSet` 发出新值时重读旧 preferences 导致标题滞后的问题。
 - 右键菜单已加入安静执行的“立刻推送”“立刻拉取”：前者只 submit，后者只强制完整批次读取，运行中统一禁用，失败进入刷新诊断。
-- 最终验证：42 个聚焦测试与 145 个全量单元测试通过；2 个 UI 测试因 SystemUIServer 不暴露状态项而明确跳过；Universal Release 构建和 Debug Analyze 成功，日志无编译器/分析器警告，`git diff --check` 通过。
+- 原功能最终验证：42 个聚焦测试与 145 个全量单元测试通过；2 个 UI 测试因 SystemUIServer 不暴露状态项而明确跳过；Universal Release 构建和 Debug Analyze 成功，日志无编译器/分析器警告，`git diff --check` 通过。
+- 本次视觉与货币前缀微调验证：39 个相关测试通过，更新 AppKit 属性保留断言后 6 个 presentation 测试复跑通过；Debug 构建与 `git diff --check` 通过。

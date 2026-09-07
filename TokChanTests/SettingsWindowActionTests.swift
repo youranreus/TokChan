@@ -50,10 +50,29 @@ final class StatusItemPresentationTests: XCTestCase {
         XCTAssertEqual(iconOnly.accessibilityLabel, "TokChan")
         XCTAssertFalse(iconOnly.usesVariableLength)
 
-        let titled = StatusItemPresentation(statusTitle: "1K · US$12.50")
-        XCTAssertEqual(titled.title, "1K · US$12.50")
-        XCTAssertEqual(titled.accessibilityLabel, "TokChan，1K · US$12.50")
+        let titled = StatusItemPresentation(statusTitle: "1K · $12.50")
+        XCTAssertEqual(titled.title, "1K · $12.50")
+        XCTAssertEqual(titled.accessibilityLabel, "TokChan，1K · $12.50")
         XCTAssertTrue(titled.usesVariableLength)
+
+        let button = NSButton(title: titled.title, target: nil, action: nil)
+        let nativeTitle = button.attributedTitle
+        let nativeFont = nativeTitle.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+        let nativeColor = nativeTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        let adjustedTitle = titled.baselineAdjustedTitle(from: nativeTitle)
+        XCTAssertEqual(adjustedTitle.string, titled.title)
+        XCTAssertEqual(
+            (adjustedTitle.attribute(.baselineOffset, at: 0, effectiveRange: nil) as? NSNumber)?.doubleValue,
+            -1
+        )
+        XCTAssertEqual(
+            adjustedTitle.attribute(.font, at: 0, effectiveRange: nil) as? NSFont,
+            nativeFont
+        )
+        XCTAssertEqual(
+            adjustedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor,
+            nativeColor
+        )
     }
 
     func testSettingsActionPrefersSwiftUISettingsCommand() {

@@ -42,7 +42,7 @@ final class DashboardViewModelTests: XCTestCase {
         )
     }
 
-    func testStatusTitleRequiresEnabledNonemptyTemplateAndCachedPeriod() throws {
+    func testStatusTitleRequiresEnabledNonemptyTemplateAndVerifiedCompleteAccountCache() throws {
         let snapshot = try completeSnapshot(fetchedAt: referenceDate)
         let disabled = DashboardViewModel(
             api: FakeAPI(recorder: EventRecorder()),
@@ -82,6 +82,60 @@ final class DashboardViewModelTests: XCTestCase {
             cacheStore: InMemoryCache()
         )
         XCTAssertNil(noCache.statusItemTitle)
+
+        let enabledPreferences = UserPreferences(
+            username: "youranreus",
+            tokscaleVersion: "latest",
+            npxPath: "",
+            statusTextEnabled: true
+        )
+        let incompleteSnapshot = DashboardCacheSnapshot(
+            profile: snapshot.profile,
+            autosubmit: snapshot.autosubmit,
+            savedAt: referenceDate,
+            profiles: Array(snapshot.profiles.dropLast()),
+            username: "youranreus",
+            fetchedAt: referenceDate
+        )
+        let incompleteCache = DashboardViewModel(
+            api: FakeAPI(recorder: EventRecorder()),
+            cli: FakeCLI(recorder: EventRecorder()),
+            preferencesStore: InMemoryPreferences(value: enabledPreferences),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: incompleteSnapshot)
+        )
+        XCTAssertNil(incompleteCache.statusItemTitle)
+
+        let unverifiedBatch = DashboardCacheSnapshot(
+            profile: snapshot.profile,
+            autosubmit: snapshot.autosubmit,
+            savedAt: referenceDate,
+            profiles: snapshot.profiles,
+            username: "youranreus",
+            fetchedAt: nil
+        )
+        let unverifiedCache = DashboardViewModel(
+            api: FakeAPI(recorder: EventRecorder()),
+            cli: FakeCLI(recorder: EventRecorder()),
+            preferencesStore: InMemoryPreferences(value: enabledPreferences),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: unverifiedBatch)
+        )
+        XCTAssertNil(unverifiedCache.statusItemTitle)
+
+        let wrongAccount = DashboardViewModel(
+            api: FakeAPI(recorder: EventRecorder()),
+            cli: FakeCLI(recorder: EventRecorder()),
+            preferencesStore: InMemoryPreferences(value: UserPreferences(
+                username: "someone-else",
+                tokscaleVersion: "latest",
+                npxPath: "",
+                statusTextEnabled: true
+            )),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: snapshot)
+        )
+        XCTAssertNil(wrongAccount.statusItemTitle)
     }
 
     func testFailedRefreshPreservesStatusTitleFromOldCompleteBatch() async throws {
@@ -356,8 +410,7 @@ final class DashboardViewModelTests: XCTestCase {
         let profile = try XCTUnwrap(model.profileState.loadedValue)
         XCTAssertEqual(
             model.statusItemTitle,
-            "月度 \(DisplayFormatters.compactNumber(profile.totalTokens)) / "
-                + DisplayFormatters.currency(profile.totalCost)
+            StatusItemTextRenderer.render(template: updated.statusTextTemplate, data: profile)
         )
     }
 

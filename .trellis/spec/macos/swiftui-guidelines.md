@@ -59,10 +59,10 @@ extension DashboardViewModel {
 
 #### 3. Contracts
 
-- Render every literal `{token}` with `DisplayFormatters.compactNumber(totalTokens)` and every `{cost}` with `DisplayFormatters.currency(totalCost)`. Preserve all unknown text and placeholders verbatim; an empty result means icon-only.
+- Render every literal `{token}` with `DisplayFormatters.compactNumber(totalTokens)` and every `{cost}` with a status-item-only USD formatter pinned to `en_US`, so its symbol is `$` rather than locale-dependent `US$`. Preserve Dashboard's existing localized currency formatting, and preserve all unknown template text and placeholders verbatim; an empty result means icon-only.
 - Derive the title only from a complete, same-account all/day/week/month cache. The configured scope selects a cached projection and never starts a request. Missing data hides the title; refresh and failure keep the old title until a complete batch replaces it.
 - Observe saved preferences and cache publication in the one coordinator. `@Published` emits the incoming value from `willSet`, so preference-driven title updates must compute from the value delivered to `sink`, not reread the old stored property.
-- Use `NSStatusItem.variableLength`, `.imageLeading`, and an accessibility label containing the summary when a nonempty title exists. Clear the title, restore `squareLength` / `.imageOnly`, and use `TokChan` as the accessibility label otherwise.
+- Use `NSStatusItem.variableLength`, `.imageLeading`, and an accessibility label containing the summary when a nonempty title exists. Preserve AppKit's native attributed title and apply a `-1` point baseline offset to its full range so text sits slightly lower beside the icon. Clear the title, restore `squareLength` / `.imageOnly`, and use `TokChan` as the accessibility label otherwise.
 - Build push/pull items into every dynamic secondary-click menu. Disable both while any explicit `DashboardOperation` is running.
 - `pushUsageNow()` runs exactly one CLI submit and no profile fetch. `pullStatisticsNow()` forces exactly one complete profile batch and no submit. Success is silent; push failures join diagnostics as `即时推送`, while pull failures use the existing statistics diagnostic.
 
@@ -87,9 +87,9 @@ extension DashboardViewModel {
 
 #### 6. Tests Required
 
-- Renderer: repeated known placeholders, unknown placeholders, plain/empty templates, zero values, and exact existing number/currency formatting.
+- Renderer: repeated known placeholders, unknown placeholders, plain/empty templates, zero values, compact token formatting, exact `$` cost formatting, and proof that Dashboard currency formatting is unchanged.
 - Preferences: round-trip all three keys, missing-key defaults, and invalid-period fallback.
-- Presentation: nil/empty/nonempty title, square versus variable length, image position, and accessibility text.
+- Presentation: nil/empty/nonempty title, square versus variable length, image position, `-1` point baseline offset that preserves native title attributes, and accessibility text.
 - Cache/title flow: complete same-account cache, missing/incomplete/wrong-account cache, incoming saved preferences, stale retention, and complete-batch replacement.
 - Menu/actions: dynamic ordering with and without information, enabled/disabled descriptors, push performs submit with zero fetches, pull performs one batch with zero submits, duplicate operations are rejected, and failures enter diagnostics.
 

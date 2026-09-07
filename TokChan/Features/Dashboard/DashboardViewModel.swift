@@ -106,6 +106,7 @@ final class DashboardViewModel: ObservableObject {
     func statusItemTitle(for preferences: UserPreferences) -> String? {
         let username = preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
         guard preferences.statusTextEnabled,
+              cacheSavedAt != nil,
               cacheIsComplete(for: username),
               let cached = cachedProfiles[preferences.statusTextPeriod],
               cached.data.username.caseInsensitiveCompare(username) == .orderedSame else {
