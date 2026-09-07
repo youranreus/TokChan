@@ -310,3 +310,47 @@
 ### Next Steps
 
 - 发布前可在实体 macOS 13 环境补充运行时视觉验证
+
+
+## Session 11: 调整设置交互与浮窗样式
+
+**Date**: 2026-09-07
+**Task**: 调整设置交互与浮窗样式
+**Branch**: `feat/settings-interaction-popover-style`
+
+### Summary
+
+将常规偏好改为即时持久化，把自动提交配置收敛为独立应用操作，并让系统 NSPopover 统一负责箭头与主体背景；同时修复 LSUIElement 应用显示浮窗前未激活导致点击外部不收起的问题。
+
+### Main Changes
+
+- 常规设置即时写入 UserDefaults，不触发 CLI、提交或统计拉取
+- 自动提交 Tab 独立应用配置并只重读状态，保留 pristine/dirty 草稿同步
+- 调整常规 Section 顺序、模板说明和登录项反馈文案
+- 移除 Dashboard 根不透明背景，让系统 popover 材质贯穿箭头与主体
+- 显示 transient popover 前激活应用，恢复点击外部自动关闭且不引入事件监听
+- 补齐跨账号失效、命令隔离、草稿同步、设置 UI 与 popover 激活测试
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `067f476` | feat(macos): refine settings and popover interactions |
+| `a44072f` | docs(trellis): record settings and popover contracts |
+| `c3a6feb` | chore(task): archive 09-07-settings-interaction-popover-style |
+
+### Testing
+
+- [OK] 157 个单元测试通过
+- [OK] macOS 13 universal Release 构建与 Xcode Analyze 通过
+- [OK] `git diff --check` 与 Trellis 上下文校验通过
+- [OK] 用户本地验收设置交互、浮窗材质及点击外部自动收起
+- [INFO] 3 个状态栏 UI 测试因当前 SystemUIServer 未暴露状态项而明确跳过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 合并前可按需推送分支并创建 PR
