@@ -10,18 +10,19 @@ final class StatusItemPresentationTests: XCTestCase {
         XCTAssertEqual(StatusItemClickAction.action(for: .mouseMoved), .ignore)
     }
 
-    func testDashboardPopoverActionActivatesBeforeShowing() {
+    func testDashboardPopoverActionActivatesShowsAndMakesPopoverKeyInOrder() {
         var events: [String] = []
         let action = DashboardPopoverAction(
             isShown: false,
             activate: { events.append("activate") },
             close: { events.append("close") },
-            show: { events.append("show") }
+            show: { events.append("show") },
+            makeKey: { events.append("makeKey") }
         )
 
         action.perform()
 
-        XCTAssertEqual(events, ["activate", "show"])
+        XCTAssertEqual(events, ["activate", "show", "makeKey"])
     }
 
     func testDashboardPopoverActionClosesWithoutActivating() {
@@ -30,7 +31,8 @@ final class StatusItemPresentationTests: XCTestCase {
             isShown: true,
             activate: { events.append("activate") },
             close: { events.append("close") },
-            show: { events.append("show") }
+            show: { events.append("show") },
+            makeKey: { events.append("makeKey") }
         )
 
         action.perform()

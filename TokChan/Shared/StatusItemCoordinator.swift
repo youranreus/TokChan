@@ -80,17 +80,20 @@ struct DashboardPopoverAction {
     private let activate: () -> Void
     private let close: () -> Void
     private let show: () -> Void
+    private let makeKey: () -> Void
 
     init(
         isShown: Bool,
         activate: @escaping () -> Void,
         close: @escaping () -> Void,
-        show: @escaping () -> Void
+        show: @escaping () -> Void,
+        makeKey: @escaping () -> Void
     ) {
         self.isShown = isShown
         self.activate = activate
         self.close = close
         self.show = show
+        self.makeKey = makeKey
     }
 
     func perform() {
@@ -99,6 +102,7 @@ struct DashboardPopoverAction {
         } else {
             activate()
             show()
+            makeKey()
         }
     }
 }
@@ -224,6 +228,10 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
                 close: { [popover] in popover.performClose(sender) },
                 show: { [popover] in
                     popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+                },
+                makeKey: { [popover] in
+                    // `show` creates the popover window; key it so AppKit owns transient dismissal.
+                    popover.contentViewController?.view.window?.makeKey()
                 }
             ).perform()
         case .showStatusMenu:

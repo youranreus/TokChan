@@ -25,7 +25,7 @@
 ### Status-item and popover ownership
 
 The application delegate must retain exactly one coordinator that owns one `NSStatusItem`, one `.transient` `NSPopover`, and one hosting controller for the 380×680 `DashboardView`. Do not use `MenuBarExtra(.window)`, assign a persistent `statusItem.menu`, or add a global event monitor.
-For the `LSUIElement` app, activate `NSApplication` immediately before showing a previously hidden transient popover. Without this activation, AppKit may not establish outside-click dismissal even though `behavior == .transient`. Closing an already shown popover must not activate the app. Keep the activate/close/show orchestration injectable and test that opening orders `activate → show`; do not replace this with local or global event monitors.
+For the `LSUIElement` app, activate `NSApplication` immediately before showing a previously hidden transient popover, then make the newly created popover window key. Activation alone does not guarantee that the status-item-anchored window becomes key; without both steps, AppKit may not establish outside-click dismissal even though `behavior == .transient`. Closing an already shown popover must not activate the app or change key-window state. Keep the `activate → show → makeKey` / close orchestration injectable and test its exact ordering; do not replace this with local or global event monitors.
 
 Let AppKit's `NSPopover` remain the only root-background owner. `DashboardView` must not paint an opaque full-bounds background or add a second SwiftUI/AppKit material layer; otherwise the content rectangle no longer matches the system-rendered arrow in light and dark appearances. Local card and banner backgrounds remain appropriate.
 
