@@ -54,7 +54,9 @@ protocol TokscaleCLIService {
 - Profile reloads return an explicit updated/failed/superseded outcome to mutation callers; do not infer their success from a shared error cleared by another request. Re-resolve CLI context after suspended identity discovery, since Settings may have changed npx/version.
 - Switching scope is a pure projection from the latest complete batch; it neither submits, fetches one remote period, nor reads/modifies autosubmit. Guard batch requests by generation and account, but do not invalidate a batch merely because selection changed.
 - Status-item presentation uses the configured all/day/week/month projection from the same complete cache. It never initiates a request. Manual status-menu push runs only `submit`; manual pull runs only `fetchDashboardBatch`. Do not route either through the existing combined submit-and-refresh operation.
+- General Settings bindings call `updatePreferences(_:)` with the latest complete preference value. Normalize username, Tokscale version, and npx path edges, but preserve status-template bytes. This operation only saves `UserDefaults` and publishes preferences: it performs zero CLI commands and zero profile/status requests. A real case-insensitive account change invalidates the profile generation and immediately persists a snapshot without the old profiles; version/npx changes invalidate only an in-flight autosubmit-status result and retain the profile batch.
 - Autosubmit status details and run-now live in Settings, with progress/success/failure feedback. Run-now uses persisted CLI settings, not unsaved form drafts.
+- `applyAutosubmit(_:)` resolves the already-persisted CLI context, executes exactly one configure-or-disable command, then reads autosubmit status exactly once. It never saves a General draft, submits usage, fetches profiles, advances statistics `fetchedAt`, or dismisses Settings. If mutation succeeds but status reread fails, report that the settings were applied but status verification failed and retain the previous observed status.
 - `AutosubmitStatus` reads enablement, interval, scheduler, clients, date flags/range, managed executable/version/staleness, last run milliseconds, and last error.
 - Username, Tokscale version, optional `npx` path, and status-item presentation choices belong in `UserDefaults`. A separate versioned Application Support snapshot may contain mapped display data and the last observed autosubmit status; it is stale-readable state, never a configuration source. See `data-persistence.md`.
 - Custom pricing management first resolves the effective path through `pricing list-overrides --json`, then reads and mutates only that `custom-pricing.json`. Credentials, `settings.json`, LaunchAgents, and scheduler state remain out of bounds.
@@ -83,6 +85,10 @@ protocol TokscaleCLIService {
 | CLI non-zero exit | Surface exit code and at most 4,000 characters of stderr/stdout |
 | CLI timeout | Terminate the child and surface `ProcessRunnerError.timedOut` |
 | Invalid status JSON | `invalidStatusJSON`, without changing autosubmit |
+| General username changes account | Hide and remove old-account profiles immediately; issue no request from the preference setter |
+| General version or npx path changes | Reject a late status result from the old context; retain profile cache and `fetchedAt` |
+| Autosubmit mutation fails | Do not read status; preserve the editable draft and show the mutation error |
+| Autosubmit mutation succeeds but status read fails | Preserve old observed status and statistics; report applied-but-unverified feedback |
 | Invalid pricing-list JSON/path | Fail loading; do not guess the default directory |
 | Missing custom-pricing file | Show an addable empty state; create only on explicit save |
 | Malformed custom-pricing JSON/models | Block writes and preserve the original bytes |
@@ -95,6 +101,8 @@ protocol TokscaleCLIService {
 - Bad: requesting `day`, calculating local week boundaries, or showing lifetime cached totals beneath a selected week tab.
 - Good: `npx --yes tokscale@4.15.0 autosubmit enable --interval 120m --client codex --week` is built as individual arguments, then status is re-read.
 - Base: opening the panel concurrently fetches profile data and reads autosubmit status; it performs no submission.
+- Good: editing a status-text template publishes it from the existing complete cache without any command or request; applying autosubmit records `configure,status` or `disable,status` and leaves profile freshness unchanged.
+- Bad: route General edits through autosubmit Apply, refresh profiles after autosubmit configuration, overwrite a dirty autosubmit draft with a late status, or keep another account's cached totals visible.
 - Bad: interpolating `"npx tokscale@\(version) ..."` into a shell, accepting `latest;rm`, reading token files, or writing LaunchAgent/settings JSON from TokChan.
 
 
@@ -116,7 +124,10 @@ The SwiftUI `Settings` scene remains the sole settings-window owner. The AppKit 
 - Custom-pricing file tests use temporary directories and cover missing/malformed files, add/edit/delete, zero versus nil, aliases, unknown/tier field preservation, duplicate IDs, and external-change conflicts.
 - Fixture tests cover legacy excluded-unpriced output, current zero-cost unpriced output, all-unpriced zero summaries, no data, degraded sources, ANSI output, and unknown formats. A fake runner must assert the exact `pricing list-overrides --json` and `submit --dry-run` suffixes and prove no real submit command runs.
 - With fake services, assert panel load performs only one batch `fetch` and one `status`; manual refresh orders `submit` before a forced batch; run-now orders `run` before batch/status reload.
-- UI smoke tests must use `--ui-testing` fixture dependencies and never access the network, `npx`, or `launchd`.
+- Assert General preference updates normalize/persist values with zero configure/disable/status/submit/fetch events; account changes synchronously clear persisted profiles and reject late generations, while version/npx changes preserve profiles and reject late status results.
+- Assert autosubmit Apply records exactly `configure,status` or `disable,status`, preserves profile `fetchedAt`, stops before status on mutation failure, and reports partial success without replacing cached status on status failure.
+- Test autosubmit draft synchronization: late status initializes a pristine draft, never overwrites a dirty draft, and successful confirmation replaces the draft and clears dirty state.
+- UI smoke tests must use `--ui-testing` fixture dependencies and never access the network, `npx`, or `launchd`; verify General/About have no shared Save action and only Autosubmit exposes its scoped Apply action.
 
 ### 7. Wrong vs Correct
 

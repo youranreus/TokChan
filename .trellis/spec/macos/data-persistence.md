@@ -26,7 +26,7 @@ No persistence requirement exists yet. Choose the smallest durable storage that 
 
 ## Scenario: Status-item presentation preferences
 
-Keep `statusTextEnabled`, `statusTextTemplate`, and `statusTextPeriod` in `UserPreferences` through `UserDefaultsPreferencesStore`; they are small user choices, not dashboard cache fields. Missing keys decode as `false`, `{token} · {cost}`, and `.day`; an unknown period raw value also falls back to `.day`. Preserve template bytes as entered, including empty strings and unknown placeholders. Round-trip all keys in tests and assert old stores remain compatible.
+Keep `statusTextEnabled`, `statusTextTemplate`, and `statusTextPeriod` in `UserPreferences` through `UserDefaultsPreferencesStore`; they are small user choices, not dashboard cache fields. Missing keys decode as `false`, `{token} · {cost}`, and `.day`; an unknown period raw value also falls back to `.day`. Preserve template bytes as entered, including empty strings and unknown placeholders. Persist General control changes immediately through `DashboardViewModel.updatePreferences(_:)`; this local update must not submit usage, configure autosubmit, or fetch profile/status data. Round-trip all keys in tests and assert old stores remain compatible.
 
 ## Scenario: Dashboard snapshot cache
 
@@ -68,9 +68,9 @@ The production implementation is `FileDashboardCacheStore`; tests use an in-memo
 - Entries are checked against the current username. Persist the complete map and selected scope after successful batch reads and cached selection changes; restore all available scopes on relaunch. Account changes invalidate the map and request generation before a new account can publish.
 - Hydrate `DashboardViewModel` synchronously from the small snapshot during initialization so its first rendered state can already be `.loaded`.
 - On panel open, show cached values first. A complete batch is fresh for 300 seconds; a missing, expired, or clock-rollback snapshot starts one read-only whole-batch refresh without clearing visible data. Scope switches consume the in-memory batch and never start independent scope requests.
-- Statistics publish only after all remote inputs succeed. A failed or superseded batch preserves the previous map and `fetchedAt`. Explicit submit/run/settings operations force a new whole-batch read after the mutation and cannot reuse a pre-mutation request.
+- Statistics publish only after all remote inputs succeed. A failed or superseded batch preserves the previous map and `fetchedAt`. Explicit submit/run operations force a new whole-batch read after the mutation and cannot reuse a pre-mutation request.
 - The 30-second failure cooldown applies only to automatic triggers. A user-initiated error-state retry is read-only, forces a new whole batch immediately, and never runs submit.
-- Autosubmit status has its own `autosubmitObservedAt` and error path. Status-only saves and selected-scope saves must not advance statistics `fetchedAt`.
+- Autosubmit status has its own `autosubmitObservedAt` and error path. Applying autosubmit configuration rereads only this status and must not advance statistics `fetchedAt`.
 - If the selected username differs from the cached profile username, ignore the cached profile. Autosubmit status remains machine-local and may still be displayed.
 - Use atomic file replacement for writes. A cache write failure must not fail a successful Tokscale operation.
 
