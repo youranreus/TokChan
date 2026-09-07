@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/macos/index.md", "reason": "macOS package quality checklist"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "verify popover layout, accessibility, lifecycle and background contracts"}
+{"file": ".trellis/spec/macos/tokscale-integration.md", "reason": "verify request, account isolation and CLI orchestration contracts"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "verify required state, error and layout coverage"}
+{"file": ".trellis/tasks/09-07-first-use-onboarding/research/onboarding-evidence.md", "reason": "check implementation against observed first-use defects and evidence"}

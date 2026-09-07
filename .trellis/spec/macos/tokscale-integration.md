@@ -147,3 +147,95 @@ process.executableURL = locatedNpxURL
 process.arguments = ["--yes", "tokscale@\(validatedVersion)", "autosubmit", "status", "--json"]
 environment["PATH"] = "\(locatedNpxURL.deletingLastPathComponent().path):\(inheritedPath)"
 ```
+
+## Scenario: First-use onboarding orchestration
+
+### 1. Scope / Trigger
+
+Use this contract when changing the dashboard's first-use username discovery, initial profile verification, zero-usage presentation, or first submit action. The onboarding is a projection of the current account and complete dashboard batch, not a separately persisted lifecycle.
+
+### 2. Signatures
+
+```swift
+enum FirstUseOnboardingState: Equatable {
+    case discoveringIdentity
+    case usernameEntry(message: String?)
+    case verifying(username: String)
+    case firstSubmission(username: String, message: String?)
+    case submitting(username: String)
+    case hidden
+}
+
+@MainActor
+extension DashboardViewModel {
+    func saveAndVerifyUsername(_ username: String) async
+    func editOnboardingUsername()
+    func submitFirstUsage() async
+}
+```
+
+### 3. Contracts
+
+- Do not persist an onboarding-complete flag. Empty username enters username setup; a complete same-account `.all.totalTokens > 0` batch hides onboarding; a complete zero-token batch shows first submission.
+- With no saved username, preserve `whoami` discovery. A successful discovery saves the normalized username before verification; failure exposes manual entry. A Settings username edit that wins while `whoami` is suspended must not be overwritten by the late discovery result or error.
+- Manual username confirmation uses `updatePreferences(_:)` for normalization, persistence, cache isolation, and generation invalidation, then forces exactly one complete profile batch. Blank input starts no service work.
+- On first verification only, typed `TokscaleAPIError.profileNotFound` means no submitted profile and advances to first submission. Other API failures stay recoverable in username setup. Never classify by matching localized error text.
+- First submission performs exactly one `submit` followed by exactly one forced complete batch for the same captured username. If the username changes while submit is suspended, the old operation must not fetch for or mutate the new account.
+- Submission hides onboarding only after a same-account complete batch reports `.all.totalTokens > 0`. Zero Tokens, 404, or delayed server visibility keeps step two visible with retry/edit guidance and never auto-submits again.
+- While onboarding discovery, verification, or submission is active, disable status-menu push and pull actions through the shared operation-busy projection. Keep ordinary loaded-dashboard refresh, stale-cache retention, and diagnostics semantics unchanged.
+- Render onboarding inside the existing 380×680 Dashboard root with native controls and local card backgrounds. AppKit's `NSPopover` remains the sole root-background owner.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Empty saved username, `whoami` succeeds | Save discovered username and verify one complete batch |
+| Empty saved username, `whoami` or CLI context fails | Show manual username entry with recoverable feedback |
+| Manual username is blank | Keep step one; no save, fetch, or submit |
+| First verification returns positive all Tokens | Hide onboarding and show Dashboard |
+| First verification returns zero all Tokens or typed 404 | Show first-submission step |
+| First verification returns transport/server/decode error | Keep username entry and allow retry |
+| First submit fails | Keep step two and surface the submit error |
+| Submit succeeds, then fetch is zero/404/fails | Keep step two with accurate post-submit feedback |
+| Username changes during discovery or submit | New account wins; stale operation does not fetch or publish |
+| Ordinary loaded-account refresh fails | Preserve old batch and normal retry/diagnostic behavior |
+
+### 5. Good / Base / Bad Cases
+
+- Good: an already authenticated first launch records `whoami`, fetches one complete batch, and either opens the Dashboard or shows step two.
+- Base: a username with no public usage receives a zero batch or 404 and can submit once, edit the username, or retry later.
+- Bad: store `hasCompletedOnboarding`, treat nonempty clients as completion, parse `profileNotFound` from text, reuse normal combined-refresh banners inside onboarding, or loop submit until Tokens appear.
+
+### 6. Tests Required
+
+- Assert initial state from empty preferences, positive complete cache, zero complete cache, and configured account without a complete cache.
+- Assert automatic discovery success/failure and the race where Settings changes username while `whoami` is suspended.
+- Assert trimmed manual save, blank rejection, positive/zero/404/error verification, and exactly one complete fetch.
+- Assert first submission orders `submit,fetch`, rejects duplicates, handles submit/fetch errors, remains visible after zero/404, and ignores an account switch during suspended submit.
+- Assert normal statistics retry can transition a verified zero account to step two without changing loaded-account stale-cache semantics.
+- Render both onboarding steps at 380×680 in light and dark appearances and provide stable accessibility identifiers for the username, website, submit, edit, progress, and feedback controls.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```swift
+if loadErrorMessage?.contains("未找到") == true {
+    firstUseOnboardingState = .firstSubmission(username: username, message: nil)
+}
+```
+
+Localized strings are presentation, not a stable error contract, and this can misclassify unrelated failures.
+
+#### Correct
+
+```swift
+switch profileReloadResult {
+case .profileNotFound:
+    firstUseOnboardingState = .firstSubmission(username: username, message: nil)
+case .failed(let message):
+    firstUseOnboardingState = .usernameEntry(message: message)
+default:
+    reconcileOnboardingWithCompleteCache(username: username)
+}
+```

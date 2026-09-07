@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/macos/index.md", "reason": "macOS package pre-development checklist and linked contracts"}
+{"file": ".trellis/spec/macos/state-management.md", "reason": "explicit main-actor loading and onboarding state rules"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "380x680 popover composition, native controls, background and lifecycle contracts"}
+{"file": ".trellis/spec/macos/tokscale-integration.md", "reason": "complete batch, typed API errors, CLI submit and username contracts"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "deterministic fake-service and fixed-layout validation requirements"}
+{"file": ".trellis/tasks/09-07-first-use-onboarding/research/onboarding-evidence.md", "reason": "current behavior and external signup/login evidence"}
