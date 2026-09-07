@@ -181,4 +181,6 @@ TokChan 的数据采集、成本计算和提交能力来自 [Tokscale](https://g
 
 应用中的客户端原始图标取自 Tokscale 仓库，来源提交记录保存在 [`provenance.json`](TokChan/Resources/ClientOriginals/provenance.json)，对应的 MIT 许可证副本见 [`Tokscale-LICENSE.txt`](TokChan/Resources/ClientOriginals/Tokscale-LICENSE.txt)。这份许可证只说明所引用上游资源的授权情况，不代表 TokChan 仓库已经声明了项目许可证。
 
+本项目认可 「[LINUXDO](https://linux.do/)」社区。
+
 TokChan 由 [季悠然](https://blog.mitsuha.space) 创建并维护。欢迎通过 Issue 反馈问题或分享建议。
