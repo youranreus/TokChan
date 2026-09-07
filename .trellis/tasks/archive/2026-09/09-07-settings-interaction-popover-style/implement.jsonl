@@ -1,0 +1,8 @@
+{"file":".trellis/spec/macos/index.md","reason":"TokChan macOS architecture, package shape and dependency baseline."}
+{"file":".trellis/spec/macos/swiftui-guidelines.md","reason":"Native Settings toolbar, unique NSPopover ownership, status-item presentation and accessibility contracts."}
+{"file":".trellis/spec/macos/state-management.md","reason":"MainActor observable state, view-owned draft and derived-state guidance."}
+{"file":".trellis/spec/macos/data-persistence.md","reason":"UserDefaults preference boundary, account-safe complete profile cache and fetchedAt invariants."}
+{"file":".trellis/spec/macos/tokscale-integration.md","reason":"Autosubmit command isolation, saved CLI context and Settings integration contracts."}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"Swift concurrency, error reporting, system control and maintainability expectations."}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"Deterministic view-model, status-item, UI and build verification requirements."}
+{"file":".trellis/tasks/09-07-settings-interaction-popover-style/research/settings-save-and-popover.md","reason":"Task-specific current-flow evidence, Apple popover background guidance, race analysis and affected tests."}
