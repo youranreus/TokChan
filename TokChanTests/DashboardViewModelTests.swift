@@ -372,23 +372,64 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(model.operation, .succeeded("自动提交已完成。"))
     }
 
-    func testSavingSettingsConfiguresBeforeRefreshingTheWholeBatch() async throws {
+    func testUpdatingGeneralPreferencesPersistsNormalizedValuesWithoutExternalWork() async throws {
         let recorder = EventRecorder()
         let preferences = standardPreferences()
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
+        let cache = InMemoryCache(snapshot: snapshot)
         let model = DashboardViewModel(
             api: FakeAPI(recorder: recorder),
             cli: FakeCLI(recorder: recorder),
             preferencesStore: preferences,
             npxLocator: FakeNpxLocator(),
-            cacheStore: InMemoryCache()
+            cacheStore: cache,
+            now: { self.referenceDate }
         )
         let updated = UserPreferences(
+            username: "  youranreus  ",
+            tokscaleVersion: "  4.15.0  ",
+            npxPath: "  /custom/npx  ",
+            statusTextEnabled: true,
+            statusTextTemplate: "月度 {token} / {cost} / {unknown} ",
+            statusTextPeriod: .month
+        )
+
+        model.updatePreferences(updated)
+
+        let normalized = UserPreferences(
             username: "youranreus",
             tokscaleVersion: "4.15.0",
             npxPath: "/custom/npx",
             statusTextEnabled: true,
-            statusTextTemplate: "月度 {token} / {cost}",
+            statusTextTemplate: updated.statusTextTemplate,
             statusTextPeriod: .month
+        )
+        XCTAssertEqual(preferences.value, normalized)
+        XCTAssertEqual(model.preferences, normalized)
+        XCTAssertEqual(model.profileState.loadedValue, snapshot.profile)
+        XCTAssertEqual(model.cacheSavedAt, referenceDate)
+        XCTAssertEqual(cache.snapshot?.fetchedAt, referenceDate)
+        let month = try XCTUnwrap(snapshot.profiles.first { $0.data.period == .month }?.data)
+        XCTAssertEqual(
+            model.statusItemTitle,
+            StatusItemTextRenderer.render(template: updated.statusTextTemplate, data: month)
+        )
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, [])
+    }
+
+    func testApplyingEnabledAutosubmitOnlyConfiguresAndReadsStatus() async throws {
+        let recorder = EventRecorder()
+        let preferences = standardPreferences()
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
+        let cache = InMemoryCache(snapshot: snapshot)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: preferences,
+            npxLocator: FakeNpxLocator(),
+            cacheStore: cache,
+            now: { self.referenceDate.addingTimeInterval(60) }
         )
         let configuration = AutosubmitConfiguration(
             enabled: true,
@@ -400,18 +441,181 @@ final class DashboardViewModelTests: XCTestCase {
             until: ""
         )
 
-        let saved = await model.saveSettings(preferences: updated, autosubmit: configuration)
+        let applied = await model.applyAutosubmit(configuration)
 
-        XCTAssertTrue(saved)
+        XCTAssertTrue(applied)
         let events = await recorder.snapshot()
-        XCTAssertEqual(events.first, "configure")
-        XCTAssertEqual(Set(events.dropFirst()), Set(["fetch", "status"]))
-        XCTAssertEqual(preferences.value, updated)
-        let profile = try XCTUnwrap(model.profileState.loadedValue)
-        XCTAssertEqual(
-            model.statusItemTitle,
-            StatusItemTextRenderer.render(template: updated.statusTextTemplate, data: profile)
+        XCTAssertEqual(events, ["configure", "status"])
+        XCTAssertEqual(model.operation, .succeeded("自动提交设置已应用。"))
+        XCTAssertEqual(model.profileState.loadedValue, snapshot.profile)
+        XCTAssertEqual(model.cacheSavedAt, referenceDate)
+        XCTAssertEqual(cache.snapshot?.fetchedAt, referenceDate)
+        XCTAssertEqual(preferences.value, standardPreferences().value)
+    }
+
+    func testApplyingDisabledAutosubmitOnlyDisablesAndReadsStatus() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(recorder: recorder)
+        let configuration = AutosubmitConfiguration(
+            enabled: false,
+            intervalMinutes: 120,
+            clients: [],
+            filterKind: .all,
+            year: "",
+            since: "",
+            until: ""
         )
+
+        let applied = await model.applyAutosubmit(configuration)
+
+        XCTAssertTrue(applied)
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["disable", "status"])
+    }
+
+    func testEnabledAutosubmitMutationFailureStopsBeforeStatusRead() async {
+        let recorder = EventRecorder()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder, autosubmitMutationError: TestFailure.unavailable),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+        let configuration = AutosubmitConfiguration(
+            enabled: true,
+            intervalMinutes: 120,
+            clients: [],
+            filterKind: .all,
+            year: "",
+            since: "",
+            until: ""
+        )
+
+        let applied = await model.applyAutosubmit(configuration)
+
+        XCTAssertFalse(applied)
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["configure"])
+        guard case .failed = model.operation else {
+            return XCTFail("Expected the mutation failure to remain visible")
+        }
+    }
+
+    func testDisabledAutosubmitMutationFailureStopsBeforeStatusRead() async {
+        let recorder = EventRecorder()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder, autosubmitMutationError: TestFailure.unavailable),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+        let configuration = AutosubmitConfiguration(
+            enabled: false,
+            intervalMinutes: 120,
+            clients: [],
+            filterKind: .all,
+            year: "",
+            since: "",
+            until: ""
+        )
+
+        let applied = await model.applyAutosubmit(configuration)
+
+        XCTAssertFalse(applied)
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["disable"])
+        guard case .failed = model.operation else {
+            return XCTFail("Expected the mutation failure to remain visible")
+        }
+    }
+
+    func testAutosubmitStatusFailureAfterApplyPreservesCachedStatisticsAndReportsPartialSuccess() async throws {
+        let recorder = EventRecorder()
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder, statusError: TestFailure.unavailable),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: snapshot),
+            now: { self.referenceDate.addingTimeInterval(60) }
+        )
+        let oldStatus = model.currentAutosubmitStatus
+        let configuration = AutosubmitConfiguration(
+            enabled: true,
+            intervalMinutes: 120,
+            clients: [],
+            filterKind: .all,
+            year: "",
+            since: "",
+            until: ""
+        )
+
+        let applied = await model.applyAutosubmit(configuration)
+
+        XCTAssertFalse(applied)
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["configure", "status"])
+        XCTAssertEqual(model.currentAutosubmitStatus, oldStatus)
+        XCTAssertEqual(model.cacheSavedAt, referenceDate)
+        guard case let .failed(message) = model.operation else {
+            return XCTFail("Expected the status reread failure to remain visible")
+        }
+        XCTAssertTrue(message.hasPrefix("自动提交设置已应用，但状态读取失败："))
+    }
+
+    func testCLIContextChangeRejectsLateAutosubmitStatusWithoutClearingProfiles() async throws {
+        let cli = ControlledStatusCLI()
+        let recorder = EventRecorder()
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: cli,
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: snapshot),
+            now: { self.referenceDate.addingTimeInterval(299) }
+        )
+        let oldStatus = try XCTUnwrap(model.currentAutosubmitStatus)
+        let load = Task { await model.load() }
+        await cli.waitForStatusRequest()
+
+        model.updatePreferences(UserPreferences(
+            username: "youranreus",
+            tokscaleVersion: "4.15.0",
+            npxPath: "/new/npx"
+        ))
+        await cli.resolveStatus(enabled: false)
+        await load.value
+
+        XCTAssertEqual(model.currentAutosubmitStatus, oldStatus)
+        XCTAssertEqual(model.profileState.loadedValue, snapshot.profile)
+        XCTAssertEqual(model.cacheSavedAt, referenceDate)
+        let events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testCaseOnlyUsernameChangeKeepsSameAccountCache() async throws {
+        let recorder = EventRecorder()
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
+        let model = makeViewModel(
+            recorder: recorder,
+            cache: InMemoryCache(snapshot: snapshot),
+            now: { self.referenceDate }
+        )
+
+        model.updatePreferences(UserPreferences(
+            username: "YOURANREUS",
+            tokscaleVersion: "latest",
+            npxPath: ""
+        ))
+
+        XCTAssertEqual(model.profileState.loadedValue, snapshot.profile)
+        XCTAssertEqual(model.cacheSavedAt, referenceDate)
+        let events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
     }
 
     func testStatusFailureDoesNotBlockSuccessfulStatisticsBatch() async {
@@ -541,33 +745,49 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(model.operation, .succeeded("用量已提交，全部范围已更新。"))
     }
 
-    func testOldAccountBatchCannotOverwriteNewSettingsBatch() async throws {
+    func testUsernameChangeImmediatelyClearsOldCacheAndRejectsLateBatchWithoutRefetching() async throws {
         let api = ControlledBatchAPI()
         let recorder = EventRecorder()
         let preferences = InMemoryPreferences(
             value: UserPreferences(username: "old", tokscaleVersion: "latest", npxPath: "")
         )
-        let model = DashboardViewModel(api: api, cli: FakeCLI(recorder: recorder),
-            preferencesStore: preferences, npxLocator: FakeNpxLocator(), cacheStore: InMemoryCache())
+        let cache = InMemoryCache(snapshot: try completeSnapshot(
+            fetchedAt: referenceDate,
+            username: "old"
+        ))
+        let model = DashboardViewModel(
+            api: api,
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: preferences,
+            npxLocator: FakeNpxLocator(),
+            cacheStore: cache,
+            now: { self.referenceDate.addingTimeInterval(301) }
+        )
+        XCTAssertEqual(model.profileState.loadedValue?.username, "old")
 
         let load = Task { await model.load() }
         await api.waitForRequest(username: "old")
-        let save = Task {
-            await model.saveSettings(
-                preferences: UserPreferences(username: "new", tokscaleVersion: "latest", npxPath: ""),
-                autosubmit: AutosubmitConfiguration(enabled: false, intervalMinutes: 120, clients: [],
-                    filterKind: .all, year: "", since: "", until: "")
-            )
-        }
-        await api.waitForRequest(username: "new")
-        await api.resolve(username: "new")
-        let saved = await save.value
-        XCTAssertTrue(saved)
+        model.updatePreferences(
+            UserPreferences(username: "new", tokscaleVersion: "latest", npxPath: "")
+        )
+
+        XCTAssertNil(model.profileState.loadedValue)
+        XCTAssertNil(model.identityProfile)
+        XCTAssertNil(model.cacheSavedAt)
+        XCTAssertEqual(model.preferences.username, "new")
+        XCTAssertEqual(cache.snapshot?.username, "new")
+        XCTAssertTrue(cache.snapshot?.profiles.isEmpty == true)
+        XCTAssertNil(cache.snapshot?.fetchedAt)
+        var requestCount = await api.requestCount()
+        XCTAssertEqual(requestCount, 1)
+
         await api.resolve(username: "old")
         await load.value
 
-        XCTAssertEqual(model.profileState.loadedValue?.username, "new")
+        XCTAssertNil(model.profileState.loadedValue)
         XCTAssertEqual(model.preferences.username, "new")
+        requestCount = await api.requestCount()
+        XCTAssertEqual(requestCount, 1)
     }
 
     func testCacheWriteFailureDoesNotDiscardSuccessfulMemoryBatch() async {
@@ -719,8 +939,11 @@ final class DashboardViewModelTests: XCTestCase {
         )
     }
 
-    private func completeSnapshot(fetchedAt: Date) throws -> DashboardCacheSnapshot {
-        let batch = try makeBatch(username: "youranreus")
+    private func completeSnapshot(
+        fetchedAt: Date,
+        username: String = "youranreus"
+    ) throws -> DashboardCacheSnapshot {
+        let batch = try makeBatch(username: username)
         let profiles = ProfilePeriod.allCases.compactMap { period in
             batch.profiles[period].map { CachedDashboardProfile(data: $0, savedAt: fetchedAt) }
         }
@@ -729,7 +952,7 @@ final class DashboardViewModelTests: XCTestCase {
             autosubmit: try makeAutosubmitStatus(),
             savedAt: fetchedAt,
             profiles: profiles,
-            username: "youranreus",
+            username: username,
             fetchedAt: fetchedAt,
             autosubmitObservedAt: fetchedAt
         )
@@ -787,11 +1010,18 @@ private final class FakeCLI: TokscaleCLIService {
     let recorder: EventRecorder
     let submitError: Error?
     let statusError: Error?
+    let autosubmitMutationError: Error?
 
-    init(recorder: EventRecorder, submitError: Error? = nil, statusError: Error? = nil) {
+    init(
+        recorder: EventRecorder,
+        submitError: Error? = nil,
+        statusError: Error? = nil,
+        autosubmitMutationError: Error? = nil
+    ) {
         self.recorder = recorder
         self.submitError = submitError
         self.statusError = statusError
+        self.autosubmitMutationError = autosubmitMutationError
     }
 
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
@@ -806,9 +1036,54 @@ private final class FakeCLI: TokscaleCLIService {
     }
     func configureAutosubmit(_ configuration: AutosubmitConfiguration, context: TokscaleCommandContext) async throws {
         await recorder.append("configure")
+        if let autosubmitMutationError { throw autosubmitMutationError }
     }
-    func disableAutosubmit(context: TokscaleCommandContext) async throws { await recorder.append("disable") }
+    func disableAutosubmit(context: TokscaleCommandContext) async throws {
+        await recorder.append("disable")
+        if let autosubmitMutationError { throw autosubmitMutationError }
+    }
     func runAutosubmitNow(context: TokscaleCommandContext) async throws { await recorder.append("run") }
+}
+
+private actor ControlledStatusCLI: TokscaleCLIService {
+    private var statusContinuation: CheckedContinuation<AutosubmitStatus, Error>?
+    private var arrivalContinuation: CheckedContinuation<Void, Never>?
+    private var statusRequested = false
+
+    func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
+    func submit(context: TokscaleCommandContext) async throws {}
+
+    func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus {
+        statusRequested = true
+        arrivalContinuation?.resume()
+        arrivalContinuation = nil
+        return try await withCheckedThrowingContinuation { statusContinuation = $0 }
+    }
+
+    func waitForStatusRequest() async {
+        if statusRequested { return }
+        await withCheckedContinuation { arrivalContinuation = $0 }
+    }
+
+    func resolveStatus(enabled: Bool) {
+        do {
+            let status = try JSONDecoder().decode(
+                AutosubmitStatus.self,
+                from: Data("{\"enabled\":\(enabled)}".utf8)
+            )
+            statusContinuation?.resume(returning: status)
+        } catch {
+            statusContinuation?.resume(throwing: error)
+        }
+        statusContinuation = nil
+    }
+
+    func configureAutosubmit(
+        _ configuration: AutosubmitConfiguration,
+        context: TokscaleCommandContext
+    ) async throws {}
+    func disableAutosubmit(context: TokscaleCommandContext) async throws {}
+    func runAutosubmitNow(context: TokscaleCommandContext) async throws {}
 }
 
 private actor SuspendedPushCLI: TokscaleCLIService {

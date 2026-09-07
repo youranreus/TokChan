@@ -8,11 +8,67 @@ struct AboutCopy {
     static let authorURL = URL(string: "https://blog.mitsuha.space")!
 }
 
+struct AutosubmitSettingsDraft: Equatable {
+    var enabled: Bool
+    var intervalMinutes: Int
+    var clientsText: String
+    var filterKind: AutosubmitFilterKind
+    var year: String
+    var since: String
+    var until: String
+    private(set) var isDirty: Bool
+
+    init(status: AutosubmitStatus?) {
+        let configuration = status.map(AutosubmitConfiguration.init) ?? AutosubmitConfiguration(
+            enabled: false,
+            intervalMinutes: 1_440,
+            clients: [],
+            filterKind: .all,
+            year: "",
+            since: "",
+            until: ""
+        )
+        enabled = configuration.enabled
+        intervalMinutes = configuration.intervalMinutes
+        clientsText = configuration.clients.joined(separator: ", ")
+        filterKind = configuration.filterKind
+        year = configuration.year
+        since = configuration.since
+        until = configuration.until
+        isDirty = false
+    }
+
+    var configuration: AutosubmitConfiguration {
+        AutosubmitConfiguration(
+            enabled: enabled,
+            intervalMinutes: intervalMinutes,
+            clients: clientsText.split(separator: ",").map(String.init),
+            filterKind: filterKind,
+            year: year,
+            since: since,
+            until: until
+        )
+    }
+
+    mutating func edit<Value>(_ keyPath: WritableKeyPath<Self, Value>, to value: Value) {
+        self[keyPath: keyPath] = value
+        isDirty = true
+    }
+
+    mutating func synchronize(with status: AutosubmitStatus) {
+        guard !isDirty else { return }
+        self = Self(status: status)
+    }
+
+    mutating func confirm(with status: AutosubmitStatus) {
+        self = Self(status: status)
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var viewModel: DashboardViewModel
     @ObservedObject var launchAtLoginModel: LaunchAtLoginSettingsModel
     @ObservedObject var customPricingViewModel: CustomPricingViewModel
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
     private enum SettingsTab: Hashable {
@@ -22,20 +78,8 @@ struct SettingsView: View {
         case about
     }
 
-    @State private var username: String
-    @State private var version: String
-    @State private var npxPath: String
-    @State private var statusTextEnabled: Bool
-    @State private var statusTextTemplate: String
-    @State private var statusTextPeriod: ProfilePeriod
     @State private var isNpxOverrideExpanded: Bool
-    @State private var autosubmitEnabled: Bool
-    @State private var intervalMinutes: Int
-    @State private var clientsText: String
-    @State private var filterKind: AutosubmitFilterKind
-    @State private var year: String
-    @State private var since: String
-    @State private var until: String
+    @State private var autosubmitDraft: AutosubmitSettingsDraft
     @State private var selectedTab: SettingsTab = .general
 
     init(
@@ -46,34 +90,12 @@ struct SettingsView: View {
         self.viewModel = viewModel
         self.launchAtLoginModel = launchAtLoginModel
         self.customPricingViewModel = customPricingViewModel
-        let preferences = viewModel.preferences
-        let autosubmit = viewModel.currentAutosubmitStatus.map(AutosubmitConfiguration.init)
-            ?? AutosubmitConfiguration(
-                enabled: false,
-                intervalMinutes: 1_440,
-                clients: [],
-                filterKind: .all,
-                year: "",
-                since: "",
-                until: ""
-            )
-
-        _username = State(initialValue: preferences.username)
-        _version = State(initialValue: preferences.tokscaleVersion)
-        _npxPath = State(initialValue: preferences.npxPath)
-        _statusTextEnabled = State(initialValue: preferences.statusTextEnabled)
-        _statusTextTemplate = State(initialValue: preferences.statusTextTemplate)
-        _statusTextPeriod = State(initialValue: preferences.statusTextPeriod)
         _isNpxOverrideExpanded = State(
-            initialValue: viewModel.npxPathStatus(for: preferences.npxPath).shouldExpandOverride
+            initialValue: viewModel.npxPathStatus(for: viewModel.preferences.npxPath).shouldExpandOverride
         )
-        _autosubmitEnabled = State(initialValue: autosubmit.enabled)
-        _intervalMinutes = State(initialValue: autosubmit.intervalMinutes)
-        _clientsText = State(initialValue: autosubmit.clients.joined(separator: ", "))
-        _filterKind = State(initialValue: autosubmit.filterKind)
-        _year = State(initialValue: autosubmit.year)
-        _since = State(initialValue: autosubmit.since)
-        _until = State(initialValue: autosubmit.until)
+        _autosubmitDraft = State(
+            initialValue: AutosubmitSettingsDraft(status: viewModel.currentAutosubmitStatus)
+        )
     }
 
     var body: some View {
@@ -86,9 +108,7 @@ struct SettingsView: View {
             }
             .tag(SettingsTab.general)
 
-            settingsPage {
-                autosubmitSettings
-            }
+            autosubmitPage
             .tabItem {
                 Label("自动提交", systemImage: "arrow.clockwise.circle")
             }
@@ -122,29 +142,40 @@ struct SettingsView: View {
                 launchAtLoginModel.refresh()
             }
         }
+        .onChange(of: viewModel.currentAutosubmitStatus) { status in
+            if let status {
+                autosubmitDraft.synchronize(with: status)
+            }
+        }
     }
 
     private func settingsPage<Content: View>(
         @ViewBuilder content: () -> Content
     ) -> some View {
+        content()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var autosubmitPage: some View {
         VStack(spacing: 0) {
-            content()
+            autosubmitSettings
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .accessibilityIdentifier("settings-autosubmit-page")
 
             HStack {
                 operationFeedback
                 Spacer()
-                Button("保存") {
+                Button("应用自动提交设置") {
                     Task {
-                        let saved = await viewModel.saveSettings(
-                            preferences: enteredPreferences,
-                            autosubmit: enteredAutosubmit
-                        )
-                        if saved { dismiss() }
+                        let applied = await viewModel.applyAutosubmit(autosubmitDraft.configuration)
+                        if applied, let status = viewModel.currentAutosubmitStatus {
+                            autosubmitDraft.confirm(with: status)
+                        }
                     }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(viewModel.operation.isRunning)
+                .accessibilityIdentifier("apply-autosubmit-settings")
             }
             .padding()
             .background(Color.secondary.opacity(0.06))
@@ -154,11 +185,14 @@ struct SettingsView: View {
     @ViewBuilder
     private var operationFeedback: some View {
         switch viewModel.operation {
-        case .idle: EmptyView()
-        case .submitting, .pushing, .pulling, .runningAutosubmit, .savingSettings:
+        case .idle:
+            EmptyView()
+        case .applyingAutosubmit:
             ProgressView().controlSize(.small)
-            Text(viewModel.operation == .savingSettings ? "正在保存…" : "正在运行…")
-                .font(.caption)
+            Text("正在应用自动提交设置…").font(.caption)
+        case .submitting, .pushing, .pulling, .runningAutosubmit:
+            ProgressView().controlSize(.small)
+            Text("正在运行…").font(.caption)
         case let .failed(message):
             Text(message).font(.caption).foregroundStyle(.red).lineLimit(2).help(message)
         case let .succeeded(message):
@@ -169,11 +203,35 @@ struct SettingsView: View {
 
     private var generalSettings: some View {
         Form {
-            Section("资料与命令行") {
-                TextField("Tokscale 用户名", text: $username)
-                TextField("Tokscale 版本", text: $version)
+            Section("基本配置") {
+                TextField("Tokscale 用户名", text: preferenceBinding(\UserPreferences.username))
+                TextField("Tokscale 版本", text: preferenceBinding(\UserPreferences.tokscaleVersion))
                     .help("填写 latest 或 4.15.0 这样的完整版本号")
             }
+            .disabled(viewModel.operation.isRunning)
+
+            Section("状态栏文案") {
+                Toggle("显示用量摘要", isOn: preferenceBinding(\UserPreferences.statusTextEnabled))
+                    .accessibilityIdentifier("status-text-enabled")
+
+                TextField("文案模板", text: preferenceBinding(\UserPreferences.statusTextTemplate))
+                    .disabled(!viewModel.preferences.statusTextEnabled)
+                    .accessibilityIdentifier("status-text-template")
+
+                Picker("统计范围", selection: preferenceBinding(\UserPreferences.statusTextPeriod)) {
+                    ForEach(ProfilePeriod.allCases) { period in
+                        Text(period.title).tag(period)
+                    }
+                }
+                .disabled(!viewModel.preferences.statusTextEnabled)
+                .accessibilityIdentifier("status-text-period")
+
+                Text("支持的模板变量：{token}、{cost}")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            launchAtLoginSettings
 
             Section("npx") {
                 npxStatusView(npxPathStatus)
@@ -187,31 +245,10 @@ struct SettingsView: View {
                     npxOverrideControls
                 }
             }
-
-            Section("状态栏文案") {
-                Toggle("显示用量摘要", isOn: $statusTextEnabled)
-                    .accessibilityIdentifier("status-text-enabled")
-
-                TextField("文案模板", text: $statusTextTemplate)
-                    .disabled(!statusTextEnabled)
-                    .accessibilityIdentifier("status-text-template")
-
-                Picker("统计范围", selection: $statusTextPeriod) {
-                    ForEach(ProfilePeriod.allCases) { period in
-                        Text(period.title).tag(period)
-                    }
-                }
-                .disabled(!statusTextEnabled)
-                .accessibilityIdentifier("status-text-period")
-
-                Text("支持 {token} 与 {cost}；其他内容会原样显示。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            launchAtLoginSettings
+            .disabled(viewModel.operation.isRunning)
         }
         .formStyle(.grouped)
+        .accessibilityIdentifier("settings-general-page")
     }
 
     private var launchAtLoginSettings: some View {
@@ -252,14 +289,8 @@ struct SettingsView: View {
     @ViewBuilder
     private var launchAtLoginStatus: some View {
         switch launchAtLoginModel.status {
-        case .enabled:
-            Label("已启用，TokChan 将在登录后自动启动。", systemImage: "checkmark.circle.fill")
-                .font(.caption)
-                .foregroundStyle(.green)
-        case .notRegistered:
-            Text("未启用。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        case .enabled, .notRegistered, .notFound:
+            EmptyView()
         case .requiresApproval:
             VStack(alignment: .leading, spacing: 8) {
                 Label(
@@ -274,10 +305,6 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("open-login-items-settings")
             }
-        case .notFound:
-            Text("系统尚未建立 TokChan 登录项记录。打开开关可尝试添加。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -309,8 +336,11 @@ struct SettingsView: View {
     private var npxOverrideControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                TextField("自定义 npx 路径", text: $npxPath)
-                    .accessibilityIdentifier("npx-override-path")
+                TextField(
+                    "自定义 npx 路径",
+                    text: preferenceBinding(\UserPreferences.npxPath)
+                )
+                .accessibilityIdentifier("npx-override-path")
                 Button("选择…") { chooseNpx() }
             }
 
@@ -319,7 +349,7 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                if !npxPath.isEmpty {
+                if !viewModel.preferences.npxPath.isEmpty {
                     Button("清除覆盖") { clearNpxOverride() }
                         .accessibilityIdentifier("npx-clear-override")
                 }
@@ -328,7 +358,7 @@ struct SettingsView: View {
     }
 
     private var npxPathStatus: NpxPathStatus {
-        viewModel.npxPathStatus(for: npxPath)
+        viewModel.npxPathStatus(for: viewModel.preferences.npxPath)
     }
 
     private func npxStatusTitle(for status: NpxPathStatus) -> String {
@@ -386,26 +416,36 @@ struct SettingsView: View {
                 }
             }
             Section("自动提交") {
-                Toggle("启用", isOn: $autosubmitEnabled)
+                Toggle("启用", isOn: autosubmitBinding(\AutosubmitSettingsDraft.enabled))
 
                 HStack {
                     Text("间隔")
                     Spacer()
-                    TextField("分钟", value: $intervalMinutes, format: .number)
-                        .frame(width: 72)
+                    TextField(
+                        "分钟",
+                        value: autosubmitBinding(\AutosubmitSettingsDraft.intervalMinutes),
+                        format: .number
+                    )
+                    .frame(width: 72)
                     Text("分钟").foregroundStyle(.secondary)
                 }
-                .disabled(!autosubmitEnabled)
+                .disabled(!autosubmitDraft.enabled)
 
-                TextField("客户端（逗号分隔，留空表示全部）", text: $clientsText)
-                    .disabled(!autosubmitEnabled)
+                TextField(
+                    "客户端（逗号分隔，留空表示全部）",
+                    text: autosubmitBinding(\AutosubmitSettingsDraft.clientsText)
+                )
+                .disabled(!autosubmitDraft.enabled)
 
-                Picker("提交范围", selection: $filterKind) {
+                Picker(
+                    "提交范围",
+                    selection: autosubmitBinding(\AutosubmitSettingsDraft.filterKind)
+                ) {
                     ForEach(AutosubmitFilterKind.allCases) { kind in
                         Text(kind.title).tag(kind)
                     }
                 }
-                .disabled(!autosubmitEnabled)
+                .disabled(!autosubmitDraft.enabled)
 
                 filterFields
             }
@@ -441,6 +481,7 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
+        .accessibilityIdentifier("settings-about-page")
     }
 
     private var appVersion: String {
@@ -449,46 +490,56 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var filterFields: some View {
-        switch filterKind {
+        switch autosubmitDraft.filterKind {
         case .year:
-            TextField("年份（YYYY）", text: $year)
-                .disabled(!autosubmitEnabled)
+            TextField(
+                "年份（YYYY）",
+                text: autosubmitBinding(\AutosubmitSettingsDraft.year)
+            )
+            .disabled(!autosubmitDraft.enabled)
         case .range:
             HStack {
-                TextField("开始日期（YYYY-MM-DD）", text: $since)
-                TextField("结束日期（YYYY-MM-DD）", text: $until)
+                TextField(
+                    "开始日期（YYYY-MM-DD）",
+                    text: autosubmitBinding(\AutosubmitSettingsDraft.since)
+                )
+                TextField(
+                    "结束日期（YYYY-MM-DD）",
+                    text: autosubmitBinding(\AutosubmitSettingsDraft.until)
+                )
             }
-            .disabled(!autosubmitEnabled)
+            .disabled(!autosubmitDraft.enabled)
         default:
             EmptyView()
         }
     }
 
-    private var enteredPreferences: UserPreferences {
-        UserPreferences(
-            username: username,
-            tokscaleVersion: version,
-            npxPath: npxPath,
-            statusTextEnabled: statusTextEnabled,
-            statusTextTemplate: statusTextTemplate,
-            statusTextPeriod: statusTextPeriod
+    private func preferenceBinding<Value>(
+        _ keyPath: WritableKeyPath<UserPreferences, Value>
+    ) -> Binding<Value> {
+        Binding(
+            get: { viewModel.preferences[keyPath: keyPath] },
+            set: { value in
+                var updated = viewModel.preferences
+                updated[keyPath: keyPath] = value
+                viewModel.updatePreferences(updated)
+            }
         )
     }
 
-    private var enteredAutosubmit: AutosubmitConfiguration {
-        AutosubmitConfiguration(
-            enabled: autosubmitEnabled,
-            intervalMinutes: intervalMinutes,
-            clients: clientsText.split(separator: ",").map(String.init),
-            filterKind: filterKind,
-            year: year,
-            since: since,
-            until: until
+    private func autosubmitBinding<Value>(
+        _ keyPath: WritableKeyPath<AutosubmitSettingsDraft, Value>
+    ) -> Binding<Value> {
+        Binding(
+            get: { autosubmitDraft[keyPath: keyPath] },
+            set: { autosubmitDraft.edit(keyPath, to: $0) }
         )
     }
 
     private func clearNpxOverride() {
-        npxPath = ""
+        var updated = viewModel.preferences
+        updated.npxPath = ""
+        viewModel.updatePreferences(updated)
         if !viewModel.npxPathStatus(for: "").shouldExpandOverride {
             isNpxOverrideExpanded = false
         }
@@ -502,7 +553,9 @@ struct SettingsView: View {
         panel.allowsMultipleSelection = false
         panel.showsHiddenFiles = true
         if panel.runModal() == .OK, let url = panel.url {
-            npxPath = url.path
+            var updated = viewModel.preferences
+            updated.npxPath = url.path
+            viewModel.updatePreferences(updated)
         }
     }
 }

@@ -25,6 +25,9 @@
 ### Status-item and popover ownership
 
 The application delegate must retain exactly one coordinator that owns one `NSStatusItem`, one `.transient` `NSPopover`, and one hosting controller for the 380×680 `DashboardView`. Do not use `MenuBarExtra(.window)`, assign a persistent `statusItem.menu`, or add a global event monitor.
+For the `LSUIElement` app, activate `NSApplication` immediately before showing a previously hidden transient popover. Without this activation, AppKit may not establish outside-click dismissal even though `behavior == .transient`. Closing an already shown popover must not activate the app. Keep the activate/close/show orchestration injectable and test that opening orders `activate → show`; do not replace this with local or global event monitors.
+
+Let AppKit's `NSPopover` remain the only root-background owner. `DashboardView` must not paint an opaque full-bounds background or add a second SwiftUI/AppKit material layer; otherwise the content rectangle no longer matches the system-rendered arrow in light and dark appearances. Local card and banner backgrounds remain appropriate.
 
 Route status-button mouse-up events explicitly: left-click toggles the existing popover; right-click closes it first, builds an `NSMenu` from current model state, temporarily assigns it to `statusItem.menu`, and calls the status button's `performClick`. Clear the assignment when menu tracking ends so left-click remains the popover action. Do not use `popUpContextMenu` or coordinate-positioned `NSMenu.popUp`: the required surface is a native status-item menu, anchored and highlighted by AppKit. The status menu owns diagnostics, Settings, and Quit, and is rebuilt on every secondary click so freshness and diagnostics are not startup snapshots.
 
@@ -132,6 +135,8 @@ Settings {
 ```
 
 Do not simulate this navigation with an in-content `HStack`, buttons, segmented controls, rounded rectangles, or custom material. Use AppKit `NSToolbar` bridging only if the native SwiftUI `Settings` + `TabView` behavior cannot meet a concrete requirement.
+
+Ordinary `UserDefaults` preferences persist from control bindings immediately. Do not put a shared Save footer across Settings tabs. Operations with CLI side effects own a clearly scoped action in their tab; TokChan's autosubmit page uses “应用自动提交设置”, while General and About have no submit action. A view-owned autosubmit draft accepts a later status read only while pristine and is reset from confirmed status after a successful apply.
 
 ### Opening the settings scene
 

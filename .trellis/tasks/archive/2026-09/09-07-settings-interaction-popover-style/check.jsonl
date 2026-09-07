@@ -1,0 +1,8 @@
+{"file":".trellis/spec/macos/index.md","reason":"Verify package architecture and dependency baseline remain intact."}
+{"file":".trellis/spec/macos/swiftui-guidelines.md","reason":"Check native Settings semantics, unique NSPopover background ownership, presentation and accessibility."}
+{"file":".trellis/spec/macos/state-management.md","reason":"Check immediate preferences and autosubmit draft synchronization avoid duplicated or stale state."}
+{"file":".trellis/spec/macos/data-persistence.md","reason":"Check account invalidation, complete cache persistence and statistics freshness invariants."}
+{"file":".trellis/spec/macos/tokscale-integration.md","reason":"Check General zero-side-effect updates and autosubmit scoped apply command isolation."}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"Review Swift quality, concurrency, error, accessibility and maintainability."}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"Verify deterministic unit/UI coverage and final validation commands."}
+{"file":".trellis/tasks/09-07-settings-interaction-popover-style/research/settings-save-and-popover.md","reason":"Compare code with task-specific evidence, recommended seams, races and popover material constraints."}
