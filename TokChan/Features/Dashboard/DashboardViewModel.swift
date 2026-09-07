@@ -27,13 +27,13 @@ enum DashboardOperation: Equatable {
     case pushing
     case pulling
     case runningAutosubmit
-    case savingSettings
+    case applyingAutosubmit
     case succeeded(String)
     case failed(String)
 
     var isRunning: Bool {
         switch self {
-        case .submitting, .pushing, .pulling, .runningAutosubmit, .savingSettings: return true
+        case .submitting, .pushing, .pulling, .runningAutosubmit, .applyingAutosubmit: return true
         default: return false
         }
     }
@@ -350,50 +350,55 @@ final class DashboardViewModel: ObservableObject {
         } catch { completeOperation(.failed(Self.message(for: error))) }
     }
 
-    func saveSettings(
-        preferences newPreferences: UserPreferences,
-        autosubmit configuration: AutosubmitConfiguration
-    ) async -> Bool {
+    func updatePreferences(_ newPreferences: UserPreferences) {
+        let normalized = Self.normalized(newPreferences)
+        guard normalized != preferences else { return }
+
+        let previousUsername = preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let accountChanged = previousUsername.caseInsensitiveCompare(normalized.username) != .orderedSame
+        let cliContextChanged = preferences.tokscaleVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+            != normalized.tokscaleVersion
+            || preferences.npxPath.trimmingCharacters(in: .whitespacesAndNewlines) != normalized.npxPath
+
+        if accountChanged {
+            invalidateProfileRefresh()
+            cachedProfiles.removeAll()
+            profileState = .idle
+            identityProfile = nil
+            cacheSavedAt = nil
+            lastAutomaticAttempt = nil
+            loadErrorMessage = nil
+        }
+        if cliContextChanged {
+            statusRequestID = UUID()
+        }
+
+        preferences = normalized
+        preferencesStore.save(normalized)
+        if accountChanged {
+            persistCurrentSnapshot()
+        }
+    }
+
+    func applyAutosubmit(_ configuration: AutosubmitConfiguration) async -> Bool {
         guard !operation.isRunning else { return false }
-        beginOperation(.savingSettings)
+        beginOperation(.applyingAutosubmit)
         do {
-            let normalized = UserPreferences(
-                username: newPreferences.username.trimmingCharacters(in: .whitespacesAndNewlines),
-                tokscaleVersion: newPreferences.tokscaleVersion.trimmingCharacters(in: .whitespacesAndNewlines),
-                npxPath: newPreferences.npxPath.trimmingCharacters(in: .whitespacesAndNewlines),
-                statusTextEnabled: newPreferences.statusTextEnabled,
-                statusTextTemplate: newPreferences.statusTextTemplate,
-                statusTextPeriod: newPreferences.statusTextPeriod
-            )
-            let context = try commandContext(for: normalized)
-            guard !normalized.username.isEmpty else { throw TokscaleAPIError.invalidUsername }
+            let context = try commandContext(for: preferences)
+            guard !preferences.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw TokscaleAPIError.invalidUsername
+            }
             if configuration.enabled {
                 try await cli.configureAutosubmit(configuration, context: context)
             } else {
                 try await cli.disableAutosubmit(context: context)
             }
 
-            invalidateProfileRefresh()
-            statusRequestID = UUID()
-            let accountChanged = !matchesUsername(normalized.username)
-            if accountChanged {
-                cachedProfiles.removeAll()
-                profileState = .loading
-                identityProfile = nil
-                cacheSavedAt = nil
-                lastAutomaticAttempt = nil
-            }
-            preferences = normalized
-            preferencesStore.save(normalized)
-
-            async let profiles = reloadProfiles(force: true, automatic: false)
-            async let status = reloadAutosubmit(context: context)
-            let (profileResult, statusError) = await (profiles, status)
-            if let error = profileResult.errorMessage ?? statusError {
-                completeOperation(.failed(error))
+            if let statusError = await reloadAutosubmit(context: context) {
+                completeOperation(.failed("自动提交设置已应用，但状态读取失败：\(statusError)"))
                 return false
             }
-            completeOperation(.succeeded("设置已保存。"))
+            completeOperation(.succeeded("自动提交设置已应用。"))
             return true
         } catch {
             completeOperation(.failed(Self.message(for: error)))
@@ -638,6 +643,17 @@ final class DashboardViewModel: ObservableObject {
         } catch {
             cacheWriteErrorMessage = Self.message(for: error)
         }
+    }
+
+    private static func normalized(_ preferences: UserPreferences) -> UserPreferences {
+        UserPreferences(
+            username: preferences.username.trimmingCharacters(in: .whitespacesAndNewlines),
+            tokscaleVersion: preferences.tokscaleVersion.trimmingCharacters(in: .whitespacesAndNewlines),
+            npxPath: preferences.npxPath.trimmingCharacters(in: .whitespacesAndNewlines),
+            statusTextEnabled: preferences.statusTextEnabled,
+            statusTextTemplate: preferences.statusTextTemplate,
+            statusTextPeriod: preferences.statusTextPeriod
+        )
     }
 
     private static func message(for error: Error) -> String {

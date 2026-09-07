@@ -21,10 +21,7 @@ final class DiscoveryRaceTests: XCTestCase {
         await cli.waitForDiscovery()
 
         let updated = UserPreferences(username: "youranreus", tokscaleVersion: "4.15.0", npxPath: "/new/npx")
-        let saved = await model.saveSettings(preferences: updated, autosubmit: AutosubmitConfiguration(
-            enabled: false, intervalMinutes: 120, clients: [], filterKind: .all,
-            year: "", since: "", until: ""))
-        XCTAssertTrue(saved)
+        model.updatePreferences(updated)
 
         await cli.finishDiscovery(fails: discoveryFails)
         await initialLoad.value

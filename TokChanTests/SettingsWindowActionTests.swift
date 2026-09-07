@@ -10,6 +10,34 @@ final class StatusItemPresentationTests: XCTestCase {
         XCTAssertEqual(StatusItemClickAction.action(for: .mouseMoved), .ignore)
     }
 
+    func testDashboardPopoverActionActivatesBeforeShowing() {
+        var events: [String] = []
+        let action = DashboardPopoverAction(
+            isShown: false,
+            activate: { events.append("activate") },
+            close: { events.append("close") },
+            show: { events.append("show") }
+        )
+
+        action.perform()
+
+        XCTAssertEqual(events, ["activate", "show"])
+    }
+
+    func testDashboardPopoverActionClosesWithoutActivating() {
+        var events: [String] = []
+        let action = DashboardPopoverAction(
+            isShown: true,
+            activate: { events.append("activate") },
+            close: { events.append("close") },
+            show: { events.append("show") }
+        )
+
+        action.perform()
+
+        XCTAssertEqual(events, ["close"])
+    }
+
     func testMenuDescriptorsAreDynamicAndOrdered() {
         XCTAssertEqual(
             StatusMenuBuilder.descriptors(

@@ -75,6 +75,35 @@ struct StatusItemPresentation: Equatable {
 }
 
 @MainActor
+struct DashboardPopoverAction {
+    let isShown: Bool
+    private let activate: () -> Void
+    private let close: () -> Void
+    private let show: () -> Void
+
+    init(
+        isShown: Bool,
+        activate: @escaping () -> Void,
+        close: @escaping () -> Void,
+        show: @escaping () -> Void
+    ) {
+        self.isShown = isShown
+        self.activate = activate
+        self.close = close
+        self.show = show
+    }
+
+    func perform() {
+        if isShown {
+            close()
+        } else {
+            activate()
+            show()
+        }
+    }
+}
+
+@MainActor
 struct SettingsWindowAction {
     private let activate: () -> Void
     private let invokeSettingsCommand: () -> Bool
@@ -189,11 +218,14 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
         guard let event = NSApplication.shared.currentEvent else { return }
         switch StatusItemClickAction.action(for: event.type) {
         case .toggleDashboard:
-            if popover.isShown {
-                popover.performClose(sender)
-            } else {
-                popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
-            }
+            DashboardPopoverAction(
+                isShown: popover.isShown,
+                activate: { NSApplication.shared.activate(ignoringOtherApps: true) },
+                close: { [popover] in popover.performClose(sender) },
+                show: { [popover] in
+                    popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+                }
+            ).perform()
         case .showStatusMenu:
             if popover.isShown { popover.performClose(sender) }
             presentStatusMenu(from: sender)

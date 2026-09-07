@@ -48,7 +48,6 @@ struct DashboardView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(width: 380, height: 680)
-        .background(.background)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dashboard-panel")
         #if DEBUG
@@ -124,7 +123,7 @@ struct DashboardView: View {
         switch viewModel.dashboardOperation {
         case .idle:
             EmptyView()
-        case .submitting, .pushing, .pulling, .runningAutosubmit, .savingSettings:
+        case .submitting, .pushing, .pulling, .runningAutosubmit, .applyingAutosubmit:
             EmptyView()
         case let .succeeded(message):
             StatusBanner(text: message, color: .green, showsProgress: false)
