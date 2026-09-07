@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "Check that the fix preserves the native transient NSPopover and avoids event monitors."}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "Check regression coverage and required macOS validation."}

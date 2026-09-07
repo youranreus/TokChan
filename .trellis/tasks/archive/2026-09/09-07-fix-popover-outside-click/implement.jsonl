@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "Implement the native LSUIElement status-item popover activation, transient dismissal, ownership, and lifecycle contracts."}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "Add deterministic status-item routing tests while retaining manual real-popover validation."}
