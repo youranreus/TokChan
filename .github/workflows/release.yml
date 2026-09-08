@@ -243,7 +243,7 @@ jobs:
           cp "$ZIP" "$feed_dir/"
           prior_feed="$credential_dir/prior-appcast.xml"
           set +e
-          http_status=$(curl --fail --silent --show-error --connect-timeout 15 --max-time 60 \
+          http_status=$(curl --silent --show-error --connect-timeout 15 --max-time 60 \
             --output "$prior_feed" --write-out '%{http_code}' \
             https://youranreus.github.io/TokChan/appcast.xml)
           curl_status=$?
@@ -276,7 +276,7 @@ jobs:
                 --output "$prior_notes/$note_file" "$note_url"
             done < "$note_manifest"
             cp "$prior_feed" "$feed_dir/appcast.xml"
-          elif [[ $curl_status -eq 22 && "$http_status" == 404 ]]; then
+          elif [[ $curl_status -eq 0 && "$http_status" == 404 ]]; then
             rm -f "$prior_feed"
           else
             echo "Could not safely fetch prior appcast (curl=$curl_status HTTP=$http_status)" >&2

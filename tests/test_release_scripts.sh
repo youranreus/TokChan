@@ -825,10 +825,12 @@ cat > "$appcast_mock_bin/curl" <<'MOCK'
 set -euo pipefail
 output=''
 write_out=false
+fail_on_http=false
 while (($#)); do
   case "$1" in
     --output) output=$2; shift 2 ;;
     --write-out) write_out=true; shift 2 ;;
+    --fail) fail_on_http=true; shift ;;
     *) shift ;;
   esac
 done
@@ -837,7 +839,7 @@ if ! $write_out; then
   exit 0
 fi
 case "${MOCK_FEED_FETCH:-404}" in
-  404) printf 404; exit 22 ;;
+  404) printf 404; $fail_on_http && exit 56 || exit 0 ;;
   transient) printf 000; exit 7 ;;
   200) cp "${MOCK_PRIOR_FEED:?}" "$output"; printf 200 ;;
   *) exit 64 ;;
