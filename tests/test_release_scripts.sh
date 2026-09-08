@@ -690,6 +690,8 @@ grep -F 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1' \
   "$root/.github/workflows/release.yml" >/dev/null
 ! grep -F '/releases/tags/' "$root/.github/workflows/release.yml" >/dev/null
 pass "release workflow uses Node 24 checkout and avoids the published-only Tag endpoint"
+python3 "$root/tests/test_workflow_action_pins.py" >/dev/null
+pass "release workflow uses the reviewed offline action-pin allowlist"
 grep -F 'scripts/ci-build-release.sh' \
   "$root/.github/workflows/release.yml" >/dev/null
 grep -F 'This app is Developer ID signed and Apple-notarized.' \
