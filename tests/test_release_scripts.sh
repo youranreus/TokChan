@@ -235,76 +235,91 @@ record() {
   [[ -z "${MOCK_CODESIGN_LOG:-}" ]] || printf '%s\n' "$1" >> "$MOCK_CODESIGN_LOG"
 }
 
-if [[ "${MOCK_FORMAL:-}" == 1 ]]; then
-  app=${!#}
-  [[ -z "${MOCK_TRUST_LOG:-}" ]] || echo "codesign $*" >> "$MOCK_TRUST_LOG"
-  if [[ "$1" == --force ]]; then
+identifier_for() {
+  case "$1" in
+    */Versions/B/Autoupdate) echo Autoupdate-555549442a006fc962db330cbcadfaa40625e4c6 ;;
+    */Versions/B/Updater.app) echo org.sparkle-project.Sparkle.Updater ;;
+    */Versions/B/XPCServices/Downloader.xpc) echo org.sparkle-project.DownloaderService ;;
+    */Versions/B/XPCServices/Installer.xpc) echo org.sparkle-project.InstallerLauncher ;;
+    *.framework) echo org.sparkle-project.Sparkle ;;
+    *) echo com.youranreus.TokChan ;;
+  esac
+}
+
+if [[ "$1" == -d && "$2" == --entitlements && "$3" == :- ]]; then
+  cat <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>com.apple.application-identifier</key><string>org.sparkle-project.Sparkle.Autoupdate</string></dict></plist>
+PLIST
+  exit 0
+fi
+
+artifact=${!#}
+[[ -z "${MOCK_TRUST_LOG:-}" ]] || echo "codesign $*" >> "$MOCK_TRUST_LOG"
+if [[ "$1" == --force ]]; then
+  [[ " $* " != *" --deep "* ]]
+  [[ " $* " == *" --options runtime "* || "$artifact" == *.dmg ]]
+  if [[ "${MOCK_FORMAL:-}" == 1 ]]; then
     [[ " $* " == *" --timestamp "* && " $* " == *" --keychain "* ]]
-    [[ " $* " != *" --deep "* ]]
-    if [[ "$app" == *.app ]]; then
-      [[ " $* " == *" --options runtime "* ]]
-      mkdir -p "$app/Contents/_CodeSignature"
-      echo signed > "$app/Contents/_CodeSignature/CodeResources"
+    [[ "${MOCK_FORMAL_SIGN_FAILURE:-}" != 1 ]] || exit 1
+  else
+    [[ " $* " == *" --sign - "* ]]
+    [[ "${MOCK_CODESIGN_SIGN_FAILURE:-}" != 1 ]] || exit 1
+  fi
+  record "$(printf 'sign-code\t%s' "$artifact")"
+  if [[ "$artifact" == */TokChan.app ]]; then
+    mkdir -p "$artifact/Contents/_CodeSignature"
+    printf signed > "$artifact/Contents/_CodeSignature/CodeResources"
+  fi
+  exit 0
+fi
+
+if [[ "$1" == --verify ]]; then
+  record "$(printf 'verify\t%s' "$artifact")"
+  if [[ "$artifact" == */TokChan.app ]]; then
+    [[ -f "$artifact/Contents/_CodeSignature/CodeResources" ]] || exit 1
+    if [[ "$artifact" == */verification-mount/TokChan.app ]]; then
+      [[ "${MOCK_CODESIGN_POST_VERIFY_FAILURE:-}" != 1 ]] || exit 1
+    else
+      [[ "${MOCK_CODESIGN_PRE_VERIFY_FAILURE:-}" != 1 ]] || exit 1
     fi
-    [[ "${MOCK_FORMAL_SIGN_FAILURE:-}" != 1 ]]
-  elif [[ "$1" == -dv ]]; then
-    echo 'Identifier=com.youranreus.TokChan'
-    echo "Authority=${MOCK_AUTHORITY:-$APPLE_SIGNING_IDENTITY}"
-    echo "TeamIdentifier=${MOCK_TEAM:-$APPLE_TEAM_ID}"
-    [[ "${MOCK_NO_TIMESTAMP:-}" == 1 ]] || echo 'Timestamp=Sep 8, 2026 at 10:00:00 AM'
-    [[ "${MOCK_NO_RUNTIME:-}" == 1 ]] || echo 'CodeDirectory v=20500 size=123 flags=0x10000(runtime)'
-    echo 'Info.plist entries=3'
-    echo 'Sealed Resources version=2 rules=13 files=2'
-  else
-    [[ "$1" == --verify ]]
-    [[ "${MOCK_FORMAL_VERIFY_FAILURE:-}" != 1 ]]
   fi
-  exit
-fi
-
-if [[ $# -eq 6 && "$1" == --force && "$2" == --sign && "$3" == - && \
-      "$4" == --identifier ]]; then
-  identifier=$5
-  app=$6
-  [[ "$identifier" == com.youranreus.TokChan ]] || exit 64
-  record "$(printf 'sign\t%s\t%s' "$identifier" "$app")"
-  [[ "${MOCK_CODESIGN_SIGN_FAILURE:-}" != 1 ]] || exit 1
-  mkdir -p "$app/Contents/_CodeSignature"
-  printf 'fixture bundle signature\n' > "$app/Contents/_CodeSignature/CodeResources"
-  exit 0
-fi
-
-if [[ $# -eq 5 && "$1" == --verify && "$2" == --deep && "$3" == --strict && \
-      "$4" == --verbose=2 ]]; then
-  app=$5
-  record "$(printf 'verify\t%s' "$app")"
-  [[ -f "$app/Contents/_CodeSignature/CodeResources" ]] || exit 1
-  if [[ "$app" == */verification-mount/TokChan.app ]]; then
-    [[ "${MOCK_CODESIGN_POST_VERIFY_FAILURE:-}" != 1 ]] || exit 1
-  else
-    [[ "${MOCK_CODESIGN_PRE_VERIFY_FAILURE:-}" != 1 ]] || exit 1
+  if [[ "${MOCK_FORMAL:-}" == 1 ]]; then
+    [[ "${MOCK_FORMAL_VERIFY_FAILURE:-}" != 1 ]] || exit 1
   fi
   exit 0
 fi
 
-if [[ $# -eq 3 && "$1" == -dv && "$2" == --verbose=4 ]]; then
-  app=$3
-  record "$(printf 'display\t%s' "$app")"
-  [[ -f "$app/Contents/_CodeSignature/CodeResources" ]] || exit 1
+if [[ "$1" == -dr && "$2" == - ]]; then
+  echo "# designated => identifier \"$(identifier_for "$artifact")\"" >&2
+  exit 0
+fi
+
+if [[ "$1" == -dv && "$2" == --verbose=4 ]]; then
+  record "$(printf 'display\t%s' "$artifact")"
   [[ "${MOCK_CODESIGN_METADATA_FAILURE:-}" != 1 ]] || exit 1
-  identifier=${MOCK_CODESIGN_METADATA_IDENTIFIER:-com.youranreus.TokChan}
-  if [[ "$app" == */verification-mount/TokChan.app ]]; then
-    [[ "${MOCK_CODESIGN_POST_METADATA_FAILURE:-}" != 1 ]] || exit 1
-    identifier=${MOCK_CODESIGN_POST_METADATA_IDENTIFIER:-$identifier}
+  identifier=$(identifier_for "$artifact")
+  if [[ "$artifact" == */TokChan.app ]]; then
+    identifier=${MOCK_CODESIGN_METADATA_IDENTIFIER:-$identifier}
+    if [[ "$artifact" == */verification-mount/TokChan.app ]]; then
+      [[ "${MOCK_CODESIGN_POST_METADATA_FAILURE:-}" != 1 ]] || exit 1
+      identifier=${MOCK_CODESIGN_POST_METADATA_IDENTIFIER:-$identifier}
+    fi
   fi
-  printf '%s\n' \
-    "Identifier=$identifier" \
-    'Signature=adhoc' \
-    'Info.plist entries=3' \
-    'TeamIdentifier=not set' \
-    'Sealed Resources version=2 rules=13 files=2' >&2
-  if [[ "${MOCK_CODESIGN_DUPLICATE_IDENTIFIER:-}" == 1 ]]; then
-    printf 'Identifier=%s\n' "$identifier" >&2
+  echo "Identifier=$identifier" >&2
+  if [[ "${MOCK_FORMAL:-}" == 1 ]]; then
+    echo "Authority=${MOCK_AUTHORITY:-$APPLE_SIGNING_IDENTITY}" >&2
+    echo "TeamIdentifier=${MOCK_TEAM:-$APPLE_TEAM_ID}" >&2
+    [[ "${MOCK_NO_TIMESTAMP:-}" == 1 ]] || echo 'Timestamp=Sep 8, 2026 at 10:00:00 AM' >&2
+  else
+    echo 'Signature=adhoc' >&2
+    echo 'TeamIdentifier=not set' >&2
+  fi
+  [[ "${MOCK_NO_RUNTIME:-}" == 1 ]] || echo 'CodeDirectory v=20500 size=123 flags=0x10000(runtime)' >&2
+  echo 'Info.plist entries=3' >&2
+  echo 'Sealed Resources version=2 rules=13 files=2' >&2
+  if [[ "${MOCK_CODESIGN_DUPLICATE_IDENTIFIER:-}" == 1 && "$artifact" == */TokChan.app ]]; then
+    echo "Identifier=$identifier" >&2
   fi
   exit 0
 fi
@@ -343,9 +358,21 @@ if [[ "$1" == build ]]; then
     fi
   done
   app="$derived/Build/Products/Release/TokChan.app"
-  mkdir -p "$app/Contents/MacOS"
+  sparkle="$app/Contents/Frameworks/Sparkle.framework/Versions/B"
+  mkdir -p "$app/Contents/MacOS" "$sparkle/Updater.app/Contents/MacOS" \
+    "$sparkle/XPCServices/Downloader.xpc/Contents/MacOS" \
+    "$sparkle/XPCServices/Installer.xpc/Contents/MacOS"
   printf 'fake executable' > "$app/Contents/MacOS/TokChan"
-  chmod +x "$app/Contents/MacOS/TokChan"
+  printf 'autoupdate' > "$sparkle/Autoupdate"
+  printf 'updater' > "$sparkle/Updater.app/Contents/MacOS/Updater"
+  printf 'downloader' > "$sparkle/XPCServices/Downloader.xpc/Contents/MacOS/Downloader"
+  printf 'installer' > "$sparkle/XPCServices/Installer.xpc/Contents/MacOS/Installer"
+  chmod +x "$app/Contents/MacOS/TokChan" "$sparkle/Autoupdate" \
+    "$sparkle/Updater.app/Contents/MacOS/Updater" \
+    "$sparkle/XPCServices/Downloader.xpc/Contents/MacOS/Downloader" \
+    "$sparkle/XPCServices/Installer.xpc/Contents/MacOS/Installer"
+  [[ "${MOCK_SPARKLE_MISSING:-}" != 1 ]] || rm -rf "$sparkle/XPCServices/Installer.xpc"
+  [[ "${MOCK_SPARKLE_EXTRA:-}" != 1 ]] || mkdir -p "$sparkle/XPCServices/Unexpected.xpc"
   cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -353,6 +380,9 @@ if [[ "$1" == build ]]; then
 <key>CFBundleShortVersionString</key><string>${TEST_FIXTURE_VERSION:?}</string>
 <key>CFBundleVersion</key><string>${TEST_FIXTURE_BUILD:?}</string>
 <key>CFBundleIdentifier</key><string>com.youranreus.TokChan</string>
+<key>SUFeedURL</key><string>https://youranreus.github.io/TokChan/appcast.xml</string>
+<key>SUEnableAutomaticChecks</key><false/>
+<key>SUPublicEDKey</key><string>${SPARKLE_PUBLIC_ED_KEY:-}</string>
 </dict></plist>
 PLIST
   exit 0
@@ -367,16 +397,26 @@ fixture="$test_tmp/build"
 make_build_fixture "$fixture"
 dmg="$fixture/output/$fixture_asset"
 checksum="$dmg.sha256"
+zip="$fixture/output/TokChan-v${fixture_version}-macos-universal.zip"
 
 assert_no_build_assets() {
-  [[ ! -e "$dmg" && ! -L "$dmg" && ! -e "$checksum" && ! -L "$checksum" ]]
+  [[ ! -e "$dmg" && ! -L "$dmg" && ! -e "$checksum" && ! -L "$checksum" && \
+     ! -e "$zip" && ! -L "$zip" ]]
 }
 
-expect_failure "ad-hoc bundle signing failed" env PATH="$fixture/mock-bin:$PATH" \
+expect_failure "ad-hoc signing failed for Sparkle" env PATH="$fixture/mock-bin:$PATH" \
   MOCK_CODESIGN_SIGN_FAILURE=1 \
   "$fixture/scripts/build-release.sh" --skip-tests --output output
 assert_no_build_assets
 pass "build script fails closed when ad-hoc bundle signing fails"
+expect_failure "missing Sparkle signable code" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_SPARKLE_MISSING=1 "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script rejects a missing reviewed Sparkle nested component"
+expect_failure "unexpected Sparkle nested bundle inventory" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_SPARKLE_EXTRA=1 "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script rejects an unexpected Sparkle nested component"
 
 rm -rf "$fixture/output"
 expect_failure "strict signature verification failed" env PATH="$fixture/mock-bin:$PATH" \
@@ -554,7 +594,8 @@ keychain="$test_tmp/signing.keychain-db"
 touch "$keychain"
 formal_env=(env PATH="$fixture/mock-bin:$PATH" MOCK_FORMAL=1
   APPLE_SIGNING_IDENTITY='Developer ID Application: Fixture (ABCDEFGHIJ)'
-  APPLE_TEAM_ID=ABCDEFGHIJ APPLE_KEYCHAIN_PATH="$keychain" APPLE_NOTARY_PROFILE=fixture)
+  APPLE_TEAM_ID=ABCDEFGHIJ APPLE_KEYCHAIN_PATH="$keychain" APPLE_NOTARY_PROFILE=fixture
+  SPARKLE_PUBLIC_ED_KEY=fixture-public-key)
 expect_failure "--notarize requires APPLE_SIGNING_IDENTITY" env -u APPLE_SIGNING_IDENTITY \
   PATH="$fixture/mock-bin:$PATH" "$fixture/scripts/build-release.sh" --notarize --skip-tests --output output
 assert_no_build_assets
@@ -575,10 +616,11 @@ pass "failed CI notarization preserves Apple response in job output"
 trust_log="$test_tmp/trust.log"
 "${formal_env[@]}" MOCK_TRUST_LOG="$trust_log" \
   "$fixture/scripts/build-release.sh" --notarize --skip-tests --output output >/dev/null
-[[ -f "$dmg" && -f "$checksum" ]]
+[[ -f "$dmg" && -f "$checksum" && -f "$zip" ]]
+[[ "$(unzip -Z1 "$zip" | head -n 1)" == TokChan.app/* ]]
 [[ "$(grep -c '^notarytool submit ' "$trust_log")" -eq 2 ]]
 [[ "$(grep -c '^stapler staple ' "$trust_log")" -eq 2 ]]
-[[ "$(grep -c '^stapler validate ' "$trust_log")" -eq 3 ]]
+[[ "$(grep -c '^stapler validate ' "$trust_log")" -eq 4 ]]
 grep -F 'spctl --assess --type execute --verbose=4 ' "$trust_log" | grep -F '/verification-mount/TokChan.app' >/dev/null
 python3 - "$trust_log" <<'PYTEST'
 from pathlib import Path
@@ -586,8 +628,12 @@ import sys
 lines = Path(sys.argv[1]).read_text().splitlines()
 operations = [line.split()[:2] for line in lines]
 assert operations.index(['stapler', 'staple']) > operations.index(['notarytool', 'submit'])
-assert next(i for i, line in enumerate(lines) if line.startswith('codesign --force') and line.endswith('.dmg')) > operations.index(['stapler', 'validate'])
-assert lines[-1].startswith('spctl ')
+app_validate = next(i for i, line in enumerate(lines) if line.startswith('stapler validate ') and line.endswith('TokChan.app'))
+dmg_sign = next(i for i, line in enumerate(lines) if line.startswith('codesign --force') and line.endswith('.dmg'))
+spctl = next(i for i, line in enumerate(lines) if line.startswith('spctl '))
+zip_validate = max(i for i, line in enumerate(lines) if line.startswith('stapler validate ') and line.endswith('TokChan.app'))
+assert dmg_sign > app_validate
+assert zip_validate > spctl
 PYTEST
 (cd "$fixture/output" && shasum -a 256 -c "$(basename "$checksum")" >/dev/null)
 pass "notarized app and DMG pass signing, ticket, mounted Gatekeeper and checksum gates"
@@ -599,14 +645,32 @@ build_output=$(PATH="$fixture/mock-bin:$PATH" MOCK_CODESIGN_LOG="$codesign_log" 
   MOCK_HDIUTIL_LOG="$hdiutil_log" MOCK_OSASCRIPT_LOG="$osascript_log" \
   MOCK_REQUIRE_EXPLICIT_LAYOUT_WINDOW=1 \
   "$fixture/scripts/build-release.sh" --skip-tests --output output)
-[[ -f "$dmg" && -f "$checksum" ]]
+[[ -f "$dmg" && -f "$checksum" && -f "$zip" ]]
+[[ "$(unzip -Z1 "$zip" | head -n 1)" == TokChan.app/* ]]
 (
   cd "$fixture/output"
   shasum -a 256 -c "$(basename "$checksum")" >/dev/null
 )
-[[ "$(grep -c $'^sign\tcom.youranreus.TokChan\t' "$codesign_log")" -eq 1 ]]
-[[ "$(grep -c $'^verify\t' "$codesign_log")" -eq 2 ]]
-[[ "$(grep -c $'^display\t' "$codesign_log")" -eq 2 ]]
+[[ "$(grep -c $'^sign-code\t' "$codesign_log")" -eq 6 ]]
+[[ "$(grep -c $'^verify\t' "$codesign_log")" -eq 8 ]]
+[[ "$(grep -c $'^display\t' "$codesign_log")" -eq 8 ]]
+python3 - "$codesign_log" <<'PY'
+from pathlib import Path
+import sys
+lines = Path(sys.argv[1]).read_text().splitlines()
+def signed(suffix):
+    return next(i for i, line in enumerate(lines) if line.startswith("sign-code\t") and line.endswith(suffix))
+leaves = [
+    signed("Versions/B/Autoupdate"),
+    signed("Versions/B/Updater.app"),
+    signed("Versions/B/XPCServices/Downloader.xpc"),
+    signed("Versions/B/XPCServices/Installer.xpc"),
+]
+framework = signed("Sparkle.framework")
+app = signed("TokChan.app")
+assert all(index < framework for index in leaves)
+assert framework < app
+PY
 grep -F $'verify\t' "$codesign_log" | grep -F '/verification-mount/TokChan.app' >/dev/null
 [[ "$(grep -c $'^attach\t' "$hdiutil_log")" -eq 2 ]]
 [[ "$(grep -c $'^detach\t' "$hdiutil_log")" -eq 2 ]]
@@ -638,7 +702,10 @@ grep -F 'set position of item "Applications" of targetFolder to {410, 160}' \
 ! grep -Ei 'background (picture|image)' "$root/scripts/build-release.sh" >/dev/null
 grep -F 'TokChan-v${version}-macos-universal.dmg' \
   "$root/.github/workflows/release.yml" >/dev/null
-! grep -F 'macos-universal.zip' "$root/.github/workflows/release.yml" >/dev/null
+grep -F 'macos-universal.zip' "$root/.github/workflows/release.yml" >/dev/null
+workflow=$(cat "$root/.github/workflows/release.yml")
+[[ "${workflow%%      - name: Create or resume draft Release*}" == *"name: Generate signed Sparkle appcast"* ]]
+[[ "$workflow" == *"name: Deploy appcast last"* ]]
 python3 - "$root/.github/workflows/release.yml" <<'PY'
 from pathlib import Path
 import subprocess
@@ -666,7 +733,197 @@ with tempfile.TemporaryDirectory() as directory:
         path.write_text(block)
         subprocess.run(["bash", "-n", str(path)], check=True)
 PY
-pass "release workflow uses the exact DMG pair and all shell blocks parse"
+python3 - "$root/.github/workflows/release.yml" <<'PY'
+import re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text()
+permissions = re.search(r"(?m)^permissions:\n((?:  [^\n]+\n)+)", text)
+assert permissions
+assert set(re.findall(r"^  ([a-z-]+): (\w+)$", permissions.group(1), re.M)) == {
+    ("contents", "write"), ("pages", "write"), ("id-token", "write")
+}
+assert "name: github-pages" in text and "steps.deployment.outputs.page_url" in text
+assert "name: Inspect immutable Release recovery state" in text
+assert "if: steps.recovery.outputs.enabled != 'true'" in text
+for action, revision in re.findall(r"uses: ([^@\s]+)@([^\s]+)", text):
+    assert re.fullmatch(r"[0-9a-f]{40}", revision), (action, revision)
+for required in ["SPARKLE_PRIVATE_KEY_BASE64", "vars.SPARKLE_PUBLIC_ED_KEY", "github.token"]:
+    assert required in text
+assert text.index("Inspect immutable Release recovery state") < text.index("Generate signed Sparkle appcast")
+assert "APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}" in text
+assert "signature_metadata=$(codesign -dv --verbose=4 \"$app\" 2>&1)" in text
+assert "candidate appcast changed or dropped prior feed history" in text
+assert text.index("Generate signed Sparkle appcast") < text.index("Create or resume draft Release")
+assert text.index("Verify published update archive") < text.index("Upload appcast Pages artifact") < text.index("Deploy appcast last")
+PY
+pass "release workflow permissions, pins, environment, credentials, and publication order are exact"
+
+appcast_step="$test_tmp/generate-appcast-step.sh"
+python3 - "$root/.github/workflows/release.yml" "$appcast_step" <<'PY'
+from pathlib import Path
+import sys
+lines = Path(sys.argv[1]).read_text().splitlines()
+marker = next(i for i, line in enumerate(lines) if "name: Generate signed Sparkle appcast" in line)
+start = next(i for i in range(marker, len(lines)) if lines[i].strip() == "run: |") + 1
+script = []
+for line in lines[start:]:
+    if line and not line.startswith("          "):
+        break
+    script.append(line[10:] if line else "")
+Path(sys.argv[2]).write_text("\n".join(script) + "\n")
+PY
+appcast_mock_bin="$test_tmp/appcast-mock-bin"
+appcast_tools="$test_tmp/appcast-tools"
+mkdir -p "$appcast_mock_bin" "$appcast_tools"
+cat > "$appcast_mock_bin/curl" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+output=''
+write_out=false
+while (($#)); do
+  case "$1" in
+    --output) output=$2; shift 2 ;;
+    --write-out) write_out=true; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if ! $write_out; then
+  printf '<!doctype html><p>prior notes</p>' > "$output"
+  exit 0
+fi
+case "${MOCK_FEED_FETCH:-404}" in
+  404) printf 404; exit 22 ;;
+  transient) printf 000; exit 7 ;;
+  200) cp "${MOCK_PRIOR_FEED:?}" "$output"; printf 200 ;;
+  *) exit 64 ;;
+esac
+MOCK
+cat > "$appcast_mock_bin/xcodebuild" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+derived=''
+while (($#)); do
+  if [[ "$1" == -derivedDataPath ]]; then derived=$2; shift 2; else shift; fi
+done
+tools="$derived/SourcePackages/artifacts/sparkle/Sparkle/bin"
+mkdir -p "$tools"
+cp "${MOCK_GENERATE_TOOL:?}" "$tools/generate_appcast"
+cp "${MOCK_SIGN_TOOL:?}" "$tools/sign_update"
+chmod +x "$tools/"*
+MOCK
+cat > "$appcast_tools/generate_appcast" <<'MOCK'
+#!/usr/bin/env python3
+import os, sys, xml.etree.ElementTree as ET
+feed = sys.argv[-1]
+sparkle = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+ET.register_namespace("sparkle", sparkle)
+path = os.path.join(feed, "appcast.xml")
+if os.path.exists(path):
+    root = ET.parse(path).getroot()
+else:
+    root = ET.Element("rss", {"version": "2.0"})
+    ET.SubElement(root, "channel")
+channel = root.find("channel")
+item = ET.SubElement(channel, "item")
+ET.SubElement(item, f"{{{sparkle}}}version").text = os.environ["BUILD"]
+ET.SubElement(item, f"{{{sparkle}}}shortVersionString").text = os.environ["VERSION"]
+note = os.path.basename(os.environ["ZIP"][:-4]) + ".html"
+ET.SubElement(item, f"{{{sparkle}}}releaseNotesLink").text = "https://youranreus.github.io/TokChan/release-notes/" + note
+ET.SubElement(item, "enclosure", {
+    "url": "https://github.com/" + os.environ["GITHUB_REPOSITORY"] + "/releases/download/v" + os.environ["VERSION"] + "/" + os.path.basename(os.environ["ZIP"]),
+    "length": str(os.path.getsize(os.environ["ZIP"])),
+    f"{{{sparkle}}}edSignature": "fixture-signature",
+})
+ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
+MOCK
+cat > "$appcast_tools/generate_appcast_mutating_history" <<'MOCK'
+#!/usr/bin/env python3
+import os, subprocess, sys, xml.etree.ElementTree as ET
+subprocess.run([os.environ["MOCK_GENERATE_BASE"], *sys.argv[1:]], check=True)
+path = os.path.join(sys.argv[-1], "appcast.xml")
+root = ET.parse(path)
+first = root.getroot().find("./channel/item/enclosure")
+first.set("length", "999")
+root.write(path, encoding="utf-8", xml_declaration=True)
+MOCK
+cat > "$appcast_tools/sign_update" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == --verify && "$2" == --ed-key-file && -f "$3" && -f "$4" && "$5" == fixture-signature ]]
+MOCK
+chmod +x "$appcast_mock_bin/"* "$appcast_tools/"*
+seed_file="$test_tmp/sparkle-seed"
+python3 - "$seed_file" <<'PY'
+import base64, sys
+from pathlib import Path
+Path(sys.argv[1]).write_bytes(base64.b64encode(bytes(range(32))))
+PY
+private_secret=$(base64 < "$seed_file" | tr -d '\r\n')
+python3 - "$seed_file" "$test_tmp/sparkle-private.der" <<'PY'
+import base64, sys
+from pathlib import Path
+seed = base64.b64decode(Path(sys.argv[1]).read_bytes())
+Path(sys.argv[2]).write_bytes(bytes.fromhex("302e020100300506032b657004220420") + seed)
+PY
+openssl pkey -inform DER -in "$test_tmp/sparkle-private.der" -pubout -outform DER \
+  -out "$test_tmp/sparkle-public.der" 2>/dev/null
+public_key=$(tail -c 32 "$test_tmp/sparkle-public.der" | base64 | tr -d '\r\n')
+appcast_work="$test_tmp/appcast-work"
+mkdir -p "$appcast_work/TokChan.xcodeproj"
+(
+  cd "$appcast_work"
+  env PATH="$appcast_mock_bin:$PATH" MOCK_GENERATE_TOOL="$appcast_tools/generate_appcast" \
+    MOCK_SIGN_TOOL="$appcast_tools/sign_update" SPARKLE_PRIVATE_KEY_BASE64="$private_secret" \
+    SPARKLE_PUBLIC_ED_KEY="$public_key" VERSION="$fixture_version" BUILD="$fixture_build" \
+    ZIP="$zip" GITHUB_REPOSITORY=owner/repo bash "$appcast_step" >/dev/null
+)
+[[ -f "$appcast_work/pages/appcast.xml" ]]
+[[ -f "$appcast_work/pages/release-notes/TokChan-v${fixture_version}-macos-universal.html" ]]
+pass "appcast generation accepts only a validated first-feed 404 bootstrap and stages public files"
+rm -rf "$appcast_work/pages"
+prior_feed="$test_tmp/prior-appcast.xml"
+cat > "$prior_feed" <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><item>
+<sparkle:version>16</sparkle:version><sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
+<sparkle:releaseNotesLink>https://youranreus.github.io/TokChan/release-notes/TokChan-v1.0.1-macos-universal.html</sparkle:releaseNotesLink>
+<enclosure url="https://github.com/owner/repo/releases/download/v1.0.1/TokChan-v1.0.1-macos-universal.zip" length="123" sparkle:edSignature="prior-signature"/>
+</item></channel></rss>
+XML
+(
+  cd "$appcast_work"
+  env PATH="$appcast_mock_bin:$PATH" MOCK_FEED_FETCH=200 MOCK_PRIOR_FEED="$prior_feed" \
+    MOCK_GENERATE_TOOL="$appcast_tools/generate_appcast" MOCK_SIGN_TOOL="$appcast_tools/sign_update" \
+    SPARKLE_PRIVATE_KEY_BASE64="$private_secret" SPARKLE_PUBLIC_ED_KEY="$public_key" \
+    VERSION="$fixture_version" BUILD="$fixture_build" ZIP="$zip" GITHUB_REPOSITORY=owner/repo \
+    bash "$appcast_step" >/dev/null
+)
+[[ -f "$appcast_work/pages/release-notes/TokChan-v1.0.1-macos-universal.html" ]]
+grep -F 'v1.0.1/TokChan-v1.0.1-macos-universal.zip' "$appcast_work/pages/appcast.xml" >/dev/null
+pass "appcast generation preserves prior feed history and its hosted release notes"
+rm -rf "$appcast_work/pages"
+expect_failure "changed or dropped prior feed history" env PATH="$appcast_mock_bin:$PATH" \
+  MOCK_FEED_FETCH=200 MOCK_PRIOR_FEED="$prior_feed" \
+  MOCK_GENERATE_TOOL="$appcast_tools/generate_appcast_mutating_history" \
+  MOCK_GENERATE_BASE="$appcast_tools/generate_appcast" MOCK_SIGN_TOOL="$appcast_tools/sign_update" \
+  SPARKLE_PRIVATE_KEY_BASE64="$private_secret" SPARKLE_PUBLIC_ED_KEY="$public_key" \
+  VERSION="$fixture_version" BUILD="$fixture_build" ZIP="$zip" GITHUB_REPOSITORY=owner/repo \
+  bash -c "cd '$appcast_work' && bash '$appcast_step'"
+[[ ! -e "$appcast_work/pages/appcast.xml" ]]
+pass "appcast generation rejects changes to prior immutable feed entries"
+expect_failure "Could not safely fetch prior appcast" env PATH="$appcast_mock_bin:$PATH" \
+  MOCK_FEED_FETCH=transient MOCK_GENERATE_TOOL="$appcast_tools/generate_appcast" \
+  MOCK_SIGN_TOOL="$appcast_tools/sign_update" SPARKLE_PRIVATE_KEY_BASE64="$private_secret" \
+  SPARKLE_PUBLIC_ED_KEY="$public_key" VERSION="$fixture_version" BUILD="$fixture_build" \
+  ZIP="$zip" GITHUB_REPOSITORY=owner/repo bash -c "cd '$appcast_work' && bash '$appcast_step'"
+[[ ! -e "$appcast_work/pages/appcast.xml" ]]
+pass "appcast generation fails closed on transient prior-feed errors"
+expect_failure "does not match SPARKLE_PUBLIC_ED_KEY" env PATH="$appcast_mock_bin:$PATH" \
+  MOCK_GENERATE_TOOL="$appcast_tools/generate_appcast" MOCK_SIGN_TOOL="$appcast_tools/sign_update" \
+  SPARKLE_PRIVATE_KEY_BASE64="$private_secret" SPARKLE_PUBLIC_ED_KEY=wrong \
+  VERSION="$fixture_version" BUILD="$fixture_build" ZIP="$zip" GITHUB_REPOSITORY=owner/repo \
+  bash -c "cd '$appcast_work' && bash '$appcast_step'"
+pass "appcast generation rejects a mismatched EdDSA keypair before feed creation"
 
 workflow_step="$test_tmp/publish-release-step.sh"
 python3 - "$root/.github/workflows/release.yml" "$workflow_step" <<'PY'
@@ -711,10 +968,19 @@ elif [[ "$1" == api && " $* " == *" --jq .body "* ]]; then
   fi
 elif [[ "$1" == api && " $* " == *" --jq .draft "* ]]; then
   [[ "$(cat "${MOCK_RELEASE_STATE:?}")" == draft ]] && echo true || echo false
-elif [[ "$1" == api && " $* " == *" --jq .assets[].name "* ]]; then
-  printf '%s\n' "${MOCK_DMG_NAME:?}" "${MOCK_CHECKSUM_NAME:?}"
+elif [[ "$1" == api && " $* " == *"[.id, .name, .size]"* ]]; then
+  printf '1\t%s\t%s\n' "${MOCK_DMG_NAME:?}" "$(stat -f %z "${MOCK_DMG_PATH:?}")"
+  printf '2\t%s\t%s\n' "${MOCK_CHECKSUM_NAME:?}" "$(stat -f %z "${MOCK_CHECKSUM_PATH:?}")"
+  printf '3\t%s\t%s\n' "${MOCK_ZIP_NAME:?}" "$(stat -f %z "${MOCK_ZIP_PATH:?}")"
+elif [[ "$1" == api && " $* " == *'/releases/assets/'* ]]; then
+  case "${!#}" in
+    */1) cat "${MOCK_DMG_PATH:?}" ;;
+    */2) cat "${MOCK_CHECKSUM_PATH:?}" ;;
+    */3) cat "${MOCK_ZIP_PATH:?}" ;;
+    *) exit 1 ;;
+  esac
 elif [[ "$1 $2" == 'release upload' ]]; then
-  [[ -f "$4" && -f "$5" ]]
+  [[ -f "$4" && -f "$5" && -f "$6" ]]
 else
   echo "unexpected gh invocation: $*" >&2
   exit 1
@@ -722,24 +988,27 @@ fi
 MOCK
 chmod +x "$workflow_mock_bin/gh"
 env PATH="$workflow_mock_bin:$PATH" \
-  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" \
+  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" ZIP="$zip" RUN_ATTEMPT=1 \
   MOCK_RELEASE_STATE="$workflow_state" MOCK_DMG_NAME="$(basename "$dmg")" \
-  MOCK_CHECKSUM_NAME="$(basename "$checksum")" bash "$workflow_step" >/dev/null
+  MOCK_CHECKSUM_NAME="$(basename "$checksum")" MOCK_ZIP_NAME="$(basename "$zip")" \
+  MOCK_DMG_PATH="$dmg" MOCK_CHECKSUM_PATH="$checksum" MOCK_ZIP_PATH="$zip" bash "$workflow_step" >/dev/null
 [[ "$(cat "$workflow_state")" == published ]]
 pass "release workflow resumes and publishes a draft by Release ID"
 printf absent > "$workflow_state"
 env PATH="$workflow_mock_bin:$PATH" \
-  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" \
+  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" ZIP="$zip" RUN_ATTEMPT=1 \
   MOCK_RELEASE_STATE="$workflow_state" MOCK_LIST_INVISIBLE=1 MOCK_DMG_NAME="$(basename "$dmg")" \
-  MOCK_CHECKSUM_NAME="$(basename "$checksum")" bash "$workflow_step" >/dev/null
+  MOCK_CHECKSUM_NAME="$(basename "$checksum")" MOCK_ZIP_NAME="$(basename "$zip")" \
+  MOCK_DMG_PATH="$dmg" MOCK_CHECKSUM_PATH="$checksum" MOCK_ZIP_PATH="$zip" bash "$workflow_step" >/dev/null
 [[ "$(cat "$workflow_state")" == published ]]
 pass "release workflow publishes a new draft from the create response ID"
 printf draft > "$workflow_state"
 expect_failure "missing required distribution text" env \
   PATH="$workflow_mock_bin:$PATH" \
-  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" \
+  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" ZIP="$zip" RUN_ATTEMPT=1 \
   MOCK_RELEASE_STATE="$workflow_state" MOCK_DMG_NAME="$(basename "$dmg")" \
-  MOCK_CHECKSUM_NAME="$(basename "$checksum")" \
+  MOCK_CHECKSUM_NAME="$(basename "$checksum")" MOCK_ZIP_NAME="$(basename "$zip")" \
+  MOCK_DMG_PATH="$dmg" MOCK_CHECKSUM_PATH="$checksum" MOCK_ZIP_PATH="$zip" \
   MOCK_RELEASE_BODY='This app bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized.' \
   bash "$workflow_step"
 [[ "$(cat "$workflow_state")" == draft ]]
@@ -748,18 +1017,27 @@ pass "release workflow refuses a draft with incomplete distribution warnings"
 printf published > "$workflow_state"
 expect_failure "already published; assets are immutable" env \
   PATH="$workflow_mock_bin:$PATH" \
-  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" \
+  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" ZIP="$zip" RUN_ATTEMPT=1 \
   MOCK_RELEASE_STATE="$workflow_state" MOCK_DMG_NAME="$(basename "$dmg")" \
-  MOCK_CHECKSUM_NAME="$(basename "$checksum")" bash "$workflow_step"
+  MOCK_CHECKSUM_NAME="$(basename "$checksum")" MOCK_ZIP_NAME="$(basename "$zip")" \
+  MOCK_DMG_PATH="$dmg" MOCK_CHECKSUM_PATH="$checksum" MOCK_ZIP_PATH="$zip" bash "$workflow_step"
 [[ "$(cat "$workflow_state")" == published ]]
 pass "release workflow preserves published Release immutability"
+env PATH="$workflow_mock_bin:$PATH" \
+  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" ZIP="$zip" RUN_ATTEMPT=2 \
+  MOCK_RELEASE_STATE="$workflow_state" MOCK_DMG_NAME="$(basename "$dmg")" \
+  MOCK_CHECKSUM_NAME="$(basename "$checksum")" MOCK_ZIP_NAME="$(basename "$zip")" \
+  MOCK_DMG_PATH="$dmg" MOCK_CHECKSUM_PATH="$checksum" MOCK_ZIP_PATH="$zip" bash "$workflow_step" >/dev/null
+[[ "$(cat "$workflow_state")" == published ]]
+pass "release workflow permits byte-verified feed-only recovery without mutating a published Release"
 
 printf draft > "$workflow_state"
-expect_failure "assets do not exactly match the expected pair" env \
+expect_failure "assets do not exactly match the expected set" env \
   PATH="$workflow_mock_bin:$PATH" \
-  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" \
+  GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" ZIP="$zip" RUN_ATTEMPT=1 \
   MOCK_RELEASE_STATE="$workflow_state" MOCK_DMG_NAME=unexpected.dmg \
-  MOCK_CHECKSUM_NAME="$(basename "$checksum")" bash "$workflow_step"
+  MOCK_CHECKSUM_NAME="$(basename "$checksum")" MOCK_ZIP_NAME="$(basename "$zip")" \
+  MOCK_DMG_PATH="$dmg" MOCK_CHECKSUM_PATH="$checksum" MOCK_ZIP_PATH="$zip" bash "$workflow_step"
 [[ "$(cat "$workflow_state")" == draft ]]
 pass "release workflow refuses to publish a draft with a non-exact asset pair"
 

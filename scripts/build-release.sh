@@ -53,13 +53,13 @@ done
 [[ -f TokChan.xcodeproj/xcshareddata/xcschemes/TokChan.xcscheme ]] || \
   fail "the shared TokChan scheme was not found"
 
-for command_name in xcodebuild xcrun codesign ditto hdiutil lipo osascript shasum python3; do
+for command_name in xcodebuild xcrun codesign ditto hdiutil lipo osascript plutil shasum python3 unzip; do
   command -v "$command_name" >/dev/null 2>&1 || fail "required command not found: $command_name"
 done
 [[ -x /usr/libexec/PlistBuddy ]] || fail "required command not found: /usr/libexec/PlistBuddy"
 
 if $notarize; then
-  for variable in APPLE_SIGNING_IDENTITY APPLE_TEAM_ID APPLE_KEYCHAIN_PATH APPLE_NOTARY_PROFILE; do
+  for variable in APPLE_SIGNING_IDENTITY APPLE_TEAM_ID APPLE_KEYCHAIN_PATH APPLE_NOTARY_PROFILE SPARKLE_PUBLIC_ED_KEY; do
     [[ -n "${!variable:-}" ]] || fail "--notarize requires $variable"
   done
   [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || fail "invalid APPLE_TEAM_ID"
@@ -84,6 +84,7 @@ mkdir -p "$staging_dir"
 build_log="$work_dir/build.log"
 published_dmg=""
 published_checksum=""
+published_zip=""
 publish_lock=""
 publish_lock_acquired=false
 layout_device=""
@@ -109,6 +110,7 @@ cleanup() {
     rmdir -- "$publish_lock" || status=1
   fi
   if [[ $status -ne 0 ]]; then
+    [[ -z "$published_zip" ]] || rm -f -- "$published_zip"
     [[ -z "$published_checksum" ]] || rm -f -- "$published_checksum"
     [[ -z "$published_dmg" ]] || rm -f -- "$published_dmg"
   fi
@@ -182,13 +184,16 @@ release_build=$(read_build_setting Release CURRENT_PROJECT_VERSION)
 
 asset_basename="TokChan-v${release_version}-macos-universal.dmg"
 checksum_basename="${asset_basename}.sha256"
+zip_basename="TokChan-v${release_version}-macos-universal.zip"
 final_dmg="$output_dir/$asset_basename"
 final_checksum="$output_dir/$checksum_basename"
+final_zip="$output_dir/$zip_basename"
 path_exists() {
   [[ -e "$1" || -L "$1" ]]
 }
 ! path_exists "$final_dmg" || fail "refusing to overwrite existing asset: $final_dmg"
 ! path_exists "$final_checksum" || fail "refusing to overwrite existing asset: $final_checksum"
+! path_exists "$final_zip" || fail "refusing to overwrite existing asset: $final_zip"
 
 if ! $skip_tests; then
   echo "==> Running TokChan unit tests (UI tests are intentionally not a release gate)"
@@ -215,6 +220,7 @@ xcodebuild build \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGN_IDENTITY='' \
+  SPARKLE_PUBLIC_ED_KEY="${SPARKLE_PUBLIC_ED_KEY:-}" \
   2>&1 | tee -a "$build_log"
 
 app_path="$derived_data/Build/Products/Release/TokChan.app"
@@ -227,12 +233,22 @@ executable="$app_path/Contents/MacOS/TokChan"
 bundle_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info_plist")
 bundle_build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info_plist")
 bundle_identifier=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info_plist")
+feed_url=$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$info_plist")
+automatic_checks=$(/usr/libexec/PlistBuddy -c 'Print :SUEnableAutomaticChecks' "$info_plist")
+public_ed_key=$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$info_plist")
 [[ "$bundle_version" == "$release_version" ]] || \
   fail "bundle version $bundle_version does not match $release_version"
 [[ "$bundle_build" == "$release_build" ]] || \
   fail "bundle build $bundle_build does not match $release_build"
 [[ "$bundle_identifier" == "com.youranreus.TokChan" ]] || \
   fail "unexpected bundle identifier: $bundle_identifier"
+[[ "$feed_url" == "https://youranreus.github.io/TokChan/appcast.xml" ]] || \
+  fail "unexpected Sparkle feed URL: $feed_url"
+[[ "$automatic_checks" == false ]] || fail "Sparkle automatic checks must be disabled"
+if $notarize; then
+  [[ -n "$public_ed_key" && "$public_ed_key" == "$SPARKLE_PUBLIC_ED_KEY" ]] || \
+    fail "official app does not contain the expected Sparkle public key"
+fi
 
 architectures=" $(lipo -archs "$executable") "
 [[ "$architectures" == *" arm64 "* ]] || fail "main executable does not contain arm64"
@@ -355,13 +371,112 @@ notarize_artifact() {
   run_bounded 300 xcrun stapler validate "$target" >> "$build_log" 2>&1 || fail "invalid stapled ticket for $label"
 }
 
+sparkle_framework="$app_path/Contents/Frameworks/Sparkle.framework"
+sparkle_version_root="$sparkle_framework/Versions/B"
+sparkle_autoupdate="$sparkle_version_root/Autoupdate"
+sparkle_updater="$sparkle_version_root/Updater.app"
+sparkle_downloader="$sparkle_version_root/XPCServices/Downloader.xpc"
+sparkle_installer="$sparkle_version_root/XPCServices/Installer.xpc"
+sparkle_signables=(
+  "$sparkle_autoupdate"
+  "$sparkle_updater"
+  "$sparkle_downloader"
+  "$sparkle_installer"
+  "$sparkle_framework"
+)
+sparkle_identifiers=(
+  "Autoupdate-555549442a006fc962db330cbcadfaa40625e4c6"
+  "org.sparkle-project.Sparkle.Updater"
+  "org.sparkle-project.DownloaderService"
+  "org.sparkle-project.InstallerLauncher"
+  "org.sparkle-project.Sparkle"
+)
+for signable in "${sparkle_signables[@]}"; do
+  [[ -e "$signable" && ! -L "$signable" ]] || fail "missing Sparkle signable code: $signable"
+done
+python3 - "$sparkle_framework" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+actual = sorted(str(path.relative_to(root)) for path in root.rglob("*")
+                if path.is_dir() and not path.is_symlink()
+                and path.suffix in {".app", ".xpc", ".framework"})
+expected = sorted([
+    "Versions/B/Updater.app",
+    "Versions/B/XPCServices/Downloader.xpc",
+    "Versions/B/XPCServices/Installer.xpc",
+])
+if actual != expected:
+    raise SystemExit(f"unexpected Sparkle nested bundle inventory: {actual}")
+PY
+
+sign_sparkle_code() {
+  local target=$1 label=$2
+  if $notarize; then
+    run_bounded 300 codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
+      --keychain "$APPLE_KEYCHAIN_PATH" --options runtime --timestamp \
+      --preserve-metadata=identifier,entitlements "$target" || \
+      fail "Developer ID signing failed for Sparkle $label"
+  else
+    codesign --force --sign - --options runtime \
+      --preserve-metadata=identifier,entitlements "$target" || \
+      fail "ad-hoc signing failed for Sparkle $label"
+  fi
+}
+
+verify_sparkle_code() {
+  local target=$1 expected_identifier=$2 metadata requirement identifier signature_kind team_identifier
+  codesign --verify --strict --verbose=2 "$target" >> "$build_log" 2>&1 || \
+    fail "strict signature verification failed for Sparkle code: $target"
+  metadata=$(codesign -dv --verbose=4 "$target" 2>&1) || \
+    fail "could not inspect signature metadata for Sparkle code: $target"
+  printf '%s\n' "$metadata" >> "$build_log"
+  requirement=$(codesign -dr - "$target" 2>&1) || fail "could not inspect designated requirement for $target"
+  printf '%s\n' "$requirement" >> "$build_log"
+  [[ "$requirement" == *"# designated =>"* ]] || fail "designated requirement is missing for $target"
+  identifier=$(signature_metadata_value "$metadata" Identifier) || \
+    fail "missing Sparkle identifier for $target"
+  [[ "$identifier" == "$expected_identifier" ]] || \
+    fail "unexpected Sparkle identifier $identifier for $target"
+  [[ "$metadata" == *"runtime"* ]] || fail "hardened runtime is missing for $target"
+  if $notarize; then
+    verify_developer_metadata "$metadata" "$target"
+  else
+    signature_kind=$(signature_metadata_value "$metadata" Signature) || \
+      fail "missing ad-hoc signature metadata for $target"
+    [[ "$signature_kind" == adhoc ]] || fail "Sparkle code is not ad-hoc signed: $target"
+    team_identifier=$(signature_metadata_value "$metadata" TeamIdentifier) || \
+      fail "missing Sparkle TeamIdentifier for $target"
+    [[ "$team_identifier" == "not set" ]] || fail "Sparkle code has an unexpected TeamIdentifier: $target"
+  fi
+}
+
 if $notarize; then
-  echo "==> Developer ID signing complete app bundle"
+  echo "==> Developer ID signing Sparkle inside-out and complete app bundle"
+else
+  echo "==> Ad-hoc signing Sparkle inside-out and complete app bundle"
+fi
+for index in 0 1 2 3; do
+  sign_sparkle_code "${sparkle_signables[$index]}" "${sparkle_identifiers[$index]}"
+  verify_sparkle_code "${sparkle_signables[$index]}" "${sparkle_identifiers[$index]}"
+done
+# Autoupdate must retain Sparkle's application identifier entitlement across re-signing.
+autoupdate_entitlements="$work_dir/autoupdate-entitlements.plist"
+codesign -d --entitlements :- "$sparkle_autoupdate" > "$autoupdate_entitlements" 2>> "$build_log" || \
+  fail "could not inspect Autoupdate entitlements"
+autoupdate_application_identifier=$(
+  /usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "$autoupdate_entitlements"
+) || fail "could not read Autoupdate application identifier entitlement"
+[[ "$autoupdate_application_identifier" == "org.sparkle-project.Sparkle.Autoupdate" ]] || \
+  fail "Autoupdate application identifier entitlement changed"
+sign_sparkle_code "$sparkle_framework" "${sparkle_identifiers[4]}"
+verify_sparkle_code "$sparkle_framework" "${sparkle_identifiers[4]}"
+if $notarize; then
   run_bounded 300 codesign --force --sign "$APPLE_SIGNING_IDENTITY" --keychain "$APPLE_KEYCHAIN_PATH" \
     --options runtime --timestamp --identifier "$bundle_identifier" "$app_path" || fail "Developer ID app signing failed"
 else
-  echo "==> Ad-hoc signing complete app bundle"
-  codesign --force --sign - --identifier "$bundle_identifier" "$app_path" || fail "ad-hoc bundle signing failed"
+  codesign --force --sign - --options runtime --identifier "$bundle_identifier" "$app_path" || \
+    fail "ad-hoc bundle signing failed"
 fi
 verify_signed_bundle "$app_path" "$bundle_identifier"
 if $notarize; then
@@ -464,6 +579,7 @@ verification_mount="$work_dir/verification-mount"
 writable_dmg="$work_dir/TokChan-writable.dmg"
 staged_dmg="$staging_dir/$asset_basename"
 staged_checksum="$staging_dir/$checksum_basename"
+staged_zip="$staging_dir/$zip_basename"
 mkdir -p "$dmg_root" "$layout_mount" "$verification_mount"
 ditto "$app_path" "$dmg_root/TokChan.app"
 ln -s /Applications "$dmg_root/Applications"
@@ -563,6 +679,32 @@ fi
 detach_image "$verification_device" verification
 verification_device=""
 
+echo "==> Creating and verifying Sparkle update archive"
+ditto -c -k --sequesterRsrc --keepParent "$app_path" "$staged_zip"
+unzip -t "$staged_zip" >> "$build_log" || fail "update ZIP is invalid"
+while IFS= read -r entry; do
+  [[ "$entry" == TokChan.app/ || "$entry" == TokChan.app/* || "$entry" == __MACOSX/ || "$entry" == __MACOSX/TokChan.app/ || "$entry" == __MACOSX/TokChan.app/* ]] || \
+    fail "update ZIP contains an unexpected entry: $entry"
+done < <(unzip -Z1 "$staged_zip")
+zip_verification="$work_dir/zip-verification"
+mkdir -p "$zip_verification"
+ditto -x -k "$staged_zip" "$zip_verification" || fail "could not extract update ZIP"
+[[ -d "$zip_verification/TokChan.app" && ! -L "$zip_verification/TokChan.app" ]] || \
+  fail "update ZIP does not contain one top-level TokChan.app"
+python3 - "$zip_verification" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+visible = sorted(item.name for item in root.iterdir() if item.name != "__MACOSX")
+if visible != ["TokChan.app"]:
+    raise SystemExit(f"unexpected update ZIP top-level entries: {visible}")
+PY
+verify_app_contract "$zip_verification/TokChan.app"
+if $notarize; then
+  run_bounded 300 xcrun stapler validate "$zip_verification/TokChan.app" >> "$build_log" 2>&1 || \
+    fail "update ZIP app stapled ticket is invalid"
+fi
+
 (
   cd "$staging_dir"
   shasum -a 256 "$asset_basename" > "$checksum_basename"
@@ -579,18 +721,22 @@ else
 fi
 ! path_exists "$final_dmg" || fail "refusing to overwrite existing asset: $final_dmg"
 ! path_exists "$final_checksum" || fail "refusing to overwrite existing asset: $final_checksum"
+! path_exists "$final_zip" || fail "refusing to overwrite existing asset: $final_zip"
 
-# Publish the pair last. Paths are marked as ours before moving so interruption
+# Publish the assets last. Paths are marked as ours before moving so interruption
 # during either move cannot leave final-named partial output behind.
 published_dmg=$final_dmg
 published_checksum=$final_checksum
+published_zip=$final_zip
 mv -- "$staged_dmg" "$final_dmg"
 mv -- "$staged_checksum" "$final_checksum"
+mv -- "$staged_zip" "$final_zip"
 succeeded=true
 
 echo "==> Release assets"
 echo "$final_dmg"
 echo "$final_checksum"
+echo "$final_zip"
 if $notarize; then
   echo "Developer ID signed and Apple-notarized; app and DMG tickets stapled and verified."
   echo "macOS may still show its normal first-launch download confirmation."

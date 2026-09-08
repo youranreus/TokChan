@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -16,6 +18,9 @@ jobs:
   release:
     runs-on: macos-26
     timeout-minutes: 90
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -75,7 +80,54 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
 
+      - name: Inspect immutable Release recovery state
+        id: recovery
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          release_rows=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"${TAG}\") | [.id, .draft] | @tsv")
+          [[ "$release_rows" != *$'\n'* ]] || {
+            echo "Multiple Releases found for $TAG; refusing ambiguous recovery" >&2
+            exit 1
+          }
+          if [[ -z "$release_rows" || "$release_rows" == *$'\ttrue' ]]; then
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ "$release_rows" == *$'\tfalse' && "$RUN_ATTEMPT" =~ ^[2-9][0-9]*$ ]] || {
+            echo "Release $TAG is already published; start recovery by rerunning the failed workflow" >&2
+            exit 1
+          }
+
+          release_id=${release_rows%%$'\t'*}
+          [[ "$release_id" =~ ^[0-9]+$ ]]
+          release_api="repos/${GITHUB_REPOSITORY}/releases/${release_id}"
+          asset_rows=$(gh api "$release_api" --jq '.assets[] | [.id, .name, .size] | @tsv')
+          expected=$(printf '%s\n%s\n%s\n' \
+            "TokChan-v${VERSION}-macos-universal.dmg" \
+            "TokChan-v${VERSION}-macos-universal.dmg.sha256" \
+            "TokChan-v${VERSION}-macos-universal.zip" | sort)
+          actual=$(cut -f2 <<< "$asset_rows" | sort)
+          [[ "$actual" == "$expected" ]] || {
+            echo "Published Release assets do not exactly match the expected recovery set" >&2
+            exit 1
+          }
+          mkdir -p dist
+          while IFS=$'\t' read -r asset_id asset_name asset_size; do
+            [[ "$asset_id" =~ ^[0-9]+$ && "$asset_size" =~ ^[1-9][0-9]*$ ]]
+            gh api -H 'Accept: application/octet-stream' \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" > "dist/$asset_name"
+            [[ "$(stat -f %z "dist/$asset_name")" == "$asset_size" ]]
+          done <<< "$asset_rows"
+          echo 'enabled=true' >> "$GITHUB_OUTPUT"
+
       - name: Test, sign, notarize, and package universal app
+        if: steps.recovery.outputs.enabled != 'true'
         shell: bash
         env:
           APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
@@ -84,25 +136,275 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
         run: scripts/ci-build-release.sh
 
       - name: Verify exact local assets
         id: assets
         shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           version='${{ steps.version.outputs.version }}'
           dmg="dist/TokChan-v${version}-macos-universal.dmg"
           checksum="${dmg}.sha256"
+          zip="dist/TokChan-v${version}-macos-universal.zip"
           test -f "$dmg"
           test -f "$checksum"
-          [[ "$(find dist -maxdepth 1 -type f -print | sort)" == "$(printf '%s\n%s\n' "$checksum" "$dmg" | sort)" ]]
+          test -f "$zip"
+          unzip -t "$zip"
+          if [[ '${{ steps.recovery.outputs.enabled }}' == true ]]; then
+            recovery_dir=$(mktemp -d)
+            trap 'rm -rf "$recovery_dir"' EXIT
+            ditto -x -k "$zip" "$recovery_dir"
+            test -d "$recovery_dir/TokChan.app"
+            [[ "$(find "$recovery_dir" -mindepth 1 -maxdepth 1 ! -name TokChan.app ! -name __MACOSX -print)" == '' ]]
+            app="$recovery_dir/TokChan.app"
+            info="$app/Contents/Info.plist"
+            [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info")" == "$version" ]]
+            [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info")" == '${{ steps.version.outputs.build }}' ]]
+            [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info")" == com.youranreus.TokChan ]]
+            [[ "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$info")" == '${{ vars.SPARKLE_PUBLIC_ED_KEY }}' ]]
+            architectures=" $(lipo -archs "$app/Contents/MacOS/TokChan") "
+            [[ "$architectures" == *' arm64 '* && "$architectures" == *' x86_64 '* ]]
+            codesign --verify --deep --strict --verbose=2 "$app"
+            signature_metadata=$(codesign -dv --verbose=4 "$app" 2>&1)
+            [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]
+            [[ "$APPLE_SIGNING_IDENTITY" == "Developer ID Application: "*" ($APPLE_TEAM_ID)" ]]
+            [[ "$signature_metadata" == *"Authority=$APPLE_SIGNING_IDENTITY"* ]]
+            [[ "$signature_metadata" == *"TeamIdentifier=$APPLE_TEAM_ID"* ]]
+            [[ "$signature_metadata" == *"(runtime)"* ]]
+            grep -Eq '^Timestamp=.+$' <<< "$signature_metadata"
+            xcrun stapler validate "$app"
+          fi
+          [[ "$(find dist -maxdepth 1 -type f -print | sort)" == "$(printf '%s\n%s\n%s\n' "$checksum" "$dmg" "$zip" | sort)" ]]
           (
             cd "$(dirname "$checksum")"
             shasum -a 256 -c "$(basename "$checksum")"
           )
           echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
           echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+
+      - name: Generate signed Sparkle appcast
+        shell: bash
+        env:
+          SPARKLE_PRIVATE_KEY_BASE64: ${{ secrets.SPARKLE_PRIVATE_KEY_BASE64 }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.version.outputs.build }}
+          ZIP: ${{ steps.assets.outputs.zip }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$SPARKLE_PRIVATE_KEY_BASE64" || { echo 'Missing SPARKLE_PRIVATE_KEY_BASE64' >&2; exit 1; }
+          test -n "$SPARKLE_PUBLIC_ED_KEY" || { echo 'Missing SPARKLE_PUBLIC_ED_KEY' >&2; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$BUILD" =~ ^[1-9][0-9]*$ ]]
+          feed_dir=$(mktemp -d)
+          credential_dir=$(mktemp -d)
+          derived_data=$(mktemp -d)
+          trap 'rm -rf "$feed_dir" "$credential_dir" "$derived_data"' EXIT
+          private_key="$credential_dir/sparkle-private-key"
+          python3 - "$private_key" <<'PY'
+          import base64, binascii, os, sys
+          from pathlib import Path
+          try:
+              value = base64.b64decode("".join(os.environ["SPARKLE_PRIVATE_KEY_BASE64"].split()), validate=True)
+          except (ValueError, binascii.Error):
+              raise SystemExit("SPARKLE_PRIVATE_KEY_BASE64 is not valid base64")
+          if not value:
+              raise SystemExit("SPARKLE_PRIVATE_KEY_BASE64 decoded to an empty key file")
+          Path(sys.argv[1]).write_bytes(value)
+          PY
+          chmod 600 "$private_key"
+
+          # Verify the exported Sparkle seed and public build setting are one keypair.
+          python3 - "$private_key" "$credential_dir/private.der" <<'PY'
+          import base64, binascii, sys
+          from pathlib import Path
+          try:
+              seed = base64.b64decode(b"".join(Path(sys.argv[1]).read_bytes().split()), validate=True)
+          except (ValueError, binascii.Error):
+              raise SystemExit("decoded Sparkle private-key file is not a valid base64 seed")
+          if len(seed) != 32:
+              raise SystemExit("Sparkle private seed must contain exactly 32 bytes")
+          Path(sys.argv[2]).write_bytes(bytes.fromhex("302e020100300506032b657004220420") + seed)
+          PY
+          openssl pkey -inform DER -in "$credential_dir/private.der" -pubout -outform DER \
+            -out "$credential_dir/public.der" 2>/dev/null
+          derived_public=$(tail -c 32 "$credential_dir/public.der" | base64 | tr -d '\r\n')
+          [[ "$derived_public" == "$SPARKLE_PUBLIC_ED_KEY" ]] || {
+            echo 'Sparkle private key does not match SPARKLE_PUBLIC_ED_KEY' >&2
+            exit 1
+          }
+
+          cp "$ZIP" "$feed_dir/"
+          prior_feed="$credential_dir/prior-appcast.xml"
+          set +e
+          http_status=$(curl --fail --silent --show-error --connect-timeout 15 --max-time 60 \
+            --output "$prior_feed" --write-out '%{http_code}' \
+            https://youranreus.github.io/TokChan/appcast.xml)
+          curl_status=$?
+          set -e
+          if [[ $curl_status -eq 0 && "$http_status" == 200 ]]; then
+            prior_notes="$credential_dir/prior-release-notes"
+            note_manifest="$credential_dir/prior-release-notes.tsv"
+            mkdir -p "$prior_notes"
+            python3 - "$prior_feed" > "$note_manifest" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          sparkle = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+          prefix = "https://youranreus.github.io/TokChan/release-notes/"
+          seen = set()
+          for item in root.findall("./channel/item"):
+              note = item.find(f"{{{sparkle}}}releaseNotesLink")
+              if note is None:
+                  continue
+              url = (note.text or "").strip()
+              name = url.removeprefix(prefix)
+              if not url.startswith(prefix) or not name or "/" in name or not name.endswith(".html"):
+                  raise SystemExit(f"unsafe prior release-notes URL: {url}")
+              if name not in seen:
+                  print(f"{url}\t{name}")
+                  seen.add(name)
+          PY
+            while IFS=$'\t' read -r note_url note_file; do
+              [[ -n "$note_url" && -n "$note_file" ]]
+              curl --fail --silent --show-error --connect-timeout 15 --max-time 60 \
+                --output "$prior_notes/$note_file" "$note_url"
+            done < "$note_manifest"
+            cp "$prior_feed" "$feed_dir/appcast.xml"
+          elif [[ $curl_status -eq 22 && "$http_status" == 404 ]]; then
+            rm -f "$prior_feed"
+          else
+            echo "Could not safely fetch prior appcast (curl=$curl_status HTTP=$http_status)" >&2
+            exit 1
+          fi
+
+          note_name="$(basename "${ZIP%.zip}").html"
+          cat > "$feed_dir/$note_name" <<HTML
+          <!doctype html><html><body><h1>TokChan ${VERSION}</h1><p>此版本由 Developer ID 签名并通过 Apple 公证。</p><p><a href="https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${VERSION}">查看完整发布说明</a></p></body></html>
+          HTML
+          xcodebuild -resolvePackageDependencies -project TokChan.xcodeproj -scheme TokChan \
+            -derivedDataPath "$derived_data" >/dev/null
+          appcast_tool=$(find "$derived_data" -path '*/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast' \
+            -type f -print -quit)
+          test -x "$appcast_tool" || { echo 'Sparkle generate_appcast tool not found' >&2; exit 1; }
+          tool_dir=$(dirname "$appcast_tool")
+          "$tool_dir/generate_appcast" --ed-key-file "$private_key" --maximum-versions 0 \
+            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/" \
+            --release-notes-url-prefix "https://youranreus.github.io/TokChan/release-notes/" \
+            --full-release-notes-url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${VERSION}" \
+            "$feed_dir"
+
+          export expected_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/$(basename "$ZIP")"
+          export expected_notes="https://youranreus.github.io/TokChan/release-notes/$note_name"
+          signature=$(python3 - "$feed_dir/appcast.xml" "$prior_feed" <<'PY'
+          import os, re, sys, xml.etree.ElementTree as ET
+          candidate, prior = sys.argv[1:]
+          sparkle = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+          root = ET.parse(candidate).getroot()
+          expected_url = os.environ["expected_url"]
+          expected_notes = os.environ["expected_notes"]
+          expected_version = os.environ["BUILD"]
+          expected_short = os.environ["VERSION"]
+          expected_length = str(os.path.getsize(os.environ["ZIP"]))
+          current = []
+          candidate_items = set()
+          repository_prefix = "https://github.com/" + os.environ["GITHUB_REPOSITORY"] + "/releases/download/"
+          notes_prefix = "https://youranreus.github.io/TokChan/release-notes/"
+
+          def validated_item(item, source):
+              enclosure = item.find("enclosure")
+              if enclosure is None:
+                  raise SystemExit(f"{source} appcast item is missing an enclosure")
+              url = enclosure.get("url", "")
+              suffix = url.removeprefix(repository_prefix)
+              if not url.startswith(repository_prefix) or not re.fullmatch(r"v\d+\.\d+\.\d+/[^/]+\.zip", suffix):
+                  raise SystemExit(f"non-stable, wrong-repository, or non-HTTPS enclosure URL: {url}")
+              version = item.find(f"{{{sparkle}}}version")
+              short_version = item.find(f"{{{sparkle}}}shortVersionString")
+              notes = item.find(f"{{{sparkle}}}releaseNotesLink")
+              values = (
+                  url,
+                  enclosure.get("length", ""),
+                  enclosure.get(f"{{{sparkle}}}edSignature", ""),
+                  "" if version is None else (version.text or "").strip(),
+                  "" if short_version is None else (short_version.text or "").strip(),
+                  "" if notes is None else (notes.text or "").strip(),
+              )
+              if not re.fullmatch(r"[1-9]\d*", values[1]):
+                  raise SystemExit(f"{source} appcast item has invalid enclosure length")
+              if not values[2]:
+                  raise SystemExit(f"{source} appcast item lacks sparkle:edSignature")
+              if not re.fullmatch(r"[1-9]\d*", values[3]):
+                  raise SystemExit(f"{source} appcast item has invalid sparkle:version")
+              if not re.fullmatch(r"\d+\.\d+\.\d+", values[4]):
+                  raise SystemExit(f"{source} appcast item has a non-stable sparkle:shortVersionString")
+              note_name = values[5].removeprefix(notes_prefix)
+              if not values[5].startswith(notes_prefix) or not re.fullmatch(r"[^/]+\.html", note_name):
+                  raise SystemExit(f"{source} appcast item has an unsafe release-notes URL")
+              return values, enclosure
+
+          for item in root.findall("./channel/item"):
+              values, enclosure = validated_item(item, "candidate")
+              candidate_items.add(values)
+              if values[0] == expected_url:
+                  current.append((item, enclosure))
+          if len(current) != 1:
+              raise SystemExit("candidate appcast must contain exactly one current enclosure")
+          item, enclosure = current[0]
+          for name, expected in (("version", expected_version), ("shortVersionString", expected_short)):
+              element = item.find(f"{{{sparkle}}}{name}")
+              if element is None or (element.text or "").strip() != expected:
+                  raise SystemExit(f"bad appcast sparkle:{name}")
+          if enclosure.get("length") != expected_length:
+              raise SystemExit(f"bad appcast length: {enclosure.get('length')!r}")
+          signature = enclosure.get(f"{{{sparkle}}}edSignature", "")
+          if not signature:
+              raise SystemExit("candidate appcast lacks sparkle:edSignature")
+          notes = item.find(f"{{{sparkle}}}releaseNotesLink")
+          if notes is None or (notes.text or "").strip() != expected_notes:
+              raise SystemExit("candidate appcast has the wrong release-notes URL")
+          if os.path.exists(prior):
+              old = ET.parse(prior).getroot()
+              old_items = {
+                  validated_item(old_item, "prior")[0]
+                  for old_item in old.findall("./channel/item")
+              }
+              if not old_items:
+                  raise SystemExit("prior appcast contains no update items")
+              if not old_items.issubset(candidate_items):
+                  raise SystemExit("candidate appcast changed or dropped prior feed history")
+          print(signature)
+          PY
+          )
+          "$tool_dir/sign_update" --verify --ed-key-file "$private_key" "$ZIP" "$signature"
+
+          if [[ -d "${prior_notes:-}" ]]; then
+            for prior_note in "$prior_notes/"*.html; do
+              [[ -e "$prior_note" ]] || break
+              cp "$prior_note" "$feed_dir/"
+            done
+          fi
+          rm -rf "$credential_dir"
+          rm -f "$feed_dir/"*.zip
+          unset SPARKLE_PRIVATE_KEY_BASE64
+          mkdir -p pages/release-notes
+          cp "$feed_dir/appcast.xml" pages/appcast.xml
+          for release_note in "$feed_dir/"*.html; do
+            [[ -e "$release_note" ]] || break
+            cp "$release_note" pages/release-notes/
+          done
+          rm -f "$feed_dir/"*.html
+          test -f pages/appcast.xml
+          test -f "pages/release-notes/$note_name"
+          ! find pages -type f ! -path 'pages/appcast.xml' \
+            ! -path 'pages/release-notes/*.html' -print -quit | grep -q .
+          ! find pages -type l -print -quit | grep -q .
+          ! grep -R -F "$credential_dir" pages
 
       - name: Create or resume draft Release
         shell: bash
@@ -110,6 +412,8 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           DMG: ${{ steps.assets.outputs.dmg }}
           CHECKSUM: ${{ steps.assets.outputs.checksum }}
+          ZIP: ${{ steps.assets.outputs.zip }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           find_release() {
@@ -143,11 +447,17 @@ jobs:
             echo "Invalid Release metadata for $TAG: $release_info" >&2
             exit 1
           }
-          [[ "$release_draft" == true ]] || {
-            echo "Release $TAG is already published; assets are immutable" >&2
-            exit 1
-          }
-          echo "Using draft Release $TAG (ID $release_id)"
+          recovery=false
+          if [[ "$release_draft" == false ]]; then
+            [[ "$RUN_ATTEMPT" =~ ^[2-9][0-9]*$ ]] || {
+              echo "Release $TAG is already published; assets are immutable" >&2
+              exit 1
+            }
+            recovery=true
+            echo "Using immutable published Release $TAG for feed-only recovery"
+          else
+            echo "Using draft Release $TAG (ID $release_id)"
+          fi
           release_api="repos/${GITHUB_REPOSITORY}/releases/${release_id}"
 
           release_body=$(gh api "$release_api" --jq .body)
@@ -167,23 +477,70 @@ jobs:
             exit 1
           fi
 
-          [[ "$(gh api "$release_api" --jq .draft)" == true ]] || {
-            echo "Release $TAG left draft state before asset upload; refusing to overwrite assets" >&2
-            exit 1
-          }
-          gh release upload "$TAG" "$DMG" "$CHECKSUM" --clobber
+          if ! $recovery; then
+            [[ "$(gh api "$release_api" --jq .draft)" == true ]] || {
+              echo "Release $TAG left draft state before asset upload; refusing to overwrite assets" >&2
+              exit 1
+            }
+            gh release upload "$TAG" "$DMG" "$CHECKSUM" "$ZIP" --clobber
+            [[ "$(gh api "$release_api" --jq .draft)" == true ]] || {
+              echo "Release $TAG left draft state during asset upload; refusing to publish" >&2
+              exit 1
+            }
+          fi
 
-          [[ "$(gh api "$release_api" --jq .draft)" == true ]] || {
-            echo "Release $TAG left draft state during asset upload; refusing to publish" >&2
-            exit 1
-          }
-          expected=$(printf '%s\n%s\n' "$(basename "$DMG")" "$(basename "$CHECKSUM")" | sort)
-          actual=$(gh api "$release_api" --jq '.assets[].name' | sort)
+          asset_rows=$(gh api "$release_api" --jq '.assets[] | [.id, .name, .size] | @tsv')
+          expected=$(printf '%s\n%s\n%s\n' \
+            "$(basename "$DMG")" "$(basename "$CHECKSUM")" "$(basename "$ZIP")" | sort)
+          actual=$(cut -f2 <<< "$asset_rows" | sort)
           [[ "$actual" == "$expected" ]] || {
-            echo "Release assets do not exactly match the expected pair" >&2
+            echo "Release assets do not exactly match the expected set" >&2
             printf 'Expected:\n%s\nActual:\n%s\n' "$expected" "$actual" >&2
             exit 1
           }
+          verify_dir=$(mktemp -d)
+          trap 'rm -rf "$verify_dir"' EXIT
+          for local_asset in "$DMG" "$CHECKSUM" "$ZIP"; do
+            name=$(basename "$local_asset")
+            row=$(awk -F '\t' -v name="$name" '$2 == name { print }' <<< "$asset_rows")
+            [[ "$row" != *$'\n'* ]]
+            IFS=$'\t' read -r asset_id asset_name asset_size <<< "$row"
+            [[ "$asset_id" =~ ^[0-9]+$ && "$asset_name" == "$name" && "$asset_size" == "$(stat -f %z "$local_asset")" ]] || {
+              echo "Release asset metadata mismatch for $name" >&2
+              exit 1
+            }
+            gh api -H 'Accept: application/octet-stream' \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" > "$verify_dir/$name"
+            cmp "$local_asset" "$verify_dir/$name"
+          done
 
-          gh api --method PATCH "$release_api" -F draft=false --silent
-          [[ "$(gh api "$release_api" --jq .draft)" == false ]]
+          if ! $recovery; then
+            gh api --method PATCH "$release_api" -F draft=false --silent
+            [[ "$(gh api "$release_api" --jq .draft)" == false ]]
+          fi
+
+      - name: Verify published update archive
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ZIP: ${{ steps.assets.outputs.zip }}
+        run: |
+          set -euo pipefail
+          downloaded=$(mktemp)
+          trap 'rm -f "$downloaded"' EXIT
+          curl --fail --silent --show-error --retry 5 --retry-all-errors \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/$(basename "$ZIP")" \
+            -o "$downloaded"
+          cmp "$ZIP" "$downloaded"
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+
+      - name: Upload appcast Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v4
+        with:
+          path: pages
+
+      - name: Deploy appcast last
+        id: deployment
+        uses: actions/deploy-pages@f81c0a1a0504b6e9e32624f5989ee5e2a3eabf0b # v4

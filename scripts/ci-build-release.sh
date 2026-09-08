@@ -5,8 +5,8 @@ set -euo pipefail
 original_umask=$(umask)
 umask 077
 
-for name in APPLE_CERTIFICATE_P12_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_TEAM_ID APPLE_ID APPLE_APP_SPECIFIC_PASSWORD; do
-  [[ -n "${!name:-}" ]] || { echo "Missing GitHub Actions secret: $name" >&2; exit 1; }
+for name in APPLE_CERTIFICATE_P12_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_TEAM_ID APPLE_ID APPLE_APP_SPECIFIC_PASSWORD SPARKLE_PUBLIC_ED_KEY; do
+  [[ -n "${!name:-}" ]] || { echo "Missing required release value: $name" >&2; exit 1; }
 done
 [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || { echo 'Invalid APPLE_TEAM_ID' >&2; exit 1; }
 [[ "$APPLE_SIGNING_IDENTITY" == "Developer ID Application: "*" ($APPLE_TEAM_ID)" ]] || {

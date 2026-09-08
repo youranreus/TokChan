@@ -28,7 +28,8 @@ class SigningLifecycleTests(unittest.TestCase):
                         CALL_LOG=str(self.log), APPLE_CERTIFICATE_P12_BASE64=base64.b64encode(b'fake-p12').decode(),
                         APPLE_CERTIFICATE_PASSWORD='fake-export-secret', APPLE_TEAM_ID='ABCDE12345',
                         APPLE_SIGNING_IDENTITY='Developer ID Application: Example (ABCDE12345)',
-                        APPLE_ID='example@example.invalid', APPLE_APP_SPECIFIC_PASSWORD='fake-notary-secret')
+                        APPLE_ID='example@example.invalid', APPLE_APP_SPECIFIC_PASSWORD='fake-notary-secret',
+                        SPARKLE_PUBLIC_ED_KEY='fixture-public-key')
         self.write(self.bin / 'security', '''#!/usr/bin/env python3
 import os, sys
 from pathlib import Path
@@ -52,6 +53,7 @@ assert sys.argv[1:] == ['--notarize']
 for name in ['APPLE_CERTIFICATE_P12_BASE64', 'APPLE_CERTIFICATE_PASSWORD', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_ID']:
     assert name not in os.environ, name
 assert os.environ['APPLE_NOTARY_PROFILE'] == 'tokchan-release'
+assert os.environ['SPARKLE_PUBLIC_ED_KEY'] == 'fixture-public-key'
 assert Path(os.environ['APPLE_KEYCHAIN_PATH']).parent.exists()
 assert os.umask(0o022) == 0o022, 'credential umask leaked into distributed build'
 with open(os.environ['CALL_LOG'], 'a') as f: f.write('build\\n')
@@ -100,12 +102,22 @@ raise SystemExit(int(os.environ.get('FAIL_BUILD', '0')))
         self.assertNotIn('build\n', calls)
         self.assertIn("['delete-keychain',", calls)
 
-    def test_missing_secret_fails_before_keychain_access(self):
-        del self.env['APPLE_APP_SPECIFIC_PASSWORD']
-        result, calls = self.run_script()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('APPLE_APP_SPECIFIC_PASSWORD', result.stderr)
-        self.assertEqual(calls, '')
+    def test_each_missing_required_value_fails_before_keychain_access(self):
+        required = [
+            'APPLE_CERTIFICATE_P12_BASE64', 'APPLE_CERTIFICATE_PASSWORD',
+            'APPLE_SIGNING_IDENTITY', 'APPLE_TEAM_ID', 'APPLE_ID',
+            'APPLE_APP_SPECIFIC_PASSWORD', 'SPARKLE_PUBLIC_ED_KEY',
+        ]
+        for name in required:
+            with self.subTest(name=name):
+                saved = self.env.pop(name)
+                try:
+                    result, calls = self.run_script()
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(name, result.stderr)
+                    self.assertEqual(calls, '')
+                finally:
+                    self.env[name] = saved
 
     def test_invalid_base64_never_imports(self):
         self.env['APPLE_CERTIFICATE_P12_BASE64'] = '%%%'
