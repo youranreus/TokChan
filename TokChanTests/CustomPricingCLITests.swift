@@ -77,7 +77,12 @@ private actor PricingRunner: ProcessRunning {
         self.outputs = outputs
     }
 
-    func run(executable: URL, arguments: [String], timeout: TimeInterval) async throws -> ProcessOutput {
+    func run(
+        executable: URL,
+        arguments: [String],
+        environmentOverrides: [String: String],
+        timeout: TimeInterval
+    ) async throws -> ProcessOutput {
         calls.append(Call(executable: executable, arguments: arguments))
         guard !outputs.isEmpty else { throw ProcessRunnerError.unreadableOutput }
         return outputs.removeFirst()

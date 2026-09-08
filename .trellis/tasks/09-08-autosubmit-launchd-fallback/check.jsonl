@@ -1,0 +1,2 @@
+{"file":".trellis/spec/macos/index.md","reason":"macOS layer quality and consistency review entry point"}
+{"file":".trellis/spec/macos/tokscale-integration.md","reason":"Verify CLI safety, exact autosubmit sequence, error semantics, and test coverage"}

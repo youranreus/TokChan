@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 struct TokscaleCommandContext: Equatable {
@@ -143,7 +144,27 @@ struct ProcessOutput: Equatable {
 }
 
 protocol ProcessRunning {
-    func run(executable: URL, arguments: [String], timeout: TimeInterval) async throws -> ProcessOutput
+    func run(
+        executable: URL,
+        arguments: [String],
+        environmentOverrides: [String: String],
+        timeout: TimeInterval
+    ) async throws -> ProcessOutput
+}
+
+extension ProcessRunning {
+    func run(
+        executable: URL,
+        arguments: [String],
+        timeout: TimeInterval
+    ) async throws -> ProcessOutput {
+        try await run(
+            executable: executable,
+            arguments: arguments,
+            environmentOverrides: [:],
+            timeout: timeout
+        )
+    }
 }
 
 enum ProcessRunnerError: LocalizedError {
@@ -164,11 +185,16 @@ final class FoundationProcessRunner: ProcessRunning {
     func run(
         executable: URL,
         arguments: [String],
+        environmentOverrides: [String: String],
         timeout: TimeInterval
     ) async throws -> ProcessOutput {
         try await withThrowingTaskGroup(of: ProcessOutput.self) { group in
             group.addTask {
-                try await self.runUntilExit(executable: executable, arguments: arguments)
+                try await self.runUntilExit(
+                    executable: executable,
+                    arguments: arguments,
+                    environmentOverrides: environmentOverrides
+                )
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
@@ -183,7 +209,11 @@ final class FoundationProcessRunner: ProcessRunning {
         }
     }
 
-    private func runUntilExit(executable: URL, arguments: [String]) async throws -> ProcessOutput {
+    private func runUntilExit(
+        executable: URL,
+        arguments: [String],
+        environmentOverrides: [String: String]
+    ) async throws -> ProcessOutput {
         let process = Process()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -191,7 +221,10 @@ final class FoundationProcessRunner: ProcessRunning {
         process.arguments = arguments
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
-        process.environment = Self.environment(for: executable)
+        process.environment = Self.environment(
+            for: executable,
+            overrides: environmentOverrides
+        )
 
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
@@ -232,7 +265,10 @@ final class FoundationProcessRunner: ProcessRunning {
         String(decoding: data, as: UTF8.self)
     }
 
-    private static func environment(for executable: URL) -> [String: String] {
+    private static func environment(
+        for executable: URL,
+        overrides: [String: String]
+    ) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         let executableDirectory = executable.deletingLastPathComponent().path
         let inheritedPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -240,6 +276,7 @@ final class FoundationProcessRunner: ProcessRunning {
         if !pathEntries.contains(executableDirectory) {
             environment["PATH"] = ([executableDirectory] + pathEntries).joined(separator: ":")
         }
+        environment.merge(overrides) { _, override in override }
         return environment
     }
 }
@@ -268,6 +305,8 @@ enum TokscaleCLIError: LocalizedError {
     case invalidClient
     case invalidDateFilter
     case failed(exitCode: Int32, message: String)
+    case autosubmitCompatibilityCleanupFailed(exitCode: Int32?, message: String)
+    case autosubmitCompatibilityStateCleanupFailed(exitCode: Int32?, message: String)
     case invalidStatusJSON(Error)
     case invalidPricingJSON(Error)
     case unsupportedPricing(version: String, detail: String)
@@ -287,6 +326,16 @@ enum TokscaleCLIError: LocalizedError {
             return "请输入有效年份或 YYYY-MM-DD 格式的日期。"
         case let .failed(exitCode, message):
             return "Tokscale 退出码为 \(exitCode)：\(message)"
+        case let .autosubmitCompatibilityCleanupFailed(exitCode, message):
+            if let exitCode {
+                return "自动提交兼容清理失败（launchctl 退出码为 \(exitCode)）：\(message)"
+            }
+            return "自动提交兼容清理失败：\(message)"
+        case let .autosubmitCompatibilityStateCleanupFailed(exitCode, message):
+            if let exitCode {
+                return "自动提交状态清理失败（Tokscale 退出码为 \(exitCode)）：\(message)"
+            }
+            return "自动提交状态清理失败：\(message)"
         case let .invalidStatusJSON(error):
             return "无法读取自动提交状态：\(error.localizedDescription)"
         case let .invalidPricingJSON(error):
@@ -304,13 +353,25 @@ final class TokscaleCLIClient: TokscaleCLIService, CustomPricingCLIService {
         let path: String
     }
 
+    private static let launchctlURL = URL(fileURLWithPath: "/bin/launchctl")
+    private static let autosubmitServiceLabel = "ai.tokscale.autosubmit"
+
     private let runner: ProcessRunning
+    private let recoveryRunner: ProcessRunning
     private let decoder = JSONDecoder()
     private let timeout: TimeInterval
+    private let effectiveUserID: UInt32
 
-    init(runner: ProcessRunning, timeout: TimeInterval = 300) {
+    init(
+        runner: ProcessRunning,
+        recoveryRunner: ProcessRunning? = nil,
+        timeout: TimeInterval = 300,
+        effectiveUserID: UInt32 = UInt32(geteuid())
+    ) {
         self.runner = runner
+        self.recoveryRunner = recoveryRunner ?? runner
         self.timeout = timeout
+        self.effectiveUserID = effectiveUserID
     }
 
     func whoAmI(context: TokscaleCommandContext) async throws -> String {
@@ -346,7 +407,75 @@ final class TokscaleCLIClient: TokscaleCLIService, CustomPricingCLIService {
         _ configuration: AutosubmitConfiguration,
         context: TokscaleCommandContext
     ) async throws {
-        _ = try await run(.configureAutosubmit(configuration), context: context)
+        let arguments = try TokscaleCommandBuilder.arguments(
+            version: context.version,
+            command: .configureAutosubmit(configuration)
+        )
+        let initialOutput = try await runner.run(
+            executable: context.npxURL,
+            arguments: arguments,
+            timeout: timeout
+        )
+        guard initialOutput.exitCode != 0 else { return }
+        guard Self.isKnownAutosubmitBootoutFailure(initialOutput) else {
+            throw Self.commandFailure(initialOutput)
+        }
+
+        let cleanupOutput: ProcessOutput
+        do {
+            cleanupOutput = try await recoveryRunner.run(
+                executable: Self.launchctlURL,
+                arguments: [
+                    "bootout",
+                    "gui/\(effectiveUserID)/\(Self.autosubmitServiceLabel)"
+                ],
+                timeout: timeout
+            )
+        } catch {
+            throw TokscaleCLIError.autosubmitCompatibilityCleanupFailed(
+                exitCode: nil,
+                message: Self.sanitizedMessage(error.localizedDescription)
+            )
+        }
+        guard cleanupOutput.exitCode == 0 else {
+            let message = Self.outputMessage(cleanupOutput)
+            throw TokscaleCLIError.autosubmitCompatibilityCleanupFailed(
+                exitCode: cleanupOutput.exitCode,
+                message: message
+            )
+        }
+
+        let stateCleanupArguments = try TokscaleCommandBuilder.arguments(
+            version: context.version,
+            command: .disableAutosubmit
+        )
+        let stateCleanupOutput: ProcessOutput
+        do {
+            stateCleanupOutput = try await runner.run(
+                executable: context.npxURL,
+                arguments: stateCleanupArguments,
+                environmentOverrides: ["TOKSCALE_AUTOSUBMIT_SKIP_SCHEDULER": "1"],
+                timeout: timeout
+            )
+        } catch {
+            throw TokscaleCLIError.autosubmitCompatibilityStateCleanupFailed(
+                exitCode: nil,
+                message: Self.sanitizedMessage(error.localizedDescription)
+            )
+        }
+        guard stateCleanupOutput.exitCode == 0 else {
+            throw TokscaleCLIError.autosubmitCompatibilityStateCleanupFailed(
+                exitCode: stateCleanupOutput.exitCode,
+                message: Self.outputMessage(stateCleanupOutput)
+            )
+        }
+
+        let retryOutput = try await runner.run(
+            executable: context.npxURL,
+            arguments: arguments,
+            timeout: timeout
+        )
+        _ = try Self.requireSuccess(retryOutput)
     }
 
     func disableAutosubmit(context: TokscaleCommandContext) async throws {
@@ -406,11 +535,34 @@ final class TokscaleCLIClient: TokscaleCLIService, CustomPricingCLIService {
             arguments: arguments,
             timeout: timeout
         )
+        return try Self.requireSuccess(output)
+    }
+
+    private static func requireSuccess(_ output: ProcessOutput) throws -> ProcessOutput {
         guard output.exitCode == 0 else {
-            let message = Self.sanitizedMessage(output.stderr.isEmpty ? output.stdout : output.stderr)
-            throw TokscaleCLIError.failed(exitCode: output.exitCode, message: message)
+            throw commandFailure(output)
         }
         return output
+    }
+
+    private static func commandFailure(_ output: ProcessOutput) -> TokscaleCLIError {
+        .failed(exitCode: output.exitCode, message: outputMessage(output))
+    }
+
+    private static func outputMessage(_ output: ProcessOutput) -> String {
+        sanitizedMessage(output.stderr.isEmpty ? output.stdout : output.stderr)
+    }
+
+    private static func isKnownAutosubmitBootoutFailure(_ output: ProcessOutput) -> Bool {
+        guard output.exitCode != 0 else { return false }
+        let diagnostic = output.stdout + "\n" + output.stderr
+        return diagnostic.contains("launchd bootout failed")
+            && diagnostic.contains("launchctl bootout --wait")
+            && diagnostic.range(
+                of: #"exit status:\s*64\b"#,
+                options: .regularExpression
+            ) != nil
+            && diagnostic.contains("Unrecognized target specifier")
     }
 
     private static func pricingCapabilityError(
