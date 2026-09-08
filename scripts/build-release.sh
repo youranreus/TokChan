@@ -333,8 +333,16 @@ notarize_artifact() {
     --keychain "$APPLE_KEYCHAIN_PATH" --wait --timeout 30m --output-format json \
     > "$response" 2>> "$build_log" || command_status=$?
   cat "$response" >> "$build_log"
+  if [[ $command_status -ne 0 ]]; then
+    if [[ -s "$response" ]]; then
+      echo "Apple returned a non-success response for $label:" >&2
+      cat "$response" >&2
+    fi
+    fail "Apple notarization command failed for $label (exit $command_status); inspect the Apple diagnostics above"
+  fi
+  [[ -s "$response" ]] || fail "Apple notarization returned no response for $label; inspect the Apple diagnostics above"
   submission_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id", ""))' "$response") || \
-    fail "invalid Apple notarization response for $label"
+    fail "Apple notarization returned invalid JSON for $label; inspect the Apple diagnostics above"
   [[ "$submission_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail "missing Apple notarization submission ID for $label"
   echo "Apple $label submission: $submission_id"
   status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status", ""))' "$response")
