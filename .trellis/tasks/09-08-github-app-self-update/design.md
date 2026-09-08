@@ -7,7 +7,7 @@
 ## 2. 现状与约束
 
 - TokChan 是 macOS 13+ 的 SwiftUI 菜单栏应用，`SettingsView` 的“关于”页已经展示应用版本。
-- Xcode 工程当前没有 Swift Package 依赖，Info.plist 由 build settings 生成。
+- Xcode 工程此前没有 Swift Package 依赖；接入后固定 Sparkle 2.7.1。由于 Xcode 自动生成的 Info.plist 不会可靠写入 Sparkle 自定义键，应用改用 `TokChan/SupportingFiles/Info.plist`，并继续通过 build settings 展开版本、公钥等值。
 - Release 工作流按 `vX.Y.Z` Tag 构建 universal DMG，完成 Developer ID 签名、公证和票据装订，然后发布 DMG 与 SHA-256。
 - 首版只允许手动检查，不执行启动检查、定时检查或后台提醒。
 - 私有 EdDSA 密钥不得进入仓库、Release 附件、appcast 或应用包；应用只嵌入公钥。

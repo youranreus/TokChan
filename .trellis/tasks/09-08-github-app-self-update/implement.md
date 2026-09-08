@@ -6,7 +6,7 @@
 
 预计修改范围：
 
-- `TokChan.xcodeproj/project.pbxproj`：固定 Sparkle Swift Package、链接 product，并写入 updater 所需 Info.plist build settings。
+- `TokChan.xcodeproj/project.pbxproj`、`TokChan/SupportingFiles/Info.plist`：固定 Sparkle Swift Package、链接 product，并写入 updater 所需 Info.plist 配置与 build setting 展开值。
 - `TokChan/TokChanApp.swift`：创建长生命周期 updater controller/适配器并注入设置页；UI test 注入离线替身。
 - `TokChan/Features/Settings/SettingsView.swift`：关于页增加“检查更新”按钮并绑定可用状态。
 - `TokChan/Shared/Services/`：新增窄 updater 协议与 Sparkle 适配层，隔离第三方框架和测试替身。
@@ -21,48 +21,48 @@
 
 ### 1. 固定依赖与配置
 
-- [ ] 选择支持 macOS 13 的稳定 Sparkle 2 版本并在 Xcode 工程中固定精确版本/受控版本范围。
-- [ ] 将 `Sparkle` product 只链接到应用 target，确认测试 target 可通过应用模块或替身测试而无需发起网络。
-- [ ] 添加 HTTPS `SUFeedURL`、`SUPublicEDKey` 和禁用自动检查的配置。
-- [ ] 构建后检查生成的 Info.plist 和应用签名，确认配置存在且无私钥材料。
+- [x] 选择支持 macOS 13 的稳定 Sparkle 2 版本并在 Xcode 工程中固定精确版本/受控版本范围。
+- [x] 将 `Sparkle` product 只链接到应用 target，确认测试 target 可通过应用模块或替身测试而无需发起网络。
+- [x] 添加 HTTPS `SUFeedURL`、`SUPublicEDKey` 和禁用自动检查的配置。
+- [x] 构建后检查生成的 Info.plist 和应用签名，确认配置存在且无私钥材料。
 
 回滚点：依赖和 build settings 应形成独立可还原改动；若 Sparkle 与 macOS 13 或当前签名流程不兼容，在进入 UI/发布改造前停止。
 
 ### 2. 建立 updater 边界
 
-- [ ] 定义最小 `AppUpdating` 协议和可观察的 `canCheckForUpdates` 状态。
-- [ ] 用 `SPUStandardUpdaterController` 实现 live adapter，控制器在应用生命周期内保持强引用。
-- [ ] 为 Preview/UI tests 提供完全离线的 updater 替身。
-- [ ] 在 `TokChanApplicationDelegate`/`TokChanApp` 组合根创建并向 `SettingsView` 注入依赖。
-- [ ] 单元测试动作只转发一次、忙碌状态禁止重复动作、状态恢复后重新可用。
+- [x] 定义最小 `AppUpdating` 协议和可观察的 `canCheckForUpdates` 状态。
+- [x] 用 `SPUStandardUpdaterController` 实现 live adapter，控制器在应用生命周期内保持强引用。
+- [x] 为 Preview/UI tests 提供完全离线的 updater 替身。
+- [x] 在 `TokChanApplicationDelegate`/`TokChanApp` 组合根创建并向 `SettingsView` 注入依赖。
+- [x] 单元测试动作只转发一次、忙碌状态禁止重复动作、状态恢复后重新可用。
 
 回滚点：第三方类型只留在适配层和组合根；若 API 形态需调整，不扩散进 `SettingsView`。
 
 ### 3. 添加关于页入口
 
-- [ ] 在关于页内容底部加入“检查更新”按钮，保持现有原生 SwiftUI Settings 布局与可访问性标识。
-- [ ] 按钮触发显式用户检查并使用 `canCheckForUpdates` 控制禁用状态。
-- [ ] 更新 UI fixture 和 UI tests，验证按钮存在、点击调用替身且测试不访问网络。
+- [x] 在关于页内容底部加入“检查更新”按钮，保持现有原生 SwiftUI Settings 布局与可访问性标识。
+- [x] 按钮触发显式用户检查并使用 `canCheckForUpdates` 控制禁用状态。
+- [x] 更新 UI fixture 和 UI tests，验证按钮存在、点击调用替身且测试不访问网络。
 - [ ] 人工验证 Sparkle 标准窗口在无更新、新版、下载中和错误状态下的交互。
 
 ### 4. 扩展正式发布产物
 
-- [ ] 从已完成 Developer ID 签名、公证和票据装订的同一 `TokChan.app` 生成只含应用的 universal 更新 ZIP。
-- [ ] 对 ZIP 内容、架构、bundle 版本、代码签名、公证票据和不可覆写行为执行本地校验。
-- [ ] 在正式 CI 中从受保护 secret/key material 加载 EdDSA 私钥；缺失或无效时 fail closed。
-- [ ] 使用固定 Sparkle 工具版本生成签名和 appcast；确保 feed 只含稳定已发布版本。
-- [ ] Release 上传 DMG、DMG SHA-256 和更新 ZIP；发布说明继续由 GitHub Release 维护。
-- [ ] 将 appcast/发布说明部署到固定 HTTPS GitHub 托管地址，并保证 feed 是最后发布的原子发现点。
-- [ ] 重跑/已存在 Release 路径不得覆盖公开资产或让 feed 指向不完整版本。
+- [x] 从已完成 Developer ID 签名、公证和票据装订的同一 `TokChan.app` 生成只含应用的 universal 更新 ZIP。
+- [x] 对 ZIP 内容、架构、bundle 版本、代码签名、公证票据和不可覆写行为执行本地校验。
+- [x] 在正式 CI 中从受保护 secret/key material 加载 EdDSA 私钥；缺失或无效时 fail closed。
+- [x] 使用固定 Sparkle 工具版本生成签名和 appcast；确保 feed 只含稳定已发布版本。
+- [x] Release 上传 DMG、DMG SHA-256 和更新 ZIP；发布说明继续由 GitHub Release 维护。
+- [x] 将 appcast/发布说明部署到固定 HTTPS GitHub 托管地址，并保证 feed 是最后发布的原子发现点。
+- [x] 重跑/已存在 Release 路径不得覆盖公开资产或让 feed 指向不完整版本。
 
 回滚点：在 feed 推进前，额外 ZIP/草稿资产不会被客户端发现；失败时保留旧 feed。
 
 ### 5. 自动化验证与文档
 
-- [ ] 为 shell fixture 增加 Sparkle 工具、密钥、ZIP、appcast 和发布顺序场景。
-- [ ] 验证正常路径以及缺密钥、签名失败、错误 URL、缺资产、draft/prerelease、重复发布等失败路径。
-- [ ] 更新发布文档，说明 EdDSA 私钥保管/轮换、feed URL 稳定性、部署顺序、故障回滚与端到端演练。
-- [ ] 更新 README 的应用内检查入口，同时保留 DMG 手工安装/恢复说明。
+- [x] 为 shell fixture 增加 Sparkle 工具、密钥、ZIP、appcast 和发布顺序场景。
+- [x] 验证正常路径以及缺密钥、签名失败、错误 URL、缺资产、draft/prerelease、重复发布等失败路径。
+- [x] 更新发布文档，说明 EdDSA 私钥保管/轮换、feed URL 稳定性、部署顺序、故障回滚与端到端演练。
+- [x] 更新 README 的应用内检查入口，同时保留 DMG 手工安装/恢复说明。
 
 ### 6. 端到端发布门禁
 

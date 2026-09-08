@@ -1,6 +1,6 @@
 # macOS 签名、公证与 GitHub 发布
 
-正式发布使用 Developer ID Application 签名、Hardened Runtime、可信时间戳和 Apple 公证。App 与 DMG 都装订公证票据，最后生成 SHA-256 校验文件。任一步骤失败，CI 不会发布 Release，也不会降级为 ad-hoc 签名。
+正式发布使用 Developer ID Application 签名、Hardened Runtime、可信时间戳和 Apple 公证。App 与 DMG 都装订公证票据，最后生成 SHA-256 校验文件。签名、公证、打包或 Release 资产校验失败时，CI 不会发布 Release，也不会降级为 ad-hoc 签名；若 Release 发布后的 Pages 部署失败，已部署的旧 feed 保持不变，并进入仅恢复 feed 的重跑路径。
 
 本流程适用于后续通过新工作流发布的版本。历史 Release 不会自动获得签名或公证，已发布的 Tag 和附件不应覆盖。
 
@@ -41,7 +41,15 @@ base64 -i "$HOME/Downloads/DeveloperID.p12" | pbcopy
 
 凭据仅注入签名构建步骤。脚本建立独立临时钥匙串，导入证书并保存公证凭据，构建结束或失败时恢复钥匙串搜索列表并清理临时文件。不要将 `.p12`、私钥或密码提交到仓库或贴到 Issue 中。
 
-## 4. 本地预检与正式发布
+## 4. Sparkle 更新签名与 feed
+
+使用固定版本 Sparkle 的 `generate_keys` 在受控 Mac 上生成 EdDSA 密钥。私钥只做加密备份，并将其文件内容 base64 编码后保存为 Actions Secret `SPARKLE_PRIVATE_KEY_BASE64`；公钥保存为 Actions Variable `SPARKLE_PUBLIC_ED_KEY`。两者必须配对，私钥不得提交、打印或进入 Release/Pages artifact。
+
+正式流程从已签名、公证并装订票据的同一个 `TokChan.app` 生成仅含应用的 ZIP。CI 先在私有工作区用 Sparkle 官方 `generate_appcast` 生成并验证候选 feed，再把 DMG、SHA-256 与 ZIP 上传到草稿 Release 并逐字节复验。稳定 Release 发布且 ZIP 可公开下载后，才将 `appcast.xml` 与对应发布说明页部署到 `https://youranreus.github.io/TokChan/`。缺少密钥、ZIP、签名字段或 HTTPS 下载地址时流程失败，旧 feed 保持不变。draft、prerelease 与非 `vX.Y.Z` Tag 不进入 feed。若 Release 已发布但 Pages 部署失败，只能重跑同一次 Actions 执行以校验不可变资产并恢复 feed，不得重新上传或改写 Release。
+
+首次启用前必须用隔离 feed 演练两个连续版本，覆盖无更新、断网、无效签名、安装和重启。线上资产出错时不要覆盖 Release 或移动 Tag，应停止推进 feed 并发布新的 patch。EdDSA 与 Developer ID 信任链不要在同一版本同时轮换。
+
+## 5. 本地预检与正式发布
 
 本地无凭据构建保持可用，仅用于开发验证，输出仍是 ad-hoc 签名。
 
@@ -64,15 +72,16 @@ export APPLE_SIGNING_IDENTITY='Developer ID Application: Your Name (ABCDE12345)'
 export APPLE_TEAM_ID='ABCDE12345'
 export APPLE_KEYCHAIN_PATH="$HOME/Library/Keychains/login.keychain-db"
 export APPLE_NOTARY_PROFILE='tokchan-release'
+export SPARKLE_PUBLIC_ED_KEY='generate_keys 输出的公钥'
 xcrun notarytool store-credentials "$APPLE_NOTARY_PROFILE" --keychain "$APPLE_KEYCHAIN_PATH"
 scripts/build-release.sh --notarize --output /tmp/tokchan-notarized-build
 ```
 
 正式模式缺少凭据或验证失败会立即报错，不会回退到本地模式。公证服务可能排队，超时后本次构建失败；Actions 失败日志会保留 Apple 返回的详情，先根据日志中的 submission ID 检查状态，解决问题后重新运行同一 Tag 的失败工作流。已发布的 Release 不允许重写。历史流程留下的旧草稿若包含“未公证”说明，需要先检查并更新草稿说明再重试。
 
-## 5. 首次正式发布验收
+## 6. 首次正式发布验收
 
-CI 会校验证书身份、Team ID、签名、公证状态、票据、DMG 内容和最终校验和。Secrets 配置正确并成功跑过真实公证之前，不能认为端到端验收已完成。
+CI 会校验证书身份、Team ID、嵌套 Sparkle 签名、公证状态、票据、DMG/ZIP 内容、最终校验和、EdDSA appcast 与公私钥配对。Secrets 配置正确并成功跑过真实公证与两版本更新演练之前，不能认为端到端验收已完成。
 
 首次正式包应通过浏览器下载到未安装过 TokChan 的 Mac，保持默认 Gatekeeper 设置，打开 DMG，拖入“应用程序”再启动。确认没有“无法验证开发者”或“Apple 无法检查是否包含恶意软件”的拦截；确认菜单栏、设置和 Tokscale 外部命令正常。另用干净环境在首次启动前断网检查票据可用性，条件允许时分别验证 Apple Silicon 和 Intel。
 

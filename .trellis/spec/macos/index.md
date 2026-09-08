@@ -4,7 +4,7 @@
 
 ## Project shape
 
-TokChan is a dependency-free macOS 13 menu-bar app with a SwiftUI `App`/`Settings` scene and an AppKit status-item bridge. The application delegate owns the single status item and dashboard popover; feature UI lives under `TokChan/Features`, and external Tokscale/API/preferences boundaries live under `TokChan/Shared`.
+TokChan is a macOS 13 menu-bar app with a SwiftUI `App`/`Settings` scene, an AppKit status-item bridge, and one pinned Sparkle dependency for self-update. The application delegate owns the single status item and dashboard popover; feature UI lives under `TokChan/Features`, and external Tokscale/API/preferences/update boundaries live under `TokChan/Shared`.
 
 ## Guidelines Index
 
@@ -19,7 +19,7 @@ TokChan is a dependency-free macOS 13 menu-bar app with a SwiftUI `App`/`Setting
 | [Testing Guidelines](./testing-guidelines.md) | Unit, view-model, and UI test expectations | Baseline |
 | [Service Management](./service-management.md) | `SMAppService.mainApp` launch-at-login boundary, status reconciliation, and safe testing | Active |
 | [Tokscale Integration](./tokscale-integration.md) | Public profile API, versioned npx commands, autosubmit, GUI PATH behavior | Active |
-| [Build and Release Workflow](./release-workflow.md) | Version, universal drag-to-install DMG, Tag, GitHub Release, validation, and rollback contracts | Active |
+| [Build, Self-Update, and Release Workflow](./release-workflow.md) | Sparkle runtime/feed, nested signing, version, DMG/ZIP assets, GitHub Release/Pages ordering, validation, and rollback contracts | Active |
 
 ## Default technology choices
 

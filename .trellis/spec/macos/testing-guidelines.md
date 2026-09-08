@@ -17,6 +17,8 @@ The Xcode project has `TokChanTests` and `TokChanUITests`; keep behavior checks 
 - For manual status-menu transfer actions, assert push performs exactly one CLI submit and zero profile fetches, pull performs one complete batch and zero submits, any running explicit operation disables both descriptors, success is silent, and failure remains available through diagnostics.
 - Test lifecycle races through popover visibility callbacks: closing clears a completed banner, does not cancel in-flight work, and suppresses a terminal success or failure from that closed generation after reopen.
 - Test freshness with an injected `now`, locale, and timezone. Assert `yyyy-MM-dd` comparison uses Gregorian calendar components in the local timezone even when the supplied user calendar has another identifier.
+- Test the Sparkle boundary without networking: an available manual check forwards once and disables synchronously, duplicates/unavailable checks forward zero, and publisher recovery re-enables a later check. The app composition root owns the controller; About only observes and invokes the adapter.
+- Treat `--ui-testing` and `--updater-busy` as Debug-only dependency-selection inputs. UI tests assert the About button's ready/busy state using the offline adapter; Release-path tests prove these flags cannot substitute the live updater.
 
 ## UI tests
 
@@ -29,12 +31,24 @@ The Xcode project has `TokChanTests` and `TokChanUITests`; keep behavior checks 
 - Use previews as fast visual checks, not as a replacement for behavior tests.
 - Preview data should be deterministic and local.
 
+## Release/update pipeline tests
+
+- Shell fixtures must enumerate the embedded Sparkle code graph and assert the inside-out partial order: Autoupdate, Updater.app, Downloader.xpc, and Installer.xpc all precede Sparkle.framework, which precedes TokChan.app. Assert preserved identifiers/requirements/entitlements and strict signature metadata on each component; `--deep` is verification-only, never a signing shortcut.
+- Verify the local output transaction is exactly DMG, DMG SHA-256, and update ZIP. Extract the ZIP and revalidate its sole top-level app; do not accept `unzip -t` alone as proof of bundle identity, architecture, signature, or stapled ticket.
+- Parse workflow YAML and test candidate generation separately from publication. Assert exact Actions permissions/Secrets/Variable/environment, exact draft asset set, immutable published-release handling, prior-feed preservation, EdDSA appcast fields, removal of private material, and Pages deployment only after the ZIP is publicly downloadable.
+- Mock first-feed 404 separately from transport/TLS/5xx/malformed-feed errors: only the verified bootstrap case may start empty. Publication or Pages failure must leave the prior feed discoverable and must never produce a partial public asset/feed state.
+- Use local mocks and disposable feeds/repositories; unit and fixture suites must not use real Apple/EdDSA credentials, mutate a real GitHub Release, or deploy production Pages.
+
 ## Validation commands
 
-Once the project exists, expected validation should include an Xcode build and test command such as:
+Expected validation includes:
 
 ```bash
-xcodebuild test -scheme TokChan -destination 'platform=macOS'
+xcodebuild test -project TokChan.xcodeproj -scheme TokChan -destination 'platform=macOS'
+bash -n scripts/build-release.sh scripts/ci-build-release.sh scripts/release.sh tests/test_release_scripts.sh
+python3 tests/test_project_version.py
+python3 tests/test_ci_signing.py
+bash tests/test_release_scripts.sh
 ```
 
-Update the simulator name and scheme to match the generated project.
+Run `shellcheck` and `actionlint` when installed. Real signing/notarization and a two-version Sparkle update rehearsal remain manual production gates; mocked success is not equivalent.

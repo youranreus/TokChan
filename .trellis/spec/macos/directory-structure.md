@@ -2,7 +2,7 @@
 
 ## Current state
 
-The repository contains one conventional Xcode project with three targets: `TokChan`, `TokChanTests`, and `TokChanUITests`.
+The repository contains one conventional Xcode project with three targets: `TokChan`, `TokChanTests`, and `TokChanUITests`. Sparkle is the sole Swift Package dependency; its exact resolved revision belongs at `TokChan.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved` and must be committed with project-file pin changes.
 
 ## Recommended initial layout
 
@@ -28,7 +28,7 @@ TokChanUITests/
 TokChan.xcodeproj/
 ```
 
-Resources and entitlements should only be added when the app gains assets, localization, or capabilities that require them. The current agent-style app uses generated Info.plist keys and intentionally has no App Sandbox entitlement because it must execute Tokscale and manage its LaunchAgent through the official CLI.
+Resources and entitlements should only be added when the app gains assets, localization, or capabilities that require them. The current agent-style app keeps its reviewed Sparkle and bundle keys in `TokChan/SupportingFiles/Info.plist`; the synchronized-group exception prevents that source plist from also being copied as a resource. It intentionally has no App Sandbox entitlement because it must execute Tokscale and manage its LaunchAgent through the official CLI.
 
 ## Placement rules
 
@@ -37,7 +37,7 @@ Resources and entitlements should only be added when the app gains assets, local
 - Keep feature-specific view models beside the feature view.
 - Put reusable visual pieces in `Shared/Components/` only after a second real use appears.
 - Put domain models in `Shared/Models/` when shared by multiple features.
-- Put integration boundaries such as persistence, networking, notification, or clock wrappers in `Shared/Services/`.
+- Put integration boundaries such as persistence, networking, notification, clock, or app-update wrappers in `Shared/Services/`. Sparkle imports belong in `AppUpdater.swift`, not feature views.
 - Put tiny pure helpers in `Shared/Utilities/`; do not create a utility for one caller.
 - Keep app resources in `Resources/` or the Xcode-generated asset/string catalogs.
 - Keep macOS entitlements and app-sandbox capability files in `SupportingFiles/` or the Xcode project’s conventional location.
