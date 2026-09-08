@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A20000000000000000000001 = {isa = PBXBuildFile; productRef = A20000000000000000000002; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		A10000000000000000000001 = {
 			isa = PBXContainerItemProxy;
@@ -29,14 +33,22 @@
 		A00000000000000000000203 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TokChanUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A20000000000000000000004 = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (SupportingFiles/Info.plist,);
+			target = A00000000000000000000101;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		A00000000000000000000301 = {isa = PBXFileSystemSynchronizedRootGroup; path = TokChan; sourceTree = "<group>"; };
+		A00000000000000000000301 = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (A20000000000000000000004,); path = TokChan; sourceTree = "<group>"; };
 		A00000000000000000000302 = {isa = PBXFileSystemSynchronizedRootGroup; path = TokChanTests; sourceTree = "<group>"; };
 		A00000000000000000000303 = {isa = PBXFileSystemSynchronizedRootGroup; path = TokChanUITests; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		A00000000000000000000401 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000401 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A20000000000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
 		A00000000000000000000402 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		A00000000000000000000403 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
@@ -77,7 +89,7 @@
 			dependencies = ();
 			fileSystemSynchronizedGroups = (A00000000000000000000301,);
 			name = TokChan;
-			packageProductDependencies = ();
+			packageProductDependencies = (A20000000000000000000002,);
 			productName = TokChan;
 			productReference = A00000000000000000000201;
 			productType = "com.apple.product-type.application";
@@ -139,6 +151,7 @@
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A00000000000000000000502;
+			packageReferences = (A20000000000000000000003,);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -165,6 +178,22 @@
 		A10000000000000000000011 = {isa = PBXTargetDependency; target = A00000000000000000000101; targetProxy = A10000000000000000000001; };
 		A10000000000000000000012 = {isa = PBXTargetDependency; target = A00000000000000000000101; targetProxy = A10000000000000000000002; };
 /* End PBXTargetDependency section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A20000000000000000000003 = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = { kind = exactVersion; version = 2.7.1; };
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A20000000000000000000002 = {
+			isa = XCSwiftPackageProductDependency;
+			package = A20000000000000000000003;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A00000000000000000000701 = {
@@ -209,9 +238,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 17;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_LSUIElement = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TokChan/SupportingFiles/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.youranreus.TokChan;
@@ -230,9 +258,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 17;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_LSUIElement = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TokChan/SupportingFiles/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.youranreus.TokChan;

@@ -94,6 +94,32 @@ final class TokChanUITests: XCTestCase {
         )
         XCTAssertFalse(application.buttons["保存"].exists)
         XCTAssertFalse(application.buttons["apply-autosubmit-settings"].exists)
+        let updateButton = application.buttons["check-for-updates"]
+        XCTAssertTrue(updateButton.exists)
+        XCTAssertTrue(updateButton.isEnabled)
+        updateButton.click()
+        XCTAssertFalse(updateButton.isEnabled)
+    }
+
+    func testCheckForUpdatesIsDisabledWhileUpdaterIsBusy() throws {
+        let application = XCUIApplication()
+        application.launchArguments = ["--ui-testing", "--updater-busy"]
+        application.launch()
+        defer { application.terminate() }
+
+        let systemUI = XCUIApplication(bundleIdentifier: "com.apple.systemuiserver")
+        let statusItem = systemUI.menuBars.statusItems["TokChan"]
+        guard statusItem.waitForExistence(timeout: 10) else {
+            throw XCTSkip("SystemUIServer did not expose menu bar items; run this UI test in isolation")
+        }
+        statusItem.rightClick()
+        application.menuItems["设置…"].click()
+        let aboutTab = application.toolbars.buttons["关于"]
+        XCTAssertTrue(aboutTab.waitForExistence(timeout: 5))
+        aboutTab.click()
+        let button = application.buttons["check-for-updates"]
+        XCTAssertTrue(button.waitForExistence(timeout: 3))
+        XCTAssertFalse(button.isEnabled)
     }
 
     private func lifecycleCounts(of panel: XCUIElement) -> (appearances: Int, disappearances: Int)? {

@@ -6,6 +6,7 @@ final class TokChanApplicationDelegate: NSObject, NSApplicationDelegate {
     let viewModel: DashboardViewModel
     let launchAtLoginModel: LaunchAtLoginSettingsModel
     let customPricingViewModel: CustomPricingViewModel
+    let appUpdater: AppUpdater
     private var statusItemCoordinator: NSStatusItemCoordinator?
 
     override init() {
@@ -64,6 +65,13 @@ final class TokChanApplicationDelegate: NSObject, NSApplicationDelegate {
             preferencesStore: preferences,
             npxLocator: npxLocator
         )
+        #if DEBUG
+        appUpdater = CommandLine.arguments.contains("--ui-testing")
+            ? .offlineTest(isBusy: CommandLine.arguments.contains("--updater-busy"))
+            : .live()
+        #else
+        appUpdater = .live()
+        #endif
         super.init()
     }
 
@@ -86,7 +94,8 @@ struct TokChanApp: App {
             SettingsView(
                 viewModel: appDelegate.viewModel,
                 launchAtLoginModel: appDelegate.launchAtLoginModel,
-                customPricingViewModel: appDelegate.customPricingViewModel
+                customPricingViewModel: appDelegate.customPricingViewModel,
+                appUpdater: appDelegate.appUpdater
             )
             .environment(\.locale, Locale(identifier: "zh_CN"))
         }

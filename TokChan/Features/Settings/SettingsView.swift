@@ -69,6 +69,7 @@ struct SettingsView: View {
     @ObservedObject var viewModel: DashboardViewModel
     @ObservedObject var launchAtLoginModel: LaunchAtLoginSettingsModel
     @ObservedObject var customPricingViewModel: CustomPricingViewModel
+    @ObservedObject var appUpdater: AppUpdater
     @Environment(\.scenePhase) private var scenePhase
 
     private enum SettingsTab: Hashable {
@@ -85,11 +86,13 @@ struct SettingsView: View {
     init(
         viewModel: DashboardViewModel,
         launchAtLoginModel: LaunchAtLoginSettingsModel,
-        customPricingViewModel: CustomPricingViewModel
+        customPricingViewModel: CustomPricingViewModel,
+        appUpdater: AppUpdater
     ) {
         self.viewModel = viewModel
         self.launchAtLoginModel = launchAtLoginModel
         self.customPricingViewModel = customPricingViewModel
+        self.appUpdater = appUpdater
         _isNpxOverrideExpanded = State(
             initialValue: viewModel.npxPathStatus(for: viewModel.preferences.npxPath).shouldExpandOverride
         )
@@ -478,6 +481,12 @@ struct SettingsView: View {
             .multilineTextAlignment(.center)
             .foregroundStyle(.secondary)
             .frame(maxWidth: 360)
+
+            Button("检查更新") {
+                appUpdater.checkForUpdates()
+            }
+            .disabled(!appUpdater.canCheckForUpdates)
+            .accessibilityIdentifier("check-for-updates")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
