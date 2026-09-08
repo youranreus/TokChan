@@ -528,7 +528,7 @@ jobs:
           set -euo pipefail
           downloaded=$(mktemp)
           trap 'rm -f "$downloaded"' EXIT
-          curl --fail --silent --show-error --retry 5 --retry-all-errors \
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
             "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/$(basename "$ZIP")" \
             -o "$downloaded"
           cmp "$ZIP" "$downloaded"

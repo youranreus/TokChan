@@ -798,6 +798,7 @@ assert text.index("Inspect immutable Release recovery state") < text.index("Gene
 assert "APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}" in text
 assert "signature_metadata=$(codesign -dv --verbose=4 \"$app\" 2>&1)" in text
 assert "candidate appcast changed or dropped prior feed history" in text
+assert "curl --fail --silent --show-error --location --retry 5 --retry-all-errors" in text
 assert text.index("Generate signed Sparkle appcast") < text.index("Create or resume draft Release")
 assert text.index("Verify published update archive") < text.index("Upload appcast Pages artifact") < text.index("Deploy appcast last")
 PY
