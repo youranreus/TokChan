@@ -291,7 +291,17 @@ if [[ "$1" == --verify ]]; then
 fi
 
 if [[ "$1" == -dr && "$2" == - ]]; then
-  echo "# designated => identifier \"$(identifier_for "$artifact")\"" >&2
+  echo "Executable=$artifact" >&2
+  if [[ "${MOCK_NO_DESIGNATED_REQUIREMENT:-}" != 1 ]]; then
+    if [[ "${MOCK_FORMAL:-}" == 1 || "${MOCK_DESIGNATED_REQUIREMENT_STYLE:-}" == formal ]]; then
+      requirement="designated => identifier \"$(identifier_for "$artifact")\" and anchor apple generic"
+    else
+      requirement='# designated => cdhash H"fixture"'
+    fi
+    echo "$requirement" >&2
+    [[ "${MOCK_DUPLICATE_DESIGNATED_REQUIREMENT:-}" != 1 ]] || echo "$requirement" >&2
+    [[ "${MOCK_MALFORMED_DESIGNATED_REQUIREMENT:-}" != 1 ]] || echo 'designated =>' >&2
+  fi
   exit 0
 fi
 
@@ -417,6 +427,39 @@ expect_failure "unexpected Sparkle nested bundle inventory" env PATH="$fixture/m
   MOCK_SPARKLE_EXTRA=1 "$fixture/scripts/build-release.sh" --skip-tests --output output
 assert_no_build_assets
 pass "build script rejects an unexpected Sparkle nested component"
+
+rm -rf "$fixture/output"
+PATH="$fixture/mock-bin:$PATH" \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output >/dev/null
+[[ -f "$dmg" && -f "$checksum" && -f "$zip" ]]
+pass "build script accepts native ad-hoc codesign designated requirement output"
+
+rm -rf "$fixture/output"
+PATH="$fixture/mock-bin:$PATH" MOCK_DESIGNATED_REQUIREMENT_STYLE=formal \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output >/dev/null
+[[ -f "$dmg" && -f "$checksum" && -f "$zip" ]]
+pass "build script accepts native Developer ID codesign designated requirement output"
+
+rm -rf "$fixture/output"
+expect_failure "designated requirement is missing" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_NO_DESIGNATED_REQUIREMENT=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when a designated requirement is absent"
+
+rm -rf "$fixture/output"
+expect_failure "designated requirement is missing or ambiguous" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_DUPLICATE_DESIGNATED_REQUIREMENT=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when designated requirements are ambiguous"
+
+rm -rf "$fixture/output"
+expect_failure "designated requirement is missing or ambiguous" env PATH="$fixture/mock-bin:$PATH" \
+  MOCK_MALFORMED_DESIGNATED_REQUIREMENT=1 \
+  "$fixture/scripts/build-release.sh" --skip-tests --output output
+assert_no_build_assets
+pass "build script fails closed when designated requirement output is malformed"
 
 rm -rf "$fixture/output"
 expect_failure "strict signature verification failed" env PATH="$fixture/mock-bin:$PATH" \

@@ -433,7 +433,13 @@ verify_sparkle_code() {
   printf '%s\n' "$metadata" >> "$build_log"
   requirement=$(codesign -dr - "$target" 2>&1) || fail "could not inspect designated requirement for $target"
   printf '%s\n' "$requirement" >> "$build_log"
-  [[ "$requirement" == *"# designated =>"* ]] || fail "designated requirement is missing for $target"
+  awk '
+    /^(# )?designated =>/ {
+      candidate_count++
+      if ($0 ~ /^(# )?designated => .+$/) valid_count++
+    }
+    END { exit(candidate_count == 1 && valid_count == 1 ? 0 : 1) }
+  ' <<< "$requirement" || fail "designated requirement is missing or ambiguous for $target"
   identifier=$(signature_metadata_value "$metadata" Identifier) || \
     fail "missing Sparkle identifier for $target"
   [[ "$identifier" == "$expected_identifier" ]] || \
