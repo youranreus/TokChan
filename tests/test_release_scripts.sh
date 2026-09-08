@@ -82,7 +82,35 @@ make_build_fixture() {
     "$fixture/TokChan.xcodeproj/xcshareddata/xcschemes/"
   cat > "$fixture/mock-bin/xcrun" <<'MOCK'
 #!/usr/bin/env bash
-exit 0
+set -euo pipefail
+[[ -z "${MOCK_TRUST_LOG:-}" ]] || echo "$*" >> "$MOCK_TRUST_LOG"
+if [[ "$1 $2" == 'notarytool submit' ]]; then
+  kind=app
+  [[ "$3" == *.dmg ]] && kind=dmg
+  status=Accepted
+  [[ "${MOCK_NOTARY_FAILURE:-}" != "$kind" ]] || status=Invalid
+  [[ "${MOCK_NOTARY_PENDING:-}" != "$kind" ]] || status='In Progress'
+  printf '{"id":"12345678-1234-1234-1234-123456789abc","status":"%s"}\n' "$status"
+  [[ "${MOCK_NOTARY_EXIT_FAILURE:-}" != "$kind" ]] || exit 1
+elif [[ "$1 $2" == 'stapler staple' || "$1 $2" == 'stapler validate' ]]; then
+  [[ "${MOCK_STAPLER_FAILURE:-}" != "$2" ]] || exit 1
+  if [[ "$2" == staple ]]; then
+    if [[ "$3" == *.app ]]; then
+      echo ticket > "$3/Contents/stapled-ticket-fixture"
+    else
+      echo ticket >> "$3"
+    fi
+  elif [[ "$3" == *.app ]]; then
+    [[ -f "$3/Contents/stapled-ticket-fixture" ]]
+  else
+    [[ "$(tail -1 "$3")" == ticket ]]
+  fi
+fi
+MOCK
+  cat > "$fixture/mock-bin/spctl" <<'MOCK'
+#!/usr/bin/env bash
+[[ -z "${MOCK_TRUST_LOG:-}" ]] || echo "spctl $*" >> "$MOCK_TRUST_LOG"
+[[ "${MOCK_GATEKEEPER_FAILURE:-}" != 1 ]]
 MOCK
   cat > "$fixture/mock-bin/lipo" <<'MOCK'
 #!/usr/bin/env bash
@@ -206,6 +234,33 @@ set -euo pipefail
 record() {
   [[ -z "${MOCK_CODESIGN_LOG:-}" ]] || printf '%s\n' "$1" >> "$MOCK_CODESIGN_LOG"
 }
+
+if [[ "${MOCK_FORMAL:-}" == 1 ]]; then
+  app=${!#}
+  [[ -z "${MOCK_TRUST_LOG:-}" ]] || echo "codesign $*" >> "$MOCK_TRUST_LOG"
+  if [[ "$1" == --force ]]; then
+    [[ " $* " == *" --timestamp "* && " $* " == *" --keychain "* ]]
+    [[ " $* " != *" --deep "* ]]
+    if [[ "$app" == *.app ]]; then
+      [[ " $* " == *" --options runtime "* ]]
+      mkdir -p "$app/Contents/_CodeSignature"
+      echo signed > "$app/Contents/_CodeSignature/CodeResources"
+    fi
+    [[ "${MOCK_FORMAL_SIGN_FAILURE:-}" != 1 ]]
+  elif [[ "$1" == -dv ]]; then
+    echo 'Identifier=com.youranreus.TokChan'
+    echo "Authority=${MOCK_AUTHORITY:-$APPLE_SIGNING_IDENTITY}"
+    echo "TeamIdentifier=${MOCK_TEAM:-$APPLE_TEAM_ID}"
+    [[ "${MOCK_NO_TIMESTAMP:-}" == 1 ]] || echo 'Timestamp=Sep 8, 2026 at 10:00:00 AM'
+    [[ "${MOCK_NO_RUNTIME:-}" == 1 ]] || echo 'CodeDirectory v=20500 size=123 flags=0x10000(runtime)'
+    echo 'Info.plist entries=3'
+    echo 'Sealed Resources version=2 rules=13 files=2'
+  else
+    [[ "$1" == --verify ]]
+    [[ "${MOCK_FORMAL_VERIFY_FAILURE:-}" != 1 ]]
+  fi
+  exit
+fi
 
 if [[ $# -eq 6 && "$1" == --force && "$2" == --sign && "$3" == - && \
       "$4" == --identifier ]]; then
@@ -494,6 +549,49 @@ assert_no_build_assets
 pass "build script fails closed when DMG checksum creation fails"
 
 rm -rf "$fixture/output"
+# Public trust failures must never expose final-named assets.
+keychain="$test_tmp/signing.keychain-db"
+touch "$keychain"
+formal_env=(env PATH="$fixture/mock-bin:$PATH" MOCK_FORMAL=1
+  APPLE_SIGNING_IDENTITY='Developer ID Application: Fixture (ABCDEFGHIJ)'
+  APPLE_TEAM_ID=ABCDEFGHIJ APPLE_KEYCHAIN_PATH="$keychain" APPLE_NOTARY_PROFILE=fixture)
+expect_failure "--notarize requires APPLE_SIGNING_IDENTITY" env -u APPLE_SIGNING_IDENTITY \
+  PATH="$fixture/mock-bin:$PATH" "$fixture/scripts/build-release.sh" --notarize --skip-tests --output output
+assert_no_build_assets
+pass "notarized build requires explicit credentials"
+for failure in MOCK_FORMAL_SIGN_FAILURE=1 MOCK_FORMAL_VERIFY_FAILURE=1 MOCK_TEAM=WRONGTEAM0 \
+  MOCK_AUTHORITY=wrong MOCK_NO_TIMESTAMP=1 MOCK_NO_RUNTIME=1 MOCK_NOTARY_FAILURE=app \
+  MOCK_NOTARY_FAILURE=dmg MOCK_NOTARY_PENDING=app MOCK_NOTARY_EXIT_FAILURE=app \
+  MOCK_STAPLER_FAILURE=staple MOCK_STAPLER_FAILURE=validate MOCK_GATEKEEPER_FAILURE=1; do
+  expect_failure "build-release:" "${formal_env[@]}" "$failure" \
+    "$fixture/scripts/build-release.sh" --notarize --skip-tests --output output
+  assert_no_build_assets
+  pass "notarized build fails closed: $failure"
+done
+expect_failure '"status":"Invalid"' "${formal_env[@]}" GITHUB_ACTIONS=true MOCK_NOTARY_FAILURE=app \
+  "$fixture/scripts/build-release.sh" --notarize --skip-tests --output output
+assert_no_build_assets
+pass "failed CI notarization preserves Apple response in job output"
+trust_log="$test_tmp/trust.log"
+"${formal_env[@]}" MOCK_TRUST_LOG="$trust_log" \
+  "$fixture/scripts/build-release.sh" --notarize --skip-tests --output output >/dev/null
+[[ -f "$dmg" && -f "$checksum" ]]
+[[ "$(grep -c '^notarytool submit ' "$trust_log")" -eq 2 ]]
+[[ "$(grep -c '^stapler staple ' "$trust_log")" -eq 2 ]]
+[[ "$(grep -c '^stapler validate ' "$trust_log")" -eq 3 ]]
+grep -F 'spctl --assess --type execute --verbose=4 ' "$trust_log" | grep -F '/verification-mount/TokChan.app' >/dev/null
+python3 - "$trust_log" <<'PYTEST'
+from pathlib import Path
+import sys
+lines = Path(sys.argv[1]).read_text().splitlines()
+operations = [line.split()[:2] for line in lines]
+assert operations.index(['stapler', 'staple']) > operations.index(['notarytool', 'submit'])
+assert next(i for i, line in enumerate(lines) if line.startswith('codesign --force') and line.endswith('.dmg')) > operations.index(['stapler', 'validate'])
+assert lines[-1].startswith('spctl ')
+PYTEST
+(cd "$fixture/output" && shasum -a 256 -c "$(basename "$checksum")" >/dev/null)
+pass "notarized app and DMG pass signing, ticket, mounted Gatekeeper and checksum gates"
+rm -rf "$fixture/output"
 codesign_log="$test_tmp/codesign.log"
 hdiutil_log="$test_tmp/hdiutil.log"
 osascript_log="$test_tmp/osascript.log"
@@ -528,9 +626,9 @@ grep -F 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1' \
   "$root/.github/workflows/release.yml" >/dev/null
 ! grep -F '/releases/tags/' "$root/.github/workflows/release.yml" >/dev/null
 pass "release workflow uses Node 24 checkout and avoids the published-only Tag endpoint"
-grep -F 'Test, build, ad-hoc sign, and package universal app' \
+grep -F 'scripts/ci-build-release.sh' \
   "$root/.github/workflows/release.yml" >/dev/null
-grep -F 'ad-hoc signed, not Developer ID signed, and not Apple-notarized' \
+grep -F 'This app is Developer ID signed and Apple-notarized.' \
   "$root/.github/workflows/release.yml" >/dev/null
 ! grep -F 'This ZIP is unsigned' "$root/.github/workflows/release.yml" >/dev/null
 grep -F 'set position of item "TokChan.app" of targetFolder to {140, 160}' \
@@ -609,7 +707,7 @@ elif [[ "$1" == api && " $* " == *" --jq .body "* ]]; then
   if [[ -n "${MOCK_RELEASE_BODY:-}" ]]; then
     printf '%s\n' "$MOCK_RELEASE_BODY"
   else
-    echo "This app bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized. Ad-hoc signing provides bundle integrity but no verified developer identity. It is intended for the maintainer's personal use only. Gatekeeper may block or warn on first launch. Verify the SHA-256 checksum before use. It is not ready for ordinary public distribution."
+    echo "This app is Developer ID signed and Apple-notarized. The app and DMG include stapled notarization tickets. macOS may still ask you to confirm opening an app downloaded from the Internet. Verify the SHA-256 checksum before use."
   fi
 elif [[ "$1" == api && " $* " == *" --jq .draft "* ]]; then
   [[ "$(cat "${MOCK_RELEASE_STATE:?}")" == draft ]] && echo true || echo false
@@ -637,7 +735,7 @@ env PATH="$workflow_mock_bin:$PATH" \
 [[ "$(cat "$workflow_state")" == published ]]
 pass "release workflow publishes a new draft from the create response ID"
 printf draft > "$workflow_state"
-expect_failure "missing required warning text: no verified developer identity" env \
+expect_failure "missing required distribution text" env \
   PATH="$workflow_mock_bin:$PATH" \
   GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" \
   MOCK_RELEASE_STATE="$workflow_state" MOCK_DMG_NAME="$(basename "$dmg")" \

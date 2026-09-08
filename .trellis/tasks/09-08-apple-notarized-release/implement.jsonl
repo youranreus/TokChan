@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/macos/release-workflow.md", "reason": "Existing release invariants; public signing contract deliberately superseded by task"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "Project verification conventions"}
+{"file": ".trellis/spec/macos/quality-guidelines.md", "reason": "Quality and dependency boundary"}
+{"file": ".trellis/tasks/09-08-apple-notarized-release/research/apple-distribution.md", "reason": "Apple and GitHub distribution requirements"}

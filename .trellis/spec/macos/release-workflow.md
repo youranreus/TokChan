@@ -4,14 +4,15 @@
 
 Use this contract whenever changing TokChan version settings, release packaging, Git Tags, or `.github/workflows/release.yml`.
 
-The current channel is a maintainer-only GitHub Release containing one universal drag-to-install DMG and its SHA-256 checksum. The complete app bundle is credential-free ad-hoc signed, but it is not Developer ID signed or Apple-notarized. DMG packaging improves installation convenience only; public distribution requires a separate hardening change.
+Official GitHub Releases contain one universal drag-to-install DMG and its SHA-256 checksum. CI requires Developer ID Application signing, Apple notarization, and stapled tickets for both app and DMG. Credential-free local builds retain ad-hoc signing for iteration and must not be uploaded as official assets. Historical published releases remain immutable.
 
 ## 2. Signatures
 
 Local commands:
 
 ```text
-scripts/build-release.sh [--output <directory>] [--skip-tests]
+scripts/build-release.sh [--output <directory>] [--skip-tests] [--notarize]
+scripts/ci-build-release.sh
 scripts/release.sh {patch|minor|major} [--push]
 python3 scripts/lib/project-version.py <project.pbxproj> get
 python3 scripts/lib/project-version.py <project.pbxproj> set --marketing X.Y.Z --build N
@@ -40,19 +41,20 @@ Tag message: TokChan vX.Y.Z
 - Debug and Release app-target settings must match and use `VERSIONING_SYSTEM = apple-generic`.
 - The Tag must equal `v${MARKETING_VERSION}`; CI never substitutes another version.
 - `build-release.sh` runs `TokChanTests` unless `--skip-tests` is explicitly used for local iteration.
-- Xcode compilation remains credential-free with automatic signing disabled. After validating Bundle metadata and architectures, the script must sign the complete outer app using `codesign --force --sign - --identifier com.youranreus.TokChan`; do not use signing-time `--deep` to hide nested-code ordering problems.
+- Xcode compilation remains credential-free with automatic signing disabled. Explicit `--notarize` signs the complete outer app with Developer ID Application, `--options runtime` and `--timestamp`; default local mode uses `--sign -`. Never use signing-time `--deep` to hide nested-code ordering problems. Do not add broad hardened-runtime exception entitlements without evidence.
 - The built executable must contain `arm64` and `x86_64`; bundle identifier must be `com.youranreus.TokChan`.
-- Before packaging, strict `codesign --verify --deep --strict --verbose=2` verification and `codesign -dv --verbose=4` inspection must prove the expected designated identifier, a complete ad-hoc signature, Info.plist coverage, and sealed resources.
+- Before packaging, strict `codesign --verify --deep --strict --verbose=2` verification and `codesign -dv --verbose=4` inspection must prove the expected designated identifier, the selected signature mode, Info.plist coverage, and sealed resources. Official mode additionally requires the expected Developer ID authority, Team ID, secure timestamp, and hardened runtime.
 - DMG staging contains `TokChan.app` plus an `Applications` symbolic link whose target is exactly `/Applications`. The image uses a writable HFS+ layout phase followed by compressed read-only UDZO conversion; no third-party packaging dependency or committed `.DS_Store` template is allowed.
 - Finder layout automation must persist `.DS_Store` metadata for icon view, a fixed compact window, hidden toolbar/status bar, and App-left/Applications-right icon positions. Layout failure is fatal and no custom background is used.
 - `hdiutil attach -plist` output must be parsed structurally. Every image mounts at a current-run owned path, auto-open is disabled for verification, and every tracked attachment must detach before temporary workspace deletion.
 - Before publication, `hdiutil verify` must pass. The compressed DMG is then mounted read-only and must expose only `TokChan.app` and `Applications` as user-visible root entries; the mounted App must pass version, build, identifier, architecture, strict signature, and signature-metadata verification.
-- The checksum records the DMG basename so `shasum -a 256 -c` works after download.
+- Official mode submits a ZIP of the signed app, requires notarization `Accepted`, then staples and validates the app before DMG staging. Sign the compressed DMG, require its own accepted notarization, staple and validate it, then verify the DMG and mounted app (including stapled app ticket and Gatekeeper assessment). Any failure is fatal.
+- Generate the checksum only after signing and stapling have finished; it records the DMG basename so `shasum -a 256 -c` works after download.
 - Final local assets are never overwritten. A publication lock serializes the final pair, and cleanup removes only resources owned by the current run.
 - Cleanup removes only resources owned by the current run. If an owned image cannot be detached, fail and retain the workspace rather than deleting a live mount point; partial final publication removes only the files marked as created by that run.
-- The release workflow uses only `GITHUB_TOKEN` with `contents: write`, one fixed macOS/Xcode job, and same-Tag concurrency.
+- The release workflow uses `GITHUB_TOKEN` with `contents: write`, one fixed macOS/Xcode job, same-Tag concurrency, and six Apple secrets scoped to the signing step. `scripts/ci-build-release.sh` imports the P12 into an owned temporary keychain, stores notary credentials, invokes `--notarize`, then restores the search list and deletes credentials on success or failure. No certificate/password is committed or logged. Restore the caller umask before building so the private credential-file policy does not produce inaccessible app resources. Cleanup failure fails CI before publication. Apple submission/verification diagnostics must remain visible in failed Actions job logs; a runner-local path alone is insufficient.
 - GitHub Release publication is `absent -> draft -> exact asset pair -> published`. A draft may be resumed; a published Release is never overwritten.
-- Release notes and local output must state that the complete bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized. Ad-hoc signing supplies integrity and a designated identifier, not an Apple-verified developer identity or guaranteed Gatekeeper acceptance.
+- Official release notes must state Developer ID signing, Apple notarization, stapled app/DMG tickets, checksum guidance, and normal Internet-download confirmation. Reject drafts missing the new notes or retaining obsolete unsigned-distribution claims; published releases are untouched. Local ad-hoc output must still clearly disclose its limits. Never promise to disable OS verification or guarantee no first-launch prompt.
 
 ## 4. Validation & Error Matrix
 
@@ -61,7 +63,8 @@ Tag message: TokChan vX.Y.Z
 | Debug/Release version drift | Fail before tests or packaging |
 | Invalid SemVer or non-positive build | Fail without editing or publishing assets |
 | Existing final asset or foreign publication lock | Fail without deleting or replacing the existing resource |
-| DMG creation, Finder layout, attach/plist parsing, detach, conversion, image/content validation, metadata, architecture, ad-hoc signing, strict signature inspection, or checksum failure | Fail and leave no final-named new asset; retain the workspace if a live owned mount cannot be detached |
+| Missing/invalid signing credentials, signing identity/team mismatch, missing runtime/timestamp, rejected/pending/timed-out notarization, failed stapling or Gatekeeper assessment | Fail before publication without unsigned fallback |
+| DMG creation, Finder layout, attach/plist parsing, detach, conversion, image/content validation, metadata, architecture, signing, strict signature inspection, or checksum failure | Fail and leave no final-named new asset; retain the workspace if a live owned mount cannot be detached |
 | Dirty tree, non-`master`, or `HEAD != origin/master` | Refuse release preparation |
 | Local or remote Tag already exists | Local preparation refuses version mutation |
 | GitHub auth/API/permission error | CI fails closed; never interpret as “Release absent” |
@@ -82,11 +85,14 @@ Tag message: TokChan vX.Y.Z
 For release workflow changes, run and assert:
 
 ```bash
-bash -n scripts/build-release.sh scripts/release.sh tests/test_release_scripts.sh
+bash -n scripts/build-release.sh scripts/ci-build-release.sh scripts/release.sh tests/test_release_scripts.sh
 python3 tests/test_project_version.py
+python3 tests/test_ci_signing.py
 bash tests/test_release_scripts.sh
 scripts/build-release.sh
 ```
+
+Credential lifecycle tests must prove missing secrets fail before import, authentication/import/build failure cleans up, search-list paths with spaces survive restoration, cleanup failure blocks publication, and raw secrets are removed from the child build environment. Notarization mocks must cover rejected/pending/invalid responses, signing identity/team/runtime/timestamp mismatch, stapling/Gatekeeper failure and checksum-after-stapling order.
 
 Fixture tests must use local `codesign`, `hdiutil`, and `osascript` mocks (never a real certificate) and cover the complete-bundle signing command; DMG creation/layout/conversion; attach plist parsing; exact visible contents and `/Applications` symlink; mounted-App metadata, architectures, and signature; detach and checksum failures; no-overwrite and partial-publication cleanup. Every failure must leave no final-named DMG/checksum pair, and failures after attachment must prove the owned image is detached or its workspace is retained.
 
@@ -127,3 +133,9 @@ hdiutil attach -plist -mountpoint "$owned_layout_mount" "$writable_dmg"
 ```
 
 If source or artifacts are wrong after publication, increment to a new patch release rather than moving the old Tag or replacing its assets.
+
+## 8. Credential contract
+
+The CI wrapper requires `APPLE_CERTIFICATE_P12_BASE64` (certificate plus private key), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (complete Developer ID Application identity), `APPLE_TEAM_ID` (ten uppercase alphanumeric characters), `APPLE_ID`, and `APPLE_APP_SPECIFIC_PASSWORD`. It generates its own random keychain password. It passes only `APPLE_SIGNING_IDENTITY`, `APPLE_TEAM_ID`, `APPLE_KEYCHAIN_PATH` and `APPLE_NOTARY_PROFILE` to the formal build. No provisioning profile is needed by current capabilities. Setup and first real release acceptance are documented in `docs/macos-release.md`.
+
+Mock success does not prove real Apple acceptance. Before claiming end-to-end readiness, configure real credentials, obtain accepted notarization, browser-download the final artifact to a clean Mac, and test launch under default Gatekeeper settings and offline ticket availability. Validate external Tokscale process behavior with hardened runtime.

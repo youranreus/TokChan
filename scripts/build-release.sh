@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: scripts/build-release.sh [--output <directory>] [--skip-tests]" >&2
+  echo "Usage: scripts/build-release.sh [--output <directory>] [--skip-tests] [--notarize]" >&2
 }
 
 fail() {
@@ -17,6 +17,7 @@ cd "$repo_root"
 output_arg="dist"
 output_seen=false
 skip_tests=false
+notarize=false
 while (($#)); do
   case "$1" in
     --output)
@@ -30,6 +31,11 @@ while (($#)); do
     --skip-tests)
       $skip_tests && fail "--skip-tests may only be specified once"
       skip_tests=true
+      shift
+      ;;
+    --notarize)
+      $notarize && fail "--notarize may only be specified once"
+      notarize=true
       shift
       ;;
     -h|--help)
@@ -51,6 +57,17 @@ for command_name in xcodebuild xcrun codesign ditto hdiutil lipo osascript shasu
   command -v "$command_name" >/dev/null 2>&1 || fail "required command not found: $command_name"
 done
 [[ -x /usr/libexec/PlistBuddy ]] || fail "required command not found: /usr/libexec/PlistBuddy"
+
+if $notarize; then
+  for variable in APPLE_SIGNING_IDENTITY APPLE_TEAM_ID APPLE_KEYCHAIN_PATH APPLE_NOTARY_PROFILE; do
+    [[ -n "${!variable:-}" ]] || fail "--notarize requires $variable"
+  done
+  [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || fail "invalid APPLE_TEAM_ID"
+  [[ "$APPLE_SIGNING_IDENTITY" == "Developer ID Application: "*" ($APPLE_TEAM_ID)" ]] || \
+    fail "APPLE_SIGNING_IDENTITY must be a Developer ID Application identity for APPLE_TEAM_ID"
+  [[ -f "$APPLE_KEYCHAIN_PATH" ]] || fail "APPLE_KEYCHAIN_PATH does not exist"
+  command -v spctl >/dev/null || fail "required command not found: spctl"
+fi
 
 case "$output_arg" in
   /*) output_dir=$output_arg ;;
@@ -107,6 +124,10 @@ cleanup() {
         echo "An owned disk image could not be detached; temporary workspace retained at $work_dir."
       fi
     } > "$failure_log"
+    if [[ "${GITHUB_ACTIONS:-}" == true ]]; then
+      # Hosted runners disappear after the job; retain Apple diagnostics in CI logs.
+      cat "$failure_log" >&2
+    fi
     if ! $cleanup_failed; then
       rm -rf -- "$work_dir"
     fi
@@ -253,17 +274,17 @@ verify_signed_bundle() {
   [[ "$metadata_identifier" == "$expected_identifier" ]] || \
     fail "signature metadata has unexpected identifier $metadata_identifier for $bundle_path"
 
-  if ! signature_kind=$(signature_metadata_value "$signature_metadata" Signature); then
-    fail "signature metadata does not contain exactly one Signature for $bundle_path"
+  if $notarize; then
+    verify_developer_metadata "$signature_metadata" "$bundle_path"
+    [[ "$signature_metadata" == *"(runtime)"* ]] || fail "hardened runtime is missing for $bundle_path"
+  else
+    signature_kind=$(signature_metadata_value "$signature_metadata" Signature) || \
+      fail "signature metadata does not contain exactly one Signature for $bundle_path"
+    [[ "$signature_kind" == adhoc ]] || fail "signature metadata is not a complete ad-hoc signature for $bundle_path"
+    team_identifier=$(signature_metadata_value "$signature_metadata" TeamIdentifier) || \
+      fail "signature metadata does not contain exactly one TeamIdentifier for $bundle_path"
+    [[ "$team_identifier" == "not set" ]] || fail "ad-hoc signature unexpectedly has TeamIdentifier $team_identifier for $bundle_path"
   fi
-  [[ "$signature_kind" == adhoc ]] || \
-    fail "signature metadata is not a complete ad-hoc signature for $bundle_path"
-
-  if ! team_identifier=$(signature_metadata_value "$signature_metadata" TeamIdentifier); then
-    fail "signature metadata does not contain exactly one TeamIdentifier for $bundle_path"
-  fi
-  [[ "$team_identifier" == "not set" ]] || \
-    fail "ad-hoc signature unexpectedly has TeamIdentifier $team_identifier for $bundle_path"
 
   if ! info_entries=$(signature_metadata_value "$signature_metadata" "Info.plist entries"); then
     fail "signature metadata does not contain exactly one Info.plist entry count for $bundle_path"
@@ -278,10 +299,67 @@ verify_signed_bundle() {
     fail "signature metadata does not contain sealed resources for $bundle_path"
 }
 
-echo "==> Ad-hoc signing complete app bundle"
-codesign --force --sign - --identifier "$bundle_identifier" "$app_path" || \
-  fail "ad-hoc bundle signing failed"
+verify_developer_metadata() {
+  local metadata=$1 artifact=$2 team timestamp authority
+  team=$(signature_metadata_value "$metadata" TeamIdentifier) || fail "missing signing TeamIdentifier for $artifact"
+  [[ "$team" == "$APPLE_TEAM_ID" ]] || fail "unexpected signing TeamIdentifier for $artifact"
+  authority=$(awk '/^Authority=/ {sub(/^Authority=/, ""); print; exit}' <<< "$metadata")
+  [[ "$authority" == "$APPLE_SIGNING_IDENTITY" ]] || fail "unexpected Developer ID signing authority for $artifact"
+  timestamp=$(signature_metadata_value "$metadata" Timestamp) || fail "secure timestamp is missing for $artifact"
+  [[ -n "$timestamp" && "$timestamp" != none ]] || fail "secure timestamp is missing for $artifact"
+}
+
+# Bound upload/network operations too: notarytool's --timeout only limits its wait.
+run_bounded() {
+  local seconds=$1
+  shift
+  python3 - "$seconds" "$@" <<'PYTIMEOUT'
+import subprocess
+import sys
+try:
+    result = subprocess.run(sys.argv[2:], timeout=int(sys.argv[1]))
+except subprocess.TimeoutExpired:
+    print("Apple verification command exceeded its time limit", file=sys.stderr)
+    raise SystemExit(124)
+raise SystemExit(result.returncode)
+PYTIMEOUT
+}
+
+notarize_artifact() {
+  local upload=$1 target=$2 label=$3 response submission_id status command_status=0
+  response="$work_dir/notary-$label.json"
+  echo "==> Submitting $label to Apple (up to 30 minutes)"
+  run_bounded 2100 xcrun notarytool submit "$upload" --keychain-profile "$APPLE_NOTARY_PROFILE" \
+    --keychain "$APPLE_KEYCHAIN_PATH" --wait --timeout 30m --output-format json \
+    > "$response" 2>> "$build_log" || command_status=$?
+  cat "$response" >> "$build_log"
+  submission_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id", ""))' "$response") || \
+    fail "invalid Apple notarization response for $label"
+  [[ "$submission_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail "missing Apple notarization submission ID for $label"
+  echo "Apple $label submission: $submission_id"
+  status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status", ""))' "$response")
+  if [[ $command_status -ne 0 || "$status" != Accepted ]]; then
+    run_bounded 120 xcrun notarytool log "$submission_id" --keychain-profile "$APPLE_NOTARY_PROFILE" \
+      --keychain "$APPLE_KEYCHAIN_PATH" >> "$build_log" 2>&1 || true
+    fail "Apple notarization did not accept $label (status: $status; submission: $submission_id)"
+  fi
+  run_bounded 300 xcrun stapler staple "$target" >> "$build_log" 2>&1 || fail "could not staple $label"
+  run_bounded 300 xcrun stapler validate "$target" >> "$build_log" 2>&1 || fail "invalid stapled ticket for $label"
+}
+
+if $notarize; then
+  echo "==> Developer ID signing complete app bundle"
+  run_bounded 300 codesign --force --sign "$APPLE_SIGNING_IDENTITY" --keychain "$APPLE_KEYCHAIN_PATH" \
+    --options runtime --timestamp --identifier "$bundle_identifier" "$app_path" || fail "Developer ID app signing failed"
+else
+  echo "==> Ad-hoc signing complete app bundle"
+  codesign --force --sign - --identifier "$bundle_identifier" "$app_path" || fail "ad-hoc bundle signing failed"
+fi
 verify_signed_bundle "$app_path" "$bundle_identifier"
+if $notarize; then
+  ditto -c -k --keepParent "$app_path" "$work_dir/TokChan-notary.zip"
+  notarize_artifact "$work_dir/TokChan-notary.zip" "$app_path" app
+fi
 
 verify_app_contract() {
   local candidate_app=$1
@@ -436,6 +514,16 @@ layout_device=""
 
 hdiutil convert "$writable_dmg" -quiet -format UDZO -imagekey zlib-level=9 \
   -o "$staged_dmg" || fail "could not create compressed disk image"
+if $notarize; then
+  run_bounded 300 codesign --force --sign "$APPLE_SIGNING_IDENTITY" --keychain "$APPLE_KEYCHAIN_PATH" \
+    --timestamp "$staged_dmg" || fail "Developer ID DMG signing failed"
+  codesign --verify --strict --verbose=2 "$staged_dmg" || fail "DMG signature verification failed"
+  dmg_metadata=$(codesign -dv --verbose=4 "$staged_dmg" 2>&1) || fail "could not inspect DMG signature"
+  printf '%s\n' "$dmg_metadata" >> "$build_log"
+  verify_developer_metadata "$dmg_metadata" "$staged_dmg"
+  notarize_artifact "$staged_dmg" "$staged_dmg" dmg
+  codesign --verify --strict --verbose=2 "$staged_dmg" || fail "stapled DMG signature verification failed"
+fi
 hdiutil verify "$staged_dmg" >> "$build_log" 2>&1 || fail "disk image verification failed"
 
 attach_image "$staged_dmg" "$verification_mount" readonly \
@@ -459,6 +547,11 @@ if visible != expected:
     raise SystemExit(f"unexpected user-visible disk image entries: {visible}")
 PY
 verify_app_contract "$verification_mount/TokChan.app"
+if $notarize; then
+  run_bounded 300 xcrun stapler validate "$verification_mount/TokChan.app" >> "$build_log" 2>&1 || fail "mounted app stapled ticket is invalid"
+  run_bounded 300 spctl --assess --type execute --verbose=4 "$verification_mount/TokChan.app" >> "$build_log" 2>&1 || \
+    fail "Gatekeeper rejected mounted app"
+fi
 detach_image "$verification_device" verification
 verification_device=""
 
@@ -490,6 +583,11 @@ succeeded=true
 echo "==> Release assets"
 echo "$final_dmg"
 echo "$final_checksum"
-echo "WARNING: This app bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized."
-echo "Ad-hoc signing provides bundle integrity but no verified developer identity; Gatekeeper may block or warn on launch."
-echo "This release format is intended only for the maintainer's personal use, not ordinary public distribution."
+if $notarize; then
+  echo "Developer ID signed and Apple-notarized; app and DMG tickets stapled and verified."
+  echo "macOS may still show its normal first-launch download confirmation."
+else
+  echo "WARNING: This app bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized."
+  echo "Ad-hoc signing provides bundle integrity but no verified developer identity; Gatekeeper may block or warn on launch."
+  echo "This release format is intended only for the maintainer's personal use, not ordinary public distribution."
+fi

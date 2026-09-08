@@ -15,6 +15,7 @@ concurrency:
 jobs:
   release:
     runs-on: macos-26
+    timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -74,9 +75,16 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
 
-      - name: Test, build, ad-hoc sign, and package universal app
+      - name: Test, sign, notarize, and package universal app
         shell: bash
-        run: scripts/build-release.sh
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: scripts/ci-build-release.sh
 
       - name: Verify exact local assets
         id: assets
@@ -116,15 +124,15 @@ jobs:
           }
 
           if [[ -z "$release_info" ]]; then
-            printf -v warning '%s\n%s\n\n%s' \
-              '> [!WARNING]' \
-              "> This app bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized. DMG packaging improves installation convenience only; it provides no verified developer identity. It is intended for the maintainer's personal use only. Gatekeeper may block or warn on first launch. Verify the SHA-256 checksum before use. It is not ready for ordinary public distribution." \
+            printf -v distribution_notes '%s\n%s\n\n%s' \
+              '> [!NOTE]' \
+              "> This app is Developer ID signed and Apple-notarized. The app and DMG include stapled notarization tickets. macOS may still ask you to confirm opening an app downloaded from the Internet. Verify the SHA-256 checksum before use." \
               "After verification, open the DMG and drag TokChan.app to the Applications folder shown in the image."
             release_info=$(gh api --method POST \
               "repos/${GITHUB_REPOSITORY}/releases" \
               -f tag_name="$TAG" \
               -f name="TokChan $TAG" \
-              -f body="$warning" \
+              -f body="$distribution_notes" \
               -F draft=true \
               -F generate_release_notes=true \
               --jq '[.id, .draft] | @tsv')
@@ -143,19 +151,21 @@ jobs:
           release_api="repos/${GITHUB_REPOSITORY}/releases/${release_id}"
 
           release_body=$(gh api "$release_api" --jq .body)
-          for required_warning in \
-            "ad-hoc signed, not Developer ID signed, and not Apple-notarized" \
-            "no verified developer identity" \
-            "maintainer's personal use only" \
-            "Gatekeeper may block or warn" \
-            "Verify the SHA-256 checksum" \
-            "not ready for ordinary public distribution"
+          for required_note in \
+            "This app is Developer ID signed and Apple-notarized." \
+            "The app and DMG include stapled notarization tickets." \
+            "macOS may still ask you to confirm opening an app downloaded from the Internet." \
+            "Verify the SHA-256 checksum"
           do
-            grep -F "$required_warning" <<< "$release_body" >/dev/null || {
-              echo "Draft Release is missing required warning text: $required_warning" >&2
+            grep -F "$required_note" <<< "$release_body" >/dev/null || {
+              echo "Draft Release is missing required distribution text: $required_note" >&2
               exit 1
             }
           done
+          if grep -Eiq 'ad-hoc signed|not Developer ID signed|not Apple-notarized|personal use only|not ready for ordinary public distribution' <<< "$release_body"; then
+            echo "Draft Release contains obsolete unsigned-distribution notes; review and update the draft before retrying" >&2
+            exit 1
+          fi
 
           [[ "$(gh api "$release_api" --jq .draft)" == true ]] || {
             echo "Release $TAG left draft state before asset upload; refusing to overwrite assets" >&2

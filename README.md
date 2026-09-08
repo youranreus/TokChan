@@ -110,16 +110,16 @@ npx tokscale@latest login
 3. 启动 TokChan，在菜单栏中找到应用图标。
 4. 首次使用时填写或确认 Tokscale 用户名。应用通常会自动找到 `npx`，找不到时可在设置里填写绝对路径。
 
-> [!IMPORTANT]
-> 当前发布包使用 ad-hoc 签名，没有使用 Apple Developer ID 签名，也没有经过 Apple 公证。首次启动时，macOS 可能阻止应用打开。请进入“系统设置”中的“隐私与安全性”，在安全性区域找到 TokChan 的提示，点击“仍要打开”并再次确认。这个操作通常只需完成一次。
+> [!NOTE]
+> 使用新版签名流程发布、且 Release 说明标注已通过 Apple 公证的安装包，无需在系统设置中手动“仍要打开”。macOS 首次启动仍可能询问是否打开从互联网下载的应用。历史未公证版本不会自动获得公证，请以对应 Release 说明为准。
 
 ## 常见问题
 
-### 为什么第一次打开需要在系统设置中手动允许
+### 为什么第一次打开仍然有提示
 
-当前 Release 没有 Developer ID 签名和 Apple 公证，Gatekeeper 因此可能把它拦下。这不等同于系统发现了恶意代码，只表示 macOS 无法通过 Apple 的签名与公证链验证发布者。
+正常的“从互联网下载，是否打开”确认属于 macOS 的首次启动检查。若提示“无法验证开发者”或“Apple 无法检查是否包含恶意软件”，请核对是否下载了旧版未公证安装包，并查看对应 Release 的签名说明。新版流程会在正式签名、公证和验证全部成功后才发布附件。
 
-确认安装包来自本仓库的 [Releases](https://github.com/youranreus/TokChan/releases/latest) 后，打开“系统设置”，进入“隐私与安全性”，向下找到安全性提示，点击“仍要打开”。如果没有看到按钮，可以先再启动一次 TokChan，让系统重新显示拦截记录。
+维护者配置证书、GitHub Secrets 和发布验收的步骤见 [macOS 发布指南](docs/macos-release.md)。
 
 ### 为什么统计里默认没有 Cursor 数据
 
