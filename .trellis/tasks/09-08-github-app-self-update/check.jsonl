@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/09-08-github-app-self-update/prd.md", "reason": "acceptance criteria"}
+{"file": ".trellis/tasks/09-08-github-app-self-update/design.md", "reason": "architecture and trust boundaries"}
+{"file": ".trellis/tasks/09-08-github-app-self-update/implement.md", "reason": "implementation and validation gates"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "About UI and accessibility compliance"}
+{"file": ".trellis/spec/macos/state-management.md", "reason": "state and action serialization compliance"}
+{"file": ".trellis/spec/macos/release-workflow.md", "reason": "release security and immutability compliance"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "test coverage and offline fixture compliance"}
+{"file": ".trellis/spec/macos/quality-guidelines.md", "reason": "quality verification"}
+{"file": ".trellis/spec/guides/index.md", "reason": "cross-layer consistency and reuse"}

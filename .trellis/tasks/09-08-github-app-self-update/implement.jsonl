@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/macos/index.md", "reason": "macOS pre-development checklist and guideline routing"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "Settings/About UI and dependency injection conventions"}
+{"file": ".trellis/spec/macos/state-management.md", "reason": "observable updater state and action ownership"}
+{"file": ".trellis/spec/macos/release-workflow.md", "reason": "signing notarization and publication contracts"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "unit and offline UI testing patterns"}
+{"file": ".trellis/spec/macos/quality-guidelines.md", "reason": "dependency boundaries and verification bar"}
+{"file": ".trellis/spec/guides/index.md", "reason": "shared cross-layer and reuse guidance"}
+{"file": ".trellis/tasks/09-08-github-app-self-update/design.md", "reason": "Sparkle architecture security and rollback design"}
