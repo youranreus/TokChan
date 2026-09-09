@@ -737,7 +737,7 @@ python3 "$root/tests/test_workflow_action_pins.py" >/dev/null
 pass "release workflow uses the reviewed offline action-pin allowlist"
 grep -F 'scripts/ci-build-release.sh' \
   "$root/.github/workflows/release.yml" >/dev/null
-grep -F 'This app is Developer ID signed and Apple-notarized.' \
+grep -F 'scripts/generate-release-notes.py' \
   "$root/.github/workflows/release.yml" >/dev/null
 ! grep -F 'This ZIP is unsigned' "$root/.github/workflows/release.yml" >/dev/null
 grep -F 'set position of item "TokChan.app" of targetFolder to {140, 160}' \
@@ -794,12 +794,17 @@ for action, revision in re.findall(r"uses: ([^@\s]+)@([^\s]+)", text):
     assert re.fullmatch(r"[0-9a-f]{40}", revision), (action, revision)
 for required in ["SPARKLE_PRIVATE_KEY_BASE64", "vars.SPARKLE_PUBLIC_ED_KEY", "github.token"]:
     assert required in text
-assert text.index("Inspect immutable Release recovery state") < text.index("Generate signed Sparkle appcast")
+assert text.index("Generate Chinese release notes") < text.index("Inspect immutable Release recovery state") < text.index("Generate signed Sparkle appcast")
 assert "APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}" in text
 assert "signature_metadata=$(codesign -dv --verbose=4 \"$app\" 2>&1)" in text
 assert "candidate appcast changed or dropped prior feed history" in text
 assert "curl --fail --silent --show-error --location --retry 5 --retry-all-errors" in text
 assert text.index("Generate signed Sparkle appcast") < text.index("Create or resume draft Release")
+assert "generate_release_notes=true" not in text
+assert 'cp "$GENERATED_SPARKLE_NOTES"' in text
+assert 'EXPECTED_RELEASE_BODY' in text
+assert "--jq .body" not in text
+assert text.count('body = json.load(sys.stdin)["body"]') == 3
 assert text.index("Verify published update archive") < text.index("Upload appcast Pages artifact") < text.index("Deploy appcast last")
 PY
 pass "release workflow permissions, pins, environment, credentials, and publication order are exact"
@@ -917,6 +922,9 @@ openssl pkey -inform DER -in "$test_tmp/sparkle-private.der" -pubout -outform DE
   -out "$test_tmp/sparkle-public.der" 2>/dev/null
 public_key=$(tail -c 32 "$test_tmp/sparkle-public.der" | base64 | tr -d '\r\n')
 appcast_work="$test_tmp/appcast-work"
+generated_sparkle_notes="$test_tmp/generated-sparkle.html"
+printf '<!doctype html><html lang="zh-CN"><body><h2>本次更新</h2></body></html>\n' > "$generated_sparkle_notes"
+export GENERATED_SPARKLE_NOTES="$generated_sparkle_notes"
 mkdir -p "$appcast_work/TokChan.xcodeproj"
 (
   cd "$appcast_work"
@@ -1004,16 +1012,23 @@ if [[ "$1" == api && " $* " == *" --paginate "* ]]; then
   fi
 elif [[ "$1" == api && " $* " == *" --method POST "* ]]; then
   [[ "$(cat "${MOCK_RELEASE_STATE:?}")" == absent ]]
+  while (($#)); do
+    if [[ "$1" == -f && "$2" == body=* ]]; then printf '%s' "${2#body=}" > "${MOCK_BODY_STATE:?}"; break; fi
+    shift
+  done
   printf draft > "${MOCK_RELEASE_STATE:?}"
   printf '123\ttrue\n'
 elif [[ "$1" == api && " $* " == *" --method PATCH "* ]]; then
-  printf published > "${MOCK_RELEASE_STATE:?}"
-elif [[ "$1" == api && " $* " == *" --jq .body "* ]]; then
-  if [[ -n "${MOCK_RELEASE_BODY:-}" ]]; then
-    printf '%s\n' "$MOCK_RELEASE_BODY"
+  if [[ " $* " == *" draft=false "* ]]; then
+    printf published > "${MOCK_RELEASE_STATE:?}"
   else
-    echo "This app is Developer ID signed and Apple-notarized. The app and DMG include stapled notarization tickets. macOS may still ask you to confirm opening an app downloaded from the Internet. Verify the SHA-256 checksum before use."
+    while (($#)); do
+      if [[ "$1" == -f && "$2" == body=* ]]; then printf '%s' "${2#body=}" > "${MOCK_BODY_STATE:?}"; break; fi
+      shift
+    done
   fi
+elif [[ "$1" == api && "$#" == 2 && "$2" == repos/*/releases/[0-9]* ]]; then
+  python3 -c 'import json, sys; print(json.dumps({"body": open(sys.argv[1], encoding="utf-8").read()}, ensure_ascii=False))' "${MOCK_BODY_STATE:?}"
 elif [[ "$1" == api && " $* " == *" --jq .draft "* ]]; then
   [[ "$(cat "${MOCK_RELEASE_STATE:?}")" == draft ]] && echo true || echo false
 elif [[ "$1" == api && " $* " == *"[.id, .name, .size]"* ]]; then
@@ -1035,6 +1050,23 @@ else
 fi
 MOCK
 chmod +x "$workflow_mock_bin/gh"
+expected_release_body="$test_tmp/expected-release-body.md"
+body_state="$test_tmp/release-body-state.md"
+cat > "$expected_release_body" <<'BODY'
+## 本次更新
+
+### 修复
+- 修复自动提交服务无法恢复的问题
+
+## 下载与安全说明
+
+> [!NOTE]
+> 本版本使用 Developer ID 签名并通过 Apple 公证，TokChan.app 与 DMG 均已装订公证票据。macOS 仍可能要求确认打开从互联网下载的应用。
+
+下载 DMG 后，将 TokChan.app 拖到镜像中的“应用程序”文件夹完成安装。使用前请按随附的 .sha256 文件校验 DMG 的 SHA-256；校验失败时不要安装或运行。
+BODY
+cp "$expected_release_body" "$body_state"
+export EXPECTED_RELEASE_BODY="$expected_release_body" MOCK_BODY_STATE="$body_state"
 env PATH="$workflow_mock_bin:$PATH" \
   GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" ZIP="$zip" RUN_ATTEMPT=1 \
   MOCK_RELEASE_STATE="$workflow_state" MOCK_DMG_NAME="$(basename "$dmg")" \
@@ -1043,26 +1075,30 @@ env PATH="$workflow_mock_bin:$PATH" \
 [[ "$(cat "$workflow_state")" == published ]]
 pass "release workflow resumes and publishes a draft by Release ID"
 printf absent > "$workflow_state"
+cp "$expected_release_body" "$body_state"
 env PATH="$workflow_mock_bin:$PATH" \
   GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" ZIP="$zip" RUN_ATTEMPT=1 \
   MOCK_RELEASE_STATE="$workflow_state" MOCK_LIST_INVISIBLE=1 MOCK_DMG_NAME="$(basename "$dmg")" \
   MOCK_CHECKSUM_NAME="$(basename "$checksum")" MOCK_ZIP_NAME="$(basename "$zip")" \
   MOCK_DMG_PATH="$dmg" MOCK_CHECKSUM_PATH="$checksum" MOCK_ZIP_PATH="$zip" bash "$workflow_step" >/dev/null
 [[ "$(cat "$workflow_state")" == published ]]
-pass "release workflow publishes a new draft from the create response ID"
+cmp "$expected_release_body" "$body_state"
+pass "release workflow publishes a new draft with the exact generated body"
 printf draft > "$workflow_state"
-expect_failure "missing required distribution text" env \
+printf 'drifted draft body' > "$body_state"
+env \
   PATH="$workflow_mock_bin:$PATH" \
   GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" ZIP="$zip" RUN_ATTEMPT=1 \
   MOCK_RELEASE_STATE="$workflow_state" MOCK_DMG_NAME="$(basename "$dmg")" \
   MOCK_CHECKSUM_NAME="$(basename "$checksum")" MOCK_ZIP_NAME="$(basename "$zip")" \
   MOCK_DMG_PATH="$dmg" MOCK_CHECKSUM_PATH="$checksum" MOCK_ZIP_PATH="$zip" \
-  MOCK_RELEASE_BODY='This app bundle is ad-hoc signed, not Developer ID signed, and not Apple-notarized.' \
-  bash "$workflow_step"
-[[ "$(cat "$workflow_state")" == draft ]]
-pass "release workflow refuses a draft with incomplete distribution warnings"
+  bash "$workflow_step" >/dev/null
+[[ "$(cat "$workflow_state")" == published ]]
+cmp "$expected_release_body" "$body_state"
+pass "release workflow deterministically corrects a draft body before publication"
 
 printf published > "$workflow_state"
+cp "$expected_release_body" "$body_state"
 expect_failure "already published; assets are immutable" env \
   PATH="$workflow_mock_bin:$PATH" \
   GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" ZIP="$zip" RUN_ATTEMPT=1 \
@@ -1080,6 +1116,7 @@ env PATH="$workflow_mock_bin:$PATH" \
 pass "release workflow permits byte-verified feed-only recovery without mutating a published Release"
 
 printf draft > "$workflow_state"
+cp "$expected_release_body" "$body_state"
 expect_failure "assets do not exactly match the expected set" env \
   PATH="$workflow_mock_bin:$PATH" \
   GITHUB_REPOSITORY=owner/repo TAG="v${fixture_version}" DMG="$dmg" CHECKSUM="$checksum" ZIP="$zip" RUN_ATTEMPT=1 \

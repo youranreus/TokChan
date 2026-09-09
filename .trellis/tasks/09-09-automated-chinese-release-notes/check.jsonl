@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/macos/index.md", "reason": "macOS package quality-check entry point"}
+{"file": ".trellis/spec/macos/release-workflow.md", "reason": "verify release state machine, signing, feed, and test contracts"}
+{"file": ".trellis/tasks/09-09-automated-chinese-release-notes/research/release-notes-design.md", "reason": "verify fragment validation, cross-channel parity, and failure behavior"}

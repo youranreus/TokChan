@@ -16,6 +16,7 @@ scripts/ci-build-release.sh
 scripts/release.sh {patch|minor|major} [--push]
 python3 scripts/lib/project-version.py <project.pbxproj> get
 python3 scripts/lib/project-version.py <project.pbxproj> set --marketing X.Y.Z --build N
+python3 scripts/generate-release-notes.py --tag vX.Y.Z --repository owner/repo --output-dir <owned-empty-directory>
 ```
 
 Release assets and public feed:
@@ -63,7 +64,9 @@ Tag message: TokChan vX.Y.Z
 - Build and validate a candidate appcast privately before Release mutation, but make it discoverable only in this order: upload all three assets to the draft; verify exact names and downloadable bytes; publish the stable non-prerelease Release; upload a Pages artifact containing only public feed files; deploy `appcast.xml` last. Generation order is not publication order. Never expose a feed entry while its enclosure URL is draft-only, absent, or returns different bytes.
 - Preserve the prior appcast when adding an item. A verified first-feed 404 may bootstrap an empty feed; TLS, timeout, rate-limit, 5xx, malformed XML, wrong repository, or unknown fetch failures must fail closed rather than silently replace feed history. The candidate item uses `CFBundleVersion` as `sparkle:version`, `MARKETING_VERSION` as `sparkle:shortVersionString`, the exact ZIP byte length, a nonempty `sparkle:edSignature`, and HTTPS enclosure/release-notes URLs for the same stable Tag. Drafts, prereleases, and non-`vX.Y.Z` Tags never enter the stable feed.
 - Pages deployment is the sole discovery commit point. Delete the decoded private key and copied ZIP before assembling/uploading the Pages artifact, and reject symlinks, hidden credential files, or any content other than the intended public feed/release-note files. A failure before deployment leaves the previous feed active. A failure after Release publication must use a feed-only recovery that regenerates and validates the candidate from immutable published assets; it must not clobber or republish the Release.
-- Official release notes must state Developer ID signing, Apple notarization, stapled app/DMG tickets, checksum guidance, and normal Internet-download confirmation. Reject drafts missing the new notes or retaining obsolete unsigned-distribution claims; published releases are untouched. Local ad-hoc output must still clearly disclose its limits. Never promise to disable OS verification or guarantee no first-launch prompt.
+- Official release notes are generated offline from permanent `release-notes/fragments/YYYYMMDD-lowercase-slug.json` files. Each fragment has exactly `category` (`新增`, `优化`, or `修复`) and an 8–80 character, single-line, NFC-normalized Chinese `summary` describing one user-visible outcome. Stable-Tag fragments are append-only: modification, deletion, rename, transient add/delete, malformed input, or an empty release range fails before credentials or Release mutation. The generator reads Git objects, orders categories as 新增 → 优化 → 修复 and paths lexically, and renders GitHub Markdown, Sparkle HTML, and a private manifest from one canonical model. The manifest is never a Release asset or Pages file, and GitHub automatic release notes remain disabled.
+- Every Trellis-planned macOS task must classify release-note impact in its requirements or implementation notes. Implementation adds one fragment per independently explainable user-visible outcome and none for internal-only work. Quality check compares the complete user-visible diff with newly added fragments for coverage, category, wording, and duplicates; completion must not proceed with an unexplained user-visible change. This planning/check contract, rather than a general PR/push workflow, enforces semantic completeness; direct commits that bypass Trellis remain an accepted limitation.
+- Official release notes must state Developer ID signing, Apple notarization, stapled app/DMG tickets, checksum guidance, DMG drag-to-Applications installation, and normal Internet-download confirmation. Draft bodies are deterministically corrected and exactly reverified; published bodies are read-only and must exactly match tagged-source output during feed recovery. Local ad-hoc output must still clearly disclose its limits. Never promise to disable OS verification or guarantee no first-launch prompt.
 
 ## 4. Validation & Error Matrix
 
@@ -88,14 +91,15 @@ Tag message: TokChan vX.Y.Z
 | Source changes while release build runs | Refuse the release commit |
 | Tag does not equal source version or is outside `origin/master` | CI fails before Release mutation |
 | Existing draft Release | Replace only draft assets, verify the exact three names and bytes, then publish |
-| Existing published Release | Fail without replacing assets |
+| Existing published Release | Fail without replacing assets; a same-run feed-only recovery also requires an exact generated-body match and never PATCHes the Release |
+| Missing/invalid/new-fragment-free release notes or historical fragment mutation | Fail before credentials, Release mutation, appcast signing, or Pages deployment; never fabricate a placeholder |
 | Tag pushed with wrong source/artifact | Do not move the Tag; issue a new patch version |
 
 ## 5. Good / Base / Bad Cases
 
-- Good: from clean synchronized `master`, run `scripts/release.sh patch`, `minor`, or `major`; CI signs nested Sparkle code inside-out, publishes the exact immutable DMG/checksum/ZIP set, and deploys the validated feed last.
-- Base: run `scripts/build-release.sh --skip-tests --output dist-local` for local packaging iteration; it may use ad-hoc signatures and an unset development public key, so do not use this path for Tag or feed publication.
-- Bad: manually edit only one build configuration, sign only `Sparkle.framework` and the app, reuse a published Tag, overwrite a published asset, publish a DMG/ZIP whose embedded app was not verified, deploy appcast before its ZIP is publicly downloadable, drop feed history after a transient fetch failure, delete a workspace while its owned image is still attached, or treat a GitHub API failure as a missing Release.
+- Good: a Trellis-planned user-visible change adds one validated Chinese fragment; from clean synchronized `master`, release preparation leads CI to render the exact Markdown/HTML pair, sign and publish the three immutable assets, then deploy the feed last.
+- Base: internal-only work records no release-note impact and adds no fragment; local `scripts/build-release.sh --skip-tests --output dist-local` remains credential-free and is never uploaded as an official asset.
+- Bad: omit a fragment for a user-visible change, edit/delete a fragment already present in a stable Tag, infer notes from commit subjects, enable GitHub automatic notes, mutate a published body, or let the manifest enter Release/Pages output. Existing bad release patterns also include moving a stable Tag, overwriting published assets, publishing an unverified DMG/ZIP, or deploying appcast before its enclosure is public.
 
 ## 6. Tests Required
 
@@ -103,6 +107,8 @@ For release workflow changes, run and assert:
 
 ```bash
 bash -n scripts/build-release.sh scripts/ci-build-release.sh scripts/release.sh tests/test_release_scripts.sh
+python3 -m py_compile scripts/generate-release-notes.py
+python3 tests/test_release_notes.py
 python3 tests/test_project_version.py
 python3 tests/test_ci_signing.py
 bash tests/test_release_scripts.sh

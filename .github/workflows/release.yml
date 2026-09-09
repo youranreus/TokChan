@@ -80,6 +80,28 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
 
+      - name: Generate Chinese release notes
+        shell: bash
+        env:
+          GH_TOKEN: ""
+          APPLE_CERTIFICATE_P12_BASE64: ""
+          APPLE_CERTIFICATE_PASSWORD: ""
+          APPLE_ID: ""
+          APPLE_APP_SPECIFIC_PASSWORD: ""
+          SPARKLE_PRIVATE_KEY_BASE64: ""
+        run: |
+          set -euo pipefail
+          notes_dir="$RUNNER_TEMP/release-notes"
+          rm -rf "$notes_dir"
+          python3 scripts/generate-release-notes.py \
+            --tag '${{ steps.version.outputs.tag }}' \
+            --repository "$GITHUB_REPOSITORY" \
+            --output-dir "$notes_dir"
+          test -s "$notes_dir/github.md"
+          test -s "$notes_dir/sparkle.html"
+          test -s "$notes_dir/manifest.json"
+          [[ "$(find "$notes_dir" -maxdepth 1 -type f -print | wc -l | tr -d ' ')" == 3 ]]
+
       - name: Inspect immutable Release recovery state
         id: recovery
         shell: bash
@@ -87,6 +109,7 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED_RELEASE_BODY: ${{ runner.temp }}/release-notes/github.md
         run: |
           set -euo pipefail
           release_rows=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
@@ -107,6 +130,17 @@ jobs:
           release_id=${release_rows%%$'\t'*}
           [[ "$release_id" =~ ^[0-9]+$ ]]
           release_api="repos/${GITHUB_REPOSITORY}/releases/${release_id}"
+          test -s "$EXPECTED_RELEASE_BODY"
+          expected_body=$(cat "$EXPECTED_RELEASE_BODY"; printf x)
+          expected_body=${expected_body%x}
+          release_body=$(gh api "$release_api" |
+            python3 -c 'import json, sys; body = json.load(sys.stdin)["body"]; isinstance(body, str) or sys.exit("Release body is not a string"); sys.stdout.write(body)'
+            printf x)
+          release_body=${release_body%x}
+          [[ "$release_body" == "$expected_body" ]] || {
+            echo "Published Release body does not exactly match generated notes" >&2
+            exit 1
+          }
           asset_rows=$(gh api "$release_api" --jq '.assets[] | [.id, .name, .size] | @tsv')
           expected=$(printf '%s\n%s\n%s\n' \
             "TokChan-v${VERSION}-macos-universal.dmg" \
@@ -196,6 +230,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD: ${{ steps.version.outputs.build }}
           ZIP: ${{ steps.assets.outputs.zip }}
+          GENERATED_SPARKLE_NOTES: ${{ runner.temp }}/release-notes/sparkle.html
         run: |
           set -euo pipefail
           umask 077
@@ -284,9 +319,9 @@ jobs:
           fi
 
           note_name="$(basename "${ZIP%.zip}").html"
-          cat > "$feed_dir/$note_name" <<HTML
-          <!doctype html><html><body><h1>TokChan ${VERSION}</h1><p>此版本由 Developer ID 签名并通过 Apple 公证。</p><p><a href="https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${VERSION}">查看完整发布说明</a></p></body></html>
-          HTML
+          test -s "$GENERATED_SPARKLE_NOTES"
+          cp "$GENERATED_SPARKLE_NOTES" "$feed_dir/$note_name"
+          cmp "$GENERATED_SPARKLE_NOTES" "$feed_dir/$note_name"
           xcodebuild -resolvePackageDependencies -project TokChan.xcodeproj -scheme TokChan \
             -derivedDataPath "$derived_data" >/dev/null
           appcast_tool=$(find "$derived_data" -path '*/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast' \
@@ -414,6 +449,7 @@ jobs:
           CHECKSUM: ${{ steps.assets.outputs.checksum }}
           ZIP: ${{ steps.assets.outputs.zip }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED_RELEASE_BODY: ${{ runner.temp }}/release-notes/github.md
         run: |
           set -euo pipefail
           find_release() {
@@ -427,18 +463,17 @@ jobs:
             exit 1
           }
 
+          test -s "$EXPECTED_RELEASE_BODY"
+          expected_body=$(cat "$EXPECTED_RELEASE_BODY"; printf x)
+          expected_body=${expected_body%x}
+          [[ "$expected_body" == *'## 本次更新'* && "$expected_body" == *'## 下载与安全说明'* ]]
           if [[ -z "$release_info" ]]; then
-            printf -v distribution_notes '%s\n%s\n\n%s' \
-              '> [!NOTE]' \
-              "> This app is Developer ID signed and Apple-notarized. The app and DMG include stapled notarization tickets. macOS may still ask you to confirm opening an app downloaded from the Internet. Verify the SHA-256 checksum before use." \
-              "After verification, open the DMG and drag TokChan.app to the Applications folder shown in the image."
             release_info=$(gh api --method POST \
               "repos/${GITHUB_REPOSITORY}/releases" \
               -f tag_name="$TAG" \
               -f name="TokChan $TAG" \
-              -f body="$distribution_notes" \
+              -f body="$expected_body" \
               -F draft=true \
-              -F generate_release_notes=true \
               --jq '[.id, .draft] | @tsv')
           fi
 
@@ -460,22 +495,27 @@ jobs:
           fi
           release_api="repos/${GITHUB_REPOSITORY}/releases/${release_id}"
 
-          release_body=$(gh api "$release_api" --jq .body)
-          for required_note in \
-            "This app is Developer ID signed and Apple-notarized." \
-            "The app and DMG include stapled notarization tickets." \
-            "macOS may still ask you to confirm opening an app downloaded from the Internet." \
-            "Verify the SHA-256 checksum"
-          do
-            grep -F "$required_note" <<< "$release_body" >/dev/null || {
-              echo "Draft Release is missing required distribution text: $required_note" >&2
+          if ! $recovery; then
+            [[ "$(gh api "$release_api" --jq .draft)" == true ]] || {
+              echo "Release $TAG left draft state before body correction" >&2
               exit 1
             }
-          done
-          if grep -Eiq 'ad-hoc signed|not Developer ID signed|not Apple-notarized|personal use only|not ready for ordinary public distribution' <<< "$release_body"; then
-            echo "Draft Release contains obsolete unsigned-distribution notes; review and update the draft before retrying" >&2
-            exit 1
+            release_body=$(gh api "$release_api" |
+              python3 -c 'import json, sys; body = json.load(sys.stdin)["body"]; isinstance(body, str) or sys.exit("Release body is not a string"); sys.stdout.write(body)'
+              printf x)
+            release_body=${release_body%x}
+            if [[ "$release_body" != "$expected_body" ]]; then
+              gh api --method PATCH "$release_api" -f body="$expected_body" --silent
+            fi
           fi
+          release_body=$(gh api "$release_api" |
+            python3 -c 'import json, sys; body = json.load(sys.stdin)["body"]; isinstance(body, str) or sys.exit("Release body is not a string"); sys.stdout.write(body)'
+            printf x)
+          release_body=${release_body%x}
+          [[ "$release_body" == "$expected_body" ]] || {
+            echo "Release body does not exactly match generated notes" >&2
+            exit 1
+          }
 
           if ! $recovery; then
             [[ "$(gh api "$release_api" --jq .draft)" == true ]] || {
