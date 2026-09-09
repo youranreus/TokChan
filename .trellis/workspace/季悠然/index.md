@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 14
+- **Total Sessions**: 15
 - **Last Active**: 2026-09-09
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~442 | Active |
+| `journal-1.md` | ~466 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 15 | 2026-09-09 | 统一后台刷新与提交状态 | `1a67a65`, `16241a2`, `fee4e12` | `master` |
 | 14 | 2026-09-09 | 自动生成中文版本发布文案 | `58deade` | `master` |
 | 12 | 2026-09-07 | 优化首次使用引导 | `29349dc` | `feat/first-use-onboarding` |
 | 8 | 2026-09-05 | 修复发布包 ad-hoc Bundle 签名 | `841e1aa` | `master` |

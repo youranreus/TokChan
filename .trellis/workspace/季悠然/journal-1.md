@@ -440,3 +440,27 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 15: 统一后台刷新与提交状态
+<!-- trellis-session: v=2 fp=7664c324a01999f2 -->
+
+**Date**: 2026-09-09
+**Task**: 统一后台刷新与提交状态
+**Branch**: `master`
+
+### Summary
+
+把统计刷新从面板计时器改为应用级调度，面板关闭时菜单栏仍按 300 秒更新；拆分提交并拉取与仅拉取入口，补齐唤醒、退避与 release-note fragment。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1a67a65` | feat(dashboard): 后台统一刷新与提交状态同步 |
+| `16241a2` | docs(spec): 同步后台刷新与手动操作契约 |
+| `fee4e12` | docs(release): 补充后台刷新用户可见变更片段 |
+
+### Status
+
+[OK] **Completed**
