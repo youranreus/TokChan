@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct FirstUseOnboardingView: View {
+    static let accountControlHeight: CGFloat = 32
+
     @ObservedObject var viewModel: DashboardViewModel
     @State private var usernameDraft: String
 
@@ -12,15 +14,15 @@ struct FirstUseOnboardingView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Spacer(minLength: 28)
+            Spacer(minLength: 16)
             currentStep
-            Spacer(minLength: 28)
+            Spacer(minLength: 16)
             Text("稍后仍可在设置的“常规”页修改用户名。")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 28)
-        .padding(.vertical, 30)
+        .padding(.vertical, 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("first-use-onboarding")
@@ -99,17 +101,20 @@ struct FirstUseOnboardingView: View {
     }
 
     private func usernameEntry(message: String?) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
                 Text("连接 Tokscale 账号")
                     .font(.headline)
-                Text("输入公开资料所使用的 Tokscale 用户名。")
+                Text("手工输入公开资料用户名，或读取本机 Tokscale 登录。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
 
             TextField("Tokscale 用户名", text: $usernameDraft)
                 .textFieldStyle(.roundedBorder)
+                .controlSize(.large)
+                .frame(height: Self.accountControlHeight)
+                .disabled(viewModel.isPerformingOperation)
                 .onSubmit(verifyUsername)
                 .accessibilityLabel("Tokscale 用户名")
                 .accessibilityIdentifier("onboarding-username-field")
@@ -118,14 +123,45 @@ struct FirstUseOnboardingView: View {
                 feedback(message)
             }
 
-            Button("继续") { verifyUsername() }
+            HStack(spacing: 8) {
+                Button {
+                    verifyUsername()
+                } label: {
+                    Text("继续")
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .frame(maxWidth: .infinity)
-                .disabled(trimmedUsername.isEmpty)
+                .frame(height: Self.accountControlHeight)
+                .disabled(trimmedUsername.isEmpty || viewModel.isPerformingOperation)
                 .keyboardShortcut(.defaultAction)
                 .help(trimmedUsername.isEmpty ? "请输入 Tokscale 用户名" : "保存用户名并验证全部范围统计")
                 .accessibilityIdentifier("onboarding-continue-button")
+
+                Button {
+                    Task { await viewModel.discoverIdentity() }
+                } label: {
+                    Text("识别本机登录")
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                }
+                .controlSize(.large)
+                .frame(maxWidth: .infinity)
+                .frame(height: Self.accountControlHeight)
+                .disabled(viewModel.isPerformingOperation)
+                .help("通过 Tokscale CLI 读取本机已登录用户名")
+                .accessibilityIdentifier("onboarding-discover-identity-button")
+            }
+
+            CursorLoginView(
+                state: viewModel.cursorLoginState,
+                isDisabled: viewModel.isPerformingOperation,
+                login: { Task { await viewModel.loginCursor() } }
+            )
+            .padding(10)
+            .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
 
             Divider()
 

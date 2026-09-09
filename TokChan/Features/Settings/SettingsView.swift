@@ -185,7 +185,7 @@ struct SettingsView: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(viewModel.operation.isRunning)
+                .disabled(viewModel.isPerformingOperation)
                 .accessibilityIdentifier("apply-autosubmit-settings")
             }
             .padding()
@@ -201,7 +201,7 @@ struct SettingsView: View {
         case .applyingAutosubmit:
             ProgressView().controlSize(.small)
             Text("正在应用自动提交设置…").font(.caption)
-        case .submitting, .refreshingStatistics, .runningAutosubmit:
+        case .submitting, .refreshingStatistics, .loggingInCursor, .runningAutosubmit:
             ProgressView().controlSize(.small)
             Text("正在运行…").font(.caption)
         case let .failed(message):
@@ -220,6 +220,16 @@ struct SettingsView: View {
                     .help("填写 latest 或 4.15.0 这样的完整版本号")
             }
             .disabled(viewModel.operation.isRunning)
+
+            Section("Agent 连接") {
+                SettingsCursorLoginView(
+                    loginState: viewModel.cursorLoginState,
+                    connectionState: viewModel.cursorConnectionState,
+                    isDisabled: viewModel.isPerformingOperation,
+                    login: { Task { await viewModel.loginCursor() } },
+                    retryStatus: { viewModel.retryCursorStatus() }
+                )
+            }
 
             Section("状态栏文案") {
                 Toggle("显示用量摘要", isOn: preferenceBinding(\UserPreferences.statusTextEnabled))

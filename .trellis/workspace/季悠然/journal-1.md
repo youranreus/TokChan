@@ -464,3 +464,50 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 16: 改进新手引导与 Cursor 登录
+<!-- trellis-session: v=2 fp=35297f08e205540a -->
+
+**Date**: 2026-09-09
+**Task**: 改进新手引导与 Cursor 登录
+**Branch**: `feat/onboarding-agent-login`
+
+### Summary
+
+将首次 Tokscale 身份识别改为用户手动触发，并在引导页与常规设置中加入安全的 Cursor 自动登录及终端回退；补充完整测试、README 与集成契约。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8597274` | feat(onboarding): 增加手动身份识别与 Cursor 登录 |
+| `5e7f93c` | docs: 更新 Cursor 登录与引导契约 |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 17: 调整 Cursor 登录状态与欢迎页布局
+<!-- trellis-session: v=2 -->
+
+**Date**: 2026-09-10
+**Task**: 调整 Cursor 登录状态与欢迎页布局
+**Branch**: `feat/onboarding-agent-login`
+
+### Summary
+
+设置页现在每次打开通过 Tokscale 只读检查 Cursor 会话，仅在明确需要登录时提供自动登录；检查中、已登录与自动登录共享标题行右侧操作位。同步优化首次欢迎页账号输入框和双按钮的等高等宽布局，并补齐状态解析、生命周期竞态、布局测试与项目契约。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f32b1cc` | feat(settings): 优化 Cursor 登录状态与欢迎页布局 |
+| `a672af5` | docs: 更新 Cursor 状态与引导布局契约 |
+| `023b1a3` | chore(task): archive 09-09-cursor-login-onboarding-layout |
+
+### Status
+
+[OK] **Completed**

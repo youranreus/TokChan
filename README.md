@@ -126,16 +126,15 @@ npx tokscale@latest login
 
 ### 为什么统计里默认没有 Cursor 数据
 
-Tokscale 不会直接解析 `~/.cursor` 中的本地会话。Cursor 用量需要通过 Cursor 账号完成授权，再由 Tokscale 调用 Cursor API 同步到本地缓存。没有做过这一步时，TokChan 自然读不到 Cursor 统计。
+Tokscale 不会直接解析 `~/.cursor` 中的本地会话。Cursor 用量需要先通过 Cursor 账号完成授权。你可以在首次引导的可选 Cursor 模块点击“自动登录”；设置的“常规 → Agent 连接”会先检查现有会话，仅在确认尚未登录时提供该操作。TokChan 只调用 Tokscale，并不读取或保存 Cookie、token。
 
-先在终端执行登录和同步。
+Tokscale 会优先尝试复用 Cursor 桌面端的登录状态。若应用内登录失败，界面会给出可复制的终端命令，例如：
 
 ```bash
-npx tokscale@latest cursor login --name work
-npx tokscale@latest cursor sync
+npx tokscale@latest cursor login
 ```
 
-登录时 Tokscale 可能自动读取 Cursor 桌面端的登录状态，也可能要求粘贴浏览器 Cookie。会话令牌应当按密码保管，不要发给他人。同步结果通常写入 `~/.config/tokscale/cursor-cache/usage*.csv`，随后重新提交并刷新 TokChan 即可。
+需要交互粘贴 token 时，请在终端中继续。登录成功后 TokChan 不会额外执行 `cursor sync`；后续提交用量时，Tokscale 会按自身规则尝试同步 Cursor 数据。
 
 Cursor 的认证方式可能随上游版本变化，遇到差异时请查看 [Tokscale 的最新说明](https://github.com/junhoyeo/tokscale)。
 

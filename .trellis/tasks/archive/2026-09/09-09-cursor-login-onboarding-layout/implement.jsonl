@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/macos/tokscale-integration.md", "reason": "Cursor CLI command, process safety, Settings visibility, and onboarding contracts"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "Native SwiftUI layout, Settings lifecycle, accessibility, and fixed viewport rules"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "Deterministic fake-service, lifecycle race, rendering, and offline test requirements"}
+{"file": ".trellis/tasks/09-09-cursor-login-onboarding-layout/research/cursor-status-contract.md", "reason": "Upstream human-readable Cursor status output and classification decisions"}

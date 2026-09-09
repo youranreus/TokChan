@@ -181,7 +181,7 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.currentAutosubmitStatus, snapshot.autosubmit)
     }
 
-    func testAutomaticIdentityDiscoveryPersistsUsernameAndVerifiesUsage() async {
+    func testEmptyUsernameLaunchDoesNotDiscoverIdentityOrFetchStatistics() async {
         let recorder = EventRecorder()
         let preferences = InMemoryPreferences(
             value: UserPreferences(username: "", tokscaleVersion: "latest", npxPath: "")
@@ -194,19 +194,61 @@ final class DashboardViewModelTests: XCTestCase {
             cacheStore: InMemoryCache()
         )
 
-        XCTAssertEqual(model.firstUseOnboardingState, .discoveringIdentity)
+        XCTAssertEqual(model.firstUseOnboardingState, .usernameEntry(message: nil))
 
         await model.load()
+
+        XCTAssertEqual(preferences.value.username, "")
+        XCTAssertEqual(model.firstUseOnboardingState, .usernameEntry(message: nil))
+        let events = await recorder.snapshot()
+        XCTAssertFalse(events.contains("whoami"))
+        XCTAssertFalse(events.contains("fetch"))
+        XCTAssertEqual(events.filter { $0 == "status" }.count, 1)
+    }
+
+    func testEmptyUsernameManualTransferActionsDoNotImplicitlyDiscoverIdentity() async {
+        let recorder = EventRecorder()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: InMemoryPreferences(
+                value: UserPreferences(username: "", tokscaleVersion: "latest", npxPath: "")
+            ),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        await model.submitUsageAndRefreshStatistics()
+        await model.runAutosubmitNow()
+
+        let events = await recorder.snapshot()
+        XCTAssertFalse(events.contains("whoami"))
+        XCTAssertFalse(events.contains("submit"))
+        XCTAssertFalse(events.contains("run"))
+    }
+
+    func testExplicitIdentityDiscoveryPersistsUsernameAndVerifiesUsageOnce() async {
+        let recorder = EventRecorder()
+        let preferences = InMemoryPreferences(
+            value: UserPreferences(username: "", tokscaleVersion: "latest", npxPath: "")
+        )
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder, discoveredUsername: "  youranreus  "),
+            preferencesStore: preferences,
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        await model.discoverIdentity()
 
         XCTAssertEqual(preferences.value.username, "youranreus")
         XCTAssertEqual(model.firstUseOnboardingState, .hidden)
         let events = await recorder.snapshot()
-        XCTAssertEqual(events.first, "whoami")
-        XCTAssertEqual(events.filter { $0 == "fetch" }.count, 1)
-        XCTAssertEqual(events.filter { $0 == "status" }.count, 1)
+        XCTAssertEqual(events, ["whoami", "fetch"])
     }
 
-    func testAutomaticIdentityFailureFallsBackToUsernameEntryWithoutStatisticsRetryDeadEnd() async {
+    func testExplicitIdentityFailureReturnsToEditableUsernameEntryAndCanRetry() async {
         let recorder = EventRecorder()
         let model = DashboardViewModel(
             api: FakeAPI(recorder: recorder),
@@ -218,15 +260,157 @@ final class DashboardViewModelTests: XCTestCase {
             cacheStore: InMemoryCache()
         )
 
-        await model.load()
+        await model.discoverIdentity()
+        await model.discoverIdentity()
 
         guard case let .usernameEntry(message) = model.firstUseOnboardingState else {
             return XCTFail("Identity discovery failure must allow manual username entry")
         }
         XCTAssertNotNil(message)
         let events = await recorder.snapshot()
-        XCTAssertEqual(events.filter { $0 == "whoami" }.count, 1)
+        XCTAssertEqual(events.filter { $0 == "whoami" }.count, 2)
         XCTAssertFalse(events.contains("fetch"))
+    }
+
+    func testCursorLoginRunsOnceWithoutFollowUpWorkAndPublishesSuccess() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(recorder: recorder)
+
+        await model.loginCursor()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["cursor-login"])
+        XCTAssertEqual(model.cursorLoginState, .succeeded("Cursor 登录成功。"))
+        XCTAssertEqual(model.operation, .idle)
+    }
+
+    func testCursorLoginFailureIncludesVersionSpecificTerminalFallback() async {
+        let recorder = EventRecorder()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder, cursorLoginError: TestFailure.unavailable),
+            preferencesStore: InMemoryPreferences(value: UserPreferences(
+                username: "youranreus",
+                tokscaleVersion: "4.15.0",
+                npxPath: ""
+            )),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        await model.loginCursor()
+
+        guard case let .failed(message, fallbackCommand) = model.cursorLoginState else {
+            return XCTFail("Expected recoverable Cursor login failure")
+        }
+        XCTAssertFalse(message.isEmpty)
+        XCTAssertEqual(fallbackCommand, "npx tokscale@4.15.0 cursor login")
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["cursor-login"])
+    }
+
+    func testCursorLoginTimeoutRemainsRecoverableWithTerminalFallback() async {
+        let recorder = EventRecorder()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder, cursorLoginError: ProcessRunnerError.timedOut),
+            preferencesStore: InMemoryPreferences(value: UserPreferences(
+                username: "youranreus",
+                tokscaleVersion: "4.15.0",
+                npxPath: ""
+            )),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        await model.loginCursor()
+
+        guard case let .failed(message, fallbackCommand) = model.cursorLoginState else {
+            return XCTFail("Expected recoverable Cursor login timeout")
+        }
+        XCTAssertEqual(message, "Tokscale 运行超时，已停止该进程。")
+        XCTAssertEqual(fallbackCommand, "npx tokscale@4.15.0 cursor login")
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["cursor-login"])
+        XCTAssertEqual(model.operation, .idle)
+    }
+
+    func testInvalidCursorLoginContextDoesNotLaunchCLIAndUsesSafeFallback() async {
+        let recorder = EventRecorder()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: InMemoryPreferences(value: UserPreferences(
+                username: "youranreus",
+                tokscaleVersion: "latest;rm",
+                npxPath: ""
+            )),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        await model.loginCursor()
+
+        guard case let .failed(message, fallbackCommand) = model.cursorLoginState else {
+            return XCTFail("Expected invalid version failure")
+        }
+        XCTAssertTrue(message.contains("语义化版本号"))
+        XCTAssertEqual(fallbackCommand, "npx tokscale@latest cursor login")
+        let events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testMissingNpxCursorLoginDoesNotLaunchCLIAndRemainsRecoverable() async {
+        let recorder = EventRecorder()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: InMemoryPreferences(value: UserPreferences(
+                username: "youranreus",
+                tokscaleVersion: "4.15.0",
+                npxPath: ""
+            )),
+            npxLocator: MissingNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        await model.loginCursor()
+
+        guard case let .failed(message, fallbackCommand) = model.cursorLoginState else {
+            return XCTFail("Expected missing npx failure")
+        }
+        XCTAssertTrue(message.contains("找不到 npx"))
+        XCTAssertEqual(fallbackCommand, "npx tokscale@4.15.0 cursor login")
+        let events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testCursorLoginRejectsDuplicateAndConflictingExplicitActions() async {
+        let recorder = EventRecorder()
+        let cli = SuspendedCursorLoginCLI(recorder: recorder)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: cli,
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        let login = Task { await model.loginCursor() }
+        await cli.waitForLogin()
+        XCTAssertEqual(model.cursorLoginState, .loggingIn)
+        XCTAssertTrue(model.isPerformingOperation)
+
+        await model.loginCursor()
+        await model.submitUsageAndRefreshStatistics()
+        var events = await recorder.snapshot()
+        XCTAssertEqual(events, ["cursor-login"])
+
+        await cli.resumeLogin()
+        await login.value
+        events = await recorder.snapshot()
+        XCTAssertEqual(events, ["cursor-login"])
+        XCTAssertEqual(model.cursorLoginState, .succeeded("Cursor 登录成功。"))
     }
 
     func testManualUsernameIsTrimmedPersistedAndForceVerifiedOnce() async {
@@ -1326,7 +1510,7 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertNil(model.loadErrorMessage)
 
         model.startBackgroundSynchronization()
-        await waitForEventCount(1, event: "whoami", recorder: recorder)
+        await waitForEventCount(1, event: "status", recorder: recorder)
         await sleeper.waitUntilSleeping()
         clock.value.addTimeInterval(300)
         await sleeper.advance()
@@ -1335,6 +1519,7 @@ final class DashboardViewModelTests: XCTestCase {
         await sleeper.advance()
 
         events = await recorder.snapshot()
+        XCTAssertFalse(events.contains("whoami"))
         XCTAssertFalse(events.contains("fetch"))
         XCTAssertFalse(events.contains("submit"))
         XCTAssertFalse(events.contains("run"))
@@ -1485,24 +1670,215 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(Set(events), Set(["fetch", "status"]))
     }
 
-    func testSettingsVisibilityReadsStatusOncePerContinuousVisiblePeriod() async {
+    func testSettingsVisibilityReadsBothStatusesOncePerContinuousVisiblePeriod() async {
         let recorder = EventRecorder()
         let model = makeViewModel(recorder: recorder)
 
         model.settingsDidBecomeVisible()
         model.settingsDidBecomeVisible()
         await waitForEventCount(1, event: "status", recorder: recorder)
-        for _ in 0..<10 { await Task.yield() }
+        await waitForEventCount(1, event: "cursor-status", recorder: recorder)
         var events = await recorder.snapshot()
-        XCTAssertEqual(events, ["status"])
+        XCTAssertEqual(events.filter { $0 == "status" }.count, 1)
+        XCTAssertEqual(events.filter { $0 == "cursor-status" }.count, 1)
+        XCTAssertEqual(model.cursorConnectionState, .loggedIn)
 
         model.settingsDidBecomeHidden()
+        XCTAssertEqual(model.cursorConnectionState, .idle)
         model.settingsDidBecomeVisible()
         await waitForEventCount(2, event: "status", recorder: recorder)
+        await waitForEventCount(2, event: "cursor-status", recorder: recorder)
 
         events = await recorder.snapshot()
-        XCTAssertEqual(events, ["status", "status"])
+        XCTAssertEqual(events.filter { $0 == "status" }.count, 2)
+        XCTAssertEqual(events.filter { $0 == "cursor-status" }.count, 2)
         XCTAssertFalse(events.contains("fetch"))
+    }
+
+    func testCursorStatusUnavailableOffersLoginWhileIndeterminateAndErrorsOfferRetryOnly() async {
+        let cases: [(CursorSessionStatus, CursorConnectionState)] = [
+            (.unavailable, .needsLogin),
+            (.indeterminate, .checkFailed("无法确认 Cursor 登录状态，请重新检查。"))
+        ]
+        for (status, expected) in cases {
+            let recorder = EventRecorder()
+            let model = DashboardViewModel(
+                api: FakeAPI(recorder: recorder),
+                cli: FakeCLI(recorder: recorder, cursorSessionStatus: status),
+                preferencesStore: standardPreferences(),
+                npxLocator: FakeNpxLocator(),
+                cacheStore: InMemoryCache()
+            )
+
+            model.settingsDidBecomeVisible()
+            await waitForEventCount(1, event: "cursor-status", recorder: recorder)
+            for _ in 0..<20 where model.cursorConnectionState == .checking { await Task.yield() }
+
+            XCTAssertEqual(model.cursorConnectionState, expected)
+            XCTAssertEqual(model.cursorConnectionState.showsLoginAction, status == .unavailable)
+            XCTAssertEqual(model.cursorConnectionState.showsRetryAction, status == .indeterminate)
+            model.settingsDidBecomeHidden()
+        }
+
+        let recorder = EventRecorder()
+        let failedModel = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder, cursorStatusError: TestFailure.unavailable),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+        failedModel.settingsDidBecomeVisible()
+        await waitForEventCount(1, event: "cursor-status", recorder: recorder)
+        for _ in 0..<20 where failedModel.cursorConnectionState == .checking { await Task.yield() }
+        XCTAssertEqual(
+            failedModel.cursorConnectionState,
+            .checkFailed("Cursor 状态检查失败，请重新检查。")
+        )
+        XCTAssertFalse(failedModel.cursorConnectionState.showsLoginAction)
+        XCTAssertTrue(failedModel.cursorConnectionState.showsRetryAction)
+    }
+
+    func testCursorStatusRetryRunsOneAdditionalReadWithoutOtherWork() async {
+        let recorder = EventRecorder()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder, cursorSessionStatus: .indeterminate),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+        model.settingsDidBecomeVisible()
+        await waitForEventCount(1, event: "cursor-status", recorder: recorder)
+        for _ in 0..<20 where model.cursorConnectionState == .checking { await Task.yield() }
+
+        model.retryCursorStatus()
+        model.retryCursorStatus()
+        await waitForEventCount(2, event: "cursor-status", recorder: recorder)
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events.filter { $0 == "cursor-status" }.count, 2)
+        XCTAssertFalse(events.contains("fetch"))
+        XCTAssertFalse(events.contains("submit"))
+    }
+
+    func testCursorStatusCheckBlocksConflictingExplicitCLIWork() async {
+        let recorder = EventRecorder()
+        let cli = SuspendedCursorStatusCLI(recorder: recorder)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: cli,
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+        model.settingsDidBecomeVisible()
+        await cli.waitForCursorStatus()
+        XCTAssertEqual(model.cursorConnectionState, .checking)
+        XCTAssertTrue(model.isPerformingOperation)
+
+        await model.loginCursor()
+        await model.submitUsageAndRefreshStatistics()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events.filter { $0 == "cursor-status" }.count, 1)
+        XCTAssertFalse(events.contains("cursor-login"))
+        XCTAssertFalse(events.contains("submit"))
+        await cli.resolveCursorStatus(.valid)
+    }
+
+    func testClosingSettingsRejectsLateCursorStatusResult() async {
+        let recorder = EventRecorder()
+        let cli = SuspendedCursorStatusCLI(recorder: recorder)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: cli,
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+        model.settingsDidBecomeVisible()
+        await cli.waitForCursorStatus()
+
+        model.settingsDidBecomeHidden()
+        await cli.resolveCursorStatus(.valid)
+        for _ in 0..<20 { await Task.yield() }
+
+        XCTAssertEqual(model.cursorConnectionState, .idle)
+        XCTAssertEqual(model.cursorLoginState, .idle)
+    }
+
+    func testCursorStatusContextChangeRejectsOldResultAndStartsFreshRead() async {
+        let recorder = EventRecorder()
+        let cli = ContextChangingCursorStatusCLI(recorder: recorder)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: cli,
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+        model.settingsDidBecomeVisible()
+        await cli.waitForFirstCursorStatus()
+
+        model.updatePreferences(UserPreferences(
+            username: "youranreus",
+            tokscaleVersion: "4.15.0",
+            npxPath: ""
+        ))
+        await cli.waitForCursorStatusCount(2)
+        for _ in 0..<20 where model.cursorConnectionState == .checking { await Task.yield() }
+        XCTAssertEqual(model.cursorConnectionState, .needsLogin)
+
+        await cli.resolveFirstCursorStatus(.valid)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(model.cursorConnectionState, .needsLogin)
+        let contexts = await cli.cursorContexts()
+        XCTAssertEqual(contexts.map(\.version), ["latest", "4.15.0"])
+    }
+
+    func testMissingNpxCursorStatusIsRetryOnlyAndDoesNotLaunchCLI() async {
+        let recorder = EventRecorder()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: standardPreferences(),
+            npxLocator: MissingNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        model.settingsDidBecomeVisible()
+        for _ in 0..<200 {
+            if model.cursorConnectionState.showsRetryAction { break }
+            await Task.yield()
+        }
+
+        XCTAssertFalse(model.cursorConnectionState.showsLoginAction)
+        XCTAssertTrue(model.cursorConnectionState.showsRetryAction)
+        let events = await recorder.snapshot()
+        XCTAssertFalse(events.contains("cursor-status"))
+    }
+
+    func testSettingsCursorLoginSuccessProjectsConnectedAndCloseClearsFeedback() async {
+        let recorder = EventRecorder()
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder, cursorSessionStatus: .unavailable),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+        model.settingsDidBecomeVisible()
+        await waitForEventCount(1, event: "cursor-status", recorder: recorder)
+        for _ in 0..<20 where model.cursorConnectionState == .checking { await Task.yield() }
+
+        await model.loginCursor()
+
+        XCTAssertEqual(model.cursorConnectionState, .loggedIn)
+        XCTAssertEqual(model.cursorLoginState, .succeeded("Cursor 登录成功。"))
+        model.settingsDidBecomeHidden()
+        XCTAssertEqual(model.cursorConnectionState, .idle)
+        XCTAssertEqual(model.cursorLoginState, .idle)
     }
 
     func testAutosubmitStatusRefreshNeverReadsStatistics() async {
@@ -1876,6 +2252,9 @@ private final class FakeCLI: TokscaleCLIService {
     var submitError: Error?
     let statusError: Error?
     let autosubmitMutationError: Error?
+    let cursorLoginError: Error?
+    let cursorSessionStatus: CursorSessionStatus
+    let cursorStatusError: Error?
     let discoveredUsername: String
     let whoAmIError: Error?
 
@@ -1884,6 +2263,9 @@ private final class FakeCLI: TokscaleCLIService {
         submitError: Error? = nil,
         statusError: Error? = nil,
         autosubmitMutationError: Error? = nil,
+        cursorLoginError: Error? = nil,
+        cursorSessionStatus: CursorSessionStatus = .valid,
+        cursorStatusError: Error? = nil,
         discoveredUsername: String = "youranreus",
         whoAmIError: Error? = nil
     ) {
@@ -1891,6 +2273,9 @@ private final class FakeCLI: TokscaleCLIService {
         self.submitError = submitError
         self.statusError = statusError
         self.autosubmitMutationError = autosubmitMutationError
+        self.cursorLoginError = cursorLoginError
+        self.cursorSessionStatus = cursorSessionStatus
+        self.cursorStatusError = cursorStatusError
         self.discoveredUsername = discoveredUsername
         self.whoAmIError = whoAmIError
     }
@@ -1899,6 +2284,15 @@ private final class FakeCLI: TokscaleCLIService {
         await recorder.append("whoami")
         if let whoAmIError { throw whoAmIError }
         return discoveredUsername
+    }
+    func loginCursor(context: TokscaleCommandContext) async throws {
+        await recorder.append("cursor-login")
+        if let cursorLoginError { throw cursorLoginError }
+    }
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus {
+        await recorder.append("cursor-status")
+        if let cursorStatusError { throw cursorStatusError }
+        return cursorSessionStatus
     }
     func submit(context: TokscaleCommandContext) async throws {
         await recorder.append("submit")
@@ -1920,12 +2314,143 @@ private final class FakeCLI: TokscaleCLIService {
     func runAutosubmitNow(context: TokscaleCommandContext) async throws { await recorder.append("run") }
 }
 
+private actor SuspendedCursorLoginCLI: TokscaleCLIService {
+    private let recorder: EventRecorder
+    private var loginContinuation: CheckedContinuation<Void, Never>?
+    private var arrivalContinuation: CheckedContinuation<Void, Never>?
+    private var loginStarted = false
+
+    init(recorder: EventRecorder) {
+        self.recorder = recorder
+    }
+
+    func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
+
+    func loginCursor(context: TokscaleCommandContext) async throws {
+        await recorder.append("cursor-login")
+        loginStarted = true
+        arrivalContinuation?.resume()
+        arrivalContinuation = nil
+        await withCheckedContinuation { loginContinuation = $0 }
+    }
+
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus { .valid }
+
+    func waitForLogin() async {
+        if loginStarted { return }
+        await withCheckedContinuation { arrivalContinuation = $0 }
+    }
+
+    func resumeLogin() {
+        loginContinuation?.resume()
+        loginContinuation = nil
+    }
+
+    func submit(context: TokscaleCommandContext) async throws { await recorder.append("submit") }
+    func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus {
+        await recorder.append("status")
+        return try JSONDecoder().decode(AutosubmitStatus.self, from: Data(#"{"enabled":false}"#.utf8))
+    }
+    func configureAutosubmit(_ configuration: AutosubmitConfiguration, context: TokscaleCommandContext) async throws {
+        await recorder.append("configure")
+    }
+    func disableAutosubmit(context: TokscaleCommandContext) async throws { await recorder.append("disable") }
+    func runAutosubmitNow(context: TokscaleCommandContext) async throws { await recorder.append("run") }
+}
+
+private actor SuspendedCursorStatusCLI: TokscaleCLIService {
+    private let recorder: EventRecorder
+    private var statusContinuation: CheckedContinuation<CursorSessionStatus, Never>?
+    private var arrivalContinuation: CheckedContinuation<Void, Never>?
+
+    init(recorder: EventRecorder) { self.recorder = recorder }
+
+    func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
+    func loginCursor(context: TokscaleCommandContext) async throws { await recorder.append("cursor-login") }
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus {
+        await recorder.append("cursor-status")
+        return await withCheckedContinuation { continuation in
+            statusContinuation = continuation
+            arrivalContinuation?.resume()
+            arrivalContinuation = nil
+        }
+    }
+    func waitForCursorStatus() async {
+        if statusContinuation != nil { return }
+        await withCheckedContinuation { arrivalContinuation = $0 }
+    }
+    func resolveCursorStatus(_ status: CursorSessionStatus) {
+        statusContinuation?.resume(returning: status)
+        statusContinuation = nil
+    }
+    func submit(context: TokscaleCommandContext) async throws { await recorder.append("submit") }
+    func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus {
+        await recorder.append("status")
+        return try JSONDecoder().decode(AutosubmitStatus.self, from: Data(#"{"enabled":false}"#.utf8))
+    }
+    func configureAutosubmit(_ configuration: AutosubmitConfiguration, context: TokscaleCommandContext) async throws {}
+    func disableAutosubmit(context: TokscaleCommandContext) async throws {}
+    func runAutosubmitNow(context: TokscaleCommandContext) async throws {}
+}
+
+private actor ContextChangingCursorStatusCLI: TokscaleCLIService {
+    private let recorder: EventRecorder
+    private var firstContinuation: CheckedContinuation<CursorSessionStatus, Never>?
+    private var firstArrival: CheckedContinuation<Void, Never>?
+    private var countArrivals: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var contexts: [TokscaleCommandContext] = []
+
+    init(recorder: EventRecorder) { self.recorder = recorder }
+
+    func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
+    func loginCursor(context: TokscaleCommandContext) async throws {}
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus {
+        contexts.append(context)
+        await recorder.append("cursor-status")
+        let count = contexts.count
+        let ready = countArrivals.filter { count >= $0.0 }
+        countArrivals.removeAll { count >= $0.0 }
+        ready.forEach { $0.1.resume() }
+        if count == 1 {
+            return await withCheckedContinuation { continuation in
+                firstContinuation = continuation
+                firstArrival?.resume()
+                firstArrival = nil
+            }
+        }
+        return .unavailable
+    }
+    func waitForFirstCursorStatus() async {
+        if firstContinuation != nil { return }
+        await withCheckedContinuation { firstArrival = $0 }
+    }
+    func waitForCursorStatusCount(_ expected: Int) async {
+        if contexts.count >= expected { return }
+        await withCheckedContinuation { countArrivals.append((expected, $0)) }
+    }
+    func resolveFirstCursorStatus(_ status: CursorSessionStatus) {
+        firstContinuation?.resume(returning: status)
+        firstContinuation = nil
+    }
+    func cursorContexts() -> [TokscaleCommandContext] { contexts }
+    func submit(context: TokscaleCommandContext) async throws {}
+    func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus {
+        await recorder.append("status")
+        return try JSONDecoder().decode(AutosubmitStatus.self, from: Data(#"{"enabled":false}"#.utf8))
+    }
+    func configureAutosubmit(_ configuration: AutosubmitConfiguration, context: TokscaleCommandContext) async throws {}
+    func disableAutosubmit(context: TokscaleCommandContext) async throws {}
+    func runAutosubmitNow(context: TokscaleCommandContext) async throws {}
+}
+
 private actor ControlledStatusCLI: TokscaleCLIService {
     private var statusContinuation: CheckedContinuation<AutosubmitStatus, Error>?
     private var arrivalContinuation: CheckedContinuation<Void, Never>?
     private var statusRequested = false
 
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
+    func loginCursor(context: TokscaleCommandContext) async throws {}
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus { .valid }
     func submit(context: TokscaleCommandContext) async throws {}
 
     func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus {
@@ -1972,6 +2497,8 @@ private actor SuspendedPushCLI: TokscaleCLIService {
     }
 
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
+    func loginCursor(context: TokscaleCommandContext) async throws {}
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus { .valid }
 
     func submit(context: TokscaleCommandContext) async throws {
         await recorder.append("submit")
@@ -2018,6 +2545,8 @@ private actor SuspendedMutationCLI: TokscaleCLIService {
     }
 
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
+    func loginCursor(context: TokscaleCommandContext) async throws {}
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus { .valid }
     func submit(context: TokscaleCommandContext) async throws {}
     func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus {
         await recorder.append("status")
@@ -2110,6 +2639,10 @@ private final class InMemoryPreferences: PreferencesStoring {
 
 private struct FakeNpxLocator: NpxLocating {
     func locate(preferredPath: String?) -> URL? { URL(fileURLWithPath: "/usr/bin/npx") }
+}
+
+private struct MissingNpxLocator: NpxLocating {
+    func locate(preferredPath: String?) -> URL? { nil }
 }
 
 private final class InMemoryCache: DashboardCacheStoring {

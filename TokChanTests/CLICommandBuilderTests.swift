@@ -12,6 +12,8 @@ final class CLICommandBuilderTests: XCTestCase {
     func testBuildsEveryNonConfigurationCommand() throws {
         let expected: [(TokscaleCommand, [String])] = [
             (.whoami, ["whoami"]),
+            (.cursorLogin, ["cursor", "login"]),
+            (.cursorStatus, ["cursor", "status"]),
             (.submit, ["submit"]),
             (.disableAutosubmit, ["autosubmit", "disable"]),
             (.runAutosubmitNow, ["autosubmit", "run", "--force"]),

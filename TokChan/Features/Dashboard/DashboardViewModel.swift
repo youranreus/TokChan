@@ -41,6 +41,7 @@ enum DashboardOperation: Equatable {
     case idle
     case submitting
     case refreshingStatistics
+    case loggingInCursor
     case runningAutosubmit
     case applyingAutosubmit
     case succeeded(String)
@@ -48,7 +49,8 @@ enum DashboardOperation: Equatable {
 
     var isRunning: Bool {
         switch self {
-        case .submitting, .refreshingStatistics, .runningAutosubmit, .applyingAutosubmit: return true
+        case .submitting, .refreshingStatistics, .loggingInCursor, .runningAutosubmit, .applyingAutosubmit:
+            return true
         default: return false
         }
     }
@@ -57,7 +59,9 @@ enum DashboardOperation: Equatable {
 @MainActor
 final class DashboardViewModel: ObservableObject {
     @Published private(set) var profileState: LoadState<DashboardData> = .idle
-    @Published private(set) var firstUseOnboardingState: FirstUseOnboardingState = .discoveringIdentity
+    @Published private(set) var firstUseOnboardingState: FirstUseOnboardingState = .usernameEntry(message: nil)
+    @Published private(set) var cursorLoginState: CursorLoginState = .idle
+    @Published private(set) var cursorConnectionState: CursorConnectionState = .idle
     @Published private(set) var autosubmitState: LoadState<AutosubmitStatus> = .idle
     @Published private(set) var operation: DashboardOperation = .idle
     @Published private(set) var preferences: UserPreferences
@@ -106,10 +110,13 @@ final class DashboardViewModel: ObservableObject {
     private var profileRefreshTask: Task<ProfileReloadResult, Never>?
     private var backgroundRefreshTask: Task<Void, Never>?
     private var autosubmitStatusTask: Task<Void, Never>?
+    private var cursorStatusTask: Task<Void, Never>?
+    private var cursorStatusRequestID = UUID()
     private var lastAutomaticFailure: Date?
     private var consecutiveAutomaticFailures = 0
     private var isPanelVisible = false
     private var isSettingsVisible = false
+    private var settingsPresentationGeneration: UInt64 = 0
     private var hasSynchronizedOnLaunch = false
     private var lastAutosubmitStatusContext: TokscaleCommandContext?
     private var panelPresentationGeneration: UInt64 = 0
@@ -124,6 +131,7 @@ final class DashboardViewModel: ObservableObject {
 
     var isPerformingOperation: Bool {
         operation.isRunning
+            || cursorConnectionState == .checking
             || (firstUseOnboardingState.isBusy && (isLoadingServices || isRefreshing))
     }
 
@@ -212,6 +220,7 @@ final class DashboardViewModel: ObservableObject {
         profileRefreshTask?.cancel()
         backgroundRefreshTask?.cancel()
         autosubmitStatusTask?.cancel()
+        cursorStatusTask?.cancel()
     }
 
     func npxPathStatus(for preferredPath: String) -> NpxPathStatus {
@@ -272,15 +281,29 @@ final class DashboardViewModel: ObservableObject {
 
     /// Called whenever the Settings window transitions from hidden to visible.
     ///
-    /// Repeated callbacks inside one continuous visible period read autosubmit status only once.
+    /// Repeated callbacks inside one continuous visible period read each Settings status only once.
     func settingsDidBecomeVisible() {
         guard !isSettingsVisible else { return }
         isSettingsVisible = true
+        settingsPresentationGeneration &+= 1
+        cursorLoginState = .idle
         scheduleAutosubmitStatusRefresh()
+        scheduleCursorStatusRefresh()
     }
 
     func settingsDidBecomeHidden() {
+        guard isSettingsVisible else { return }
         isSettingsVisible = false
+        settingsPresentationGeneration &+= 1
+        invalidateCursorStatusCheck()
+        cursorConnectionState = .idle
+        cursorLoginState = .idle
+    }
+
+    func retryCursorStatus() {
+        guard isSettingsVisible,
+              cursorConnectionState.showsRetryAction else { return }
+        scheduleCursorStatusRefresh()
     }
 
     func selectPeriod(_ period: ProfilePeriod) async {
@@ -302,37 +325,17 @@ final class DashboardViewModel: ObservableObject {
         defer { isLoadingServices = false }
         if autosubmitState.loadedValue == nil { autosubmitState = .loading }
 
-        let requiresIdentityDiscovery = normalizedUsername.isEmpty
-        var context: TokscaleCommandContext?
-        if requiresIdentityDiscovery {
-            firstUseOnboardingState = .discoveringIdentity
-            do {
-                context = try commandContext(for: preferences)
-                if let context {
-                    let username = try await resolvedUsername(context: context)
-                    firstUseOnboardingState = .verifying(username: username)
-                }
-            } catch {
-                if normalizedUsername.isEmpty {
-                    let message = "无法自动识别 Tokscale 账号：\(Self.message(for: error))"
-                    firstUseOnboardingState = .usernameEntry(message: message)
-                } else {
-                    // A Settings edit that completed while whoami was suspended wins.
-                    firstUseOnboardingState = .verifying(username: normalizedUsername)
-                }
-            }
-        }
-
-        // Discovery may suspend while Settings changes executable/version.
-        do { context = try commandContext(for: preferences) }
-        catch {
+        let context: TokscaleCommandContext?
+        do {
+            context = try commandContext(for: preferences)
+        } catch {
             context = nil
             recordAutosubmitError(error)
         }
 
         let shouldLoadProfiles = !normalizedUsername.isEmpty
         if let context, shouldLoadProfiles {
-            async let profiles = reloadProfiles(force: requiresIdentityDiscovery, automatic: true)
+            async let profiles = reloadProfiles(force: false, automatic: true)
             async let status = reloadAutosubmit(context: context)
             let (profileResult, _) = await (profiles, status)
             handleOnboardingProfileResult(profileResult)
@@ -341,6 +344,85 @@ final class DashboardViewModel: ObservableObject {
         } else if shouldLoadProfiles {
             handleOnboardingProfileResult(await reloadProfiles(force: false, automatic: true))
         }
+    }
+
+    func discoverIdentity() async {
+        guard !isLoadingServices,
+              !operation.isRunning,
+              cursorConnectionState != .checking,
+              normalizedUsername.isEmpty,
+              case .usernameEntry = firstUseOnboardingState else { return }
+
+        isLoadingServices = true
+        firstUseOnboardingState = .discoveringIdentity
+        defer { isLoadingServices = false }
+
+        do {
+            let context = try commandContext(for: preferences)
+            let discovered = try await cli.whoAmI(context: context)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard normalizedUsername.isEmpty else { return }
+            guard (try? commandContext(for: preferences)) == context else {
+                firstUseOnboardingState = .usernameEntry(
+                    message: "Tokscale 命令设置已变化，请重新识别本机登录。"
+                )
+                return
+            }
+            guard !discovered.isEmpty else { throw TokscaleAPIError.invalidUsername }
+            await saveAndVerifyUsername(discovered)
+        } catch {
+            guard normalizedUsername.isEmpty else { return }
+            firstUseOnboardingState = .usernameEntry(
+                message: "无法识别 Tokscale 账号：\(Self.message(for: error))"
+            )
+        }
+    }
+
+    func loginCursor() async {
+        guard !isPerformingOperation else { return }
+        let settingsGeneration = isSettingsVisible ? settingsPresentationGeneration : nil
+        let fallbackCommand = Self.cursorLoginFallbackCommand(version: preferences.tokscaleVersion)
+        let context: TokscaleCommandContext
+        do {
+            context = try commandContext(for: preferences)
+        } catch {
+            cursorLoginState = .failed(
+                message: Self.message(for: error),
+                fallbackCommand: fallbackCommand
+            )
+            return
+        }
+
+        beginOperation(.loggingInCursor)
+        cursorLoginState = .loggingIn
+        do {
+            try await cli.loginCursor(context: context)
+            guard settingsGeneration == nil
+                    || (isSettingsVisible
+                        && settingsGeneration == settingsPresentationGeneration
+                        && (try? commandContext(for: preferences)) == context) else {
+                completeSilentOperation()
+                return
+            }
+            cursorLoginState = .succeeded("Cursor 登录成功。")
+            if isSettingsVisible, (try? commandContext(for: preferences)) == context {
+                cursorConnectionState = .loggedIn
+            }
+        } catch {
+            guard settingsGeneration == nil
+                    || (isSettingsVisible
+                        && settingsGeneration == settingsPresentationGeneration
+                        && (try? commandContext(for: preferences)) == context) else {
+                completeSilentOperation()
+                return
+            }
+            cursorLoginState = .failed(
+                message: Self.message(for: error),
+                fallbackCommand: fallbackCommand
+            )
+            if isSettingsVisible { cursorConnectionState = .needsLogin }
+        }
+        completeSilentOperation()
     }
 
     func saveAndVerifyUsername(_ username: String) async {
@@ -373,6 +455,7 @@ final class DashboardViewModel: ObservableObject {
 
     func submitFirstUsage() async {
         guard !operation.isRunning,
+              cursorConnectionState != .checking,
               case let .firstSubmission(username, _) = firstUseOnboardingState,
               matchesUsername(username) else { return }
 
@@ -419,13 +502,13 @@ final class DashboardViewModel: ObservableObject {
 
     /// Uploads local usage once, then forces exactly one complete statistics batch.
     func submitUsageAndRefreshStatistics() async {
-        guard !operation.isRunning else { return }
+        guard !operation.isRunning, cursorConnectionState != .checking else { return }
         invalidateProfileRefresh()
         beginOperation(.submitting)
         submitErrorMessage = nil
         do {
             let context = try commandContext(for: preferences)
-            let username = try await resolvedUsername(context: context)
+            let username = try resolvedUsername()
             try await cli.submit(context: context)
             // An account switch while submit was suspended supersedes this operation.
             guard matchesUsername(username) else {
@@ -467,12 +550,12 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func runAutosubmitNow() async {
-        guard !operation.isRunning else { return }
+        guard !operation.isRunning, cursorConnectionState != .checking else { return }
         invalidateProfileRefresh()
         beginOperation(.runningAutosubmit)
         do {
             let context = try commandContext(for: preferences)
-            let username = try await resolvedUsername(context: context)
+            let username = try resolvedUsername()
             try await cli.runAutosubmitNow(context: context)
             // A CLI or account change while the run was suspended supersedes this operation.
             guard matchesUsername(username), (try? commandContext(for: preferences)) == context else {
@@ -523,6 +606,7 @@ final class DashboardViewModel: ObservableObject {
         }
         if cliContextChanged {
             statusRequestID = UUID()
+            invalidateCursorStatusCheck()
         }
 
         preferences = normalized
@@ -539,10 +623,13 @@ final class DashboardViewModel: ObservableObject {
            context != lastAutosubmitStatusContext {
             scheduleAutosubmitStatusRefresh()
         }
+        if cliContextChanged, isSettingsVisible {
+            scheduleCursorStatusRefresh()
+        }
     }
 
     func applyAutosubmit(_ configuration: AutosubmitConfiguration) async -> Bool {
-        guard !operation.isRunning else { return false }
+        guard !operation.isRunning, cursorConnectionState != .checking else { return false }
         beginOperation(.applyingAutosubmit)
         do {
             let context = try commandContext(for: preferences)
@@ -604,7 +691,7 @@ final class DashboardViewModel: ObservableObject {
     private func reconcileInitialOnboardingState() {
         let username = normalizedUsername
         guard !username.isEmpty else {
-            firstUseOnboardingState = .discoveringIdentity
+            firstUseOnboardingState = .usernameEntry(message: nil)
             return
         }
         guard cacheSavedAt != nil, cacheIsComplete(for: username) else {
@@ -756,6 +843,57 @@ final class DashboardViewModel: ObservableObject {
         }
     }
 
+    private func scheduleCursorStatusRefresh() {
+        invalidateCursorStatusCheck()
+        let requestID = UUID()
+        cursorStatusRequestID = requestID
+        cursorConnectionState = .checking
+        cursorStatusTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if requestID == self.cursorStatusRequestID {
+                    self.cursorStatusTask = nil
+                }
+            }
+            do {
+                while self.operation.isRunning || self.isLoadingServices {
+                    try Task.checkCancellation()
+                    try await Task.sleep(nanoseconds: 50_000_000)
+                }
+                try Task.checkCancellation()
+                guard requestID == self.cursorStatusRequestID, self.isSettingsVisible else { return }
+
+                let context = try self.commandContext(for: self.preferences)
+                let status = try await self.cli.cursorStatus(context: context)
+                try Task.checkCancellation()
+                guard requestID == self.cursorStatusRequestID,
+                      self.isSettingsVisible,
+                      (try? self.commandContext(for: self.preferences)) == context else { return }
+                switch status {
+                case .valid:
+                    self.cursorConnectionState = .loggedIn
+                case .unavailable:
+                    self.cursorConnectionState = .needsLogin
+                case .indeterminate:
+                    self.cursorConnectionState = .checkFailed("无法确认 Cursor 登录状态，请重新检查。")
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard requestID == self.cursorStatusRequestID, self.isSettingsVisible else { return }
+                // Status output can contain account metadata. Keep process/context failures
+                // presentation-safe instead of projecting raw CLI diagnostics into Settings.
+                self.cursorConnectionState = .checkFailed("Cursor 状态检查失败，请重新检查。")
+            }
+        }
+    }
+
+    private func invalidateCursorStatusCheck() {
+        cursorStatusRequestID = UUID()
+        cursorStatusTask?.cancel()
+        cursorStatusTask = nil
+    }
+
     private func reloadAutosubmit(context: TokscaleCommandContext) async -> String? {
         let requestID = UUID()
         statusRequestID = requestID
@@ -876,21 +1014,10 @@ final class DashboardViewModel: ObservableObject {
             .caseInsensitiveCompare(username) == .orderedSame
     }
 
-    private func resolvedUsername(context: TokscaleCommandContext) async throws -> String {
+    private func resolvedUsername() throws -> String {
         let saved = normalizedUsername
-        if !saved.isEmpty { return saved }
-
-        let discovered = try await cli.whoAmI(context: context)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !discovered.isEmpty else { throw TokscaleAPIError.invalidUsername }
-
-        // Settings may have supplied an account while whoami was suspended.
-        if normalizedUsername.isEmpty {
-            var updatedPreferences = preferences
-            updatedPreferences.username = discovered
-            updatePreferences(updatedPreferences)
-        }
-        return normalizedUsername
+        guard !saved.isEmpty else { throw TokscaleAPIError.invalidUsername }
+        return saved
     }
 
     private func commandContext(for preferences: UserPreferences) throws -> TokscaleCommandContext {
@@ -939,6 +1066,14 @@ final class DashboardViewModel: ObservableObject {
             statusTextTemplate: preferences.statusTextTemplate,
             statusTextPeriod: preferences.statusTextPeriod
         )
+    }
+
+    private static func cursorLoginFallbackCommand(version: String) -> String {
+        let normalizedVersion = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeVersion = TokscaleCommandBuilder.isValidVersion(normalizedVersion)
+            ? normalizedVersion
+            : "latest"
+        return "npx tokscale@\(safeVersion) cursor login"
     }
 
     private static func isProfileNotFound(_ error: Error) -> Bool {

@@ -12,6 +12,8 @@ Use this contract whenever code reads Tokscale profile data, executes Tokscale t
 GET https://tokscale.ai/api/users/{username}?period=all|week|month
 
 npx --yes tokscale@<version> whoami
+npx --yes tokscale@<version> cursor login
+npx --yes tokscale@<version> cursor status
 npx --yes tokscale@<version> submit
 npx --yes tokscale@<version> autosubmit status --json
 npx --yes tokscale@<version> autosubmit enable --interval <Nm> [filters]
@@ -30,6 +32,8 @@ protocol TokscaleAPIService {
 
 protocol TokscaleCLIService {
     func whoAmI(context: TokscaleCommandContext) async throws -> String
+    func loginCursor(context: TokscaleCommandContext) async throws
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus
     func submit(context: TokscaleCommandContext) async throws
     func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus
     func configureAutosubmit(_ configuration: AutosubmitConfiguration,
@@ -43,6 +47,8 @@ protocol TokscaleCLIService {
 
 - Package version is `latest` or strict `major.minor.patch` with an optional prerelease suffix.
 - Commands use `Process.executableURL` plus a discrete `[String]` argument array; never use `/bin/sh -c`.
+- Cursor login is one fixed explicit mutation: resolve the persisted npx/version context and execute exactly `npx --yes tokscale@<version> cursor login`. It participates in the shared explicit-operation exclusion. Success publishes dedicated feedback and performs zero `cursor sync`, submit, profile fetch, autosubmit-status read, configure, disable, or run-now follow-ups. Every failure reuses normal context/process error mapping and offers the safe presentation-only fallback `npx tokscale@<validated-version> cursor login`; invalid versions use `latest` in fallback copy rather than reproducing shell-shaped text. TokChan never reads, prompts for, stores, or forwards Cursor cookies/tokens.
+- Settings execute exactly one read-only `cursor status` per continuous visible period, independently of the autosubmit status read. An ANSI-stripped exact `Session: Valid` line classifies connected, while the stable `No saved Cursor accounts.` or `Session: Session token expired or invalid` markers classify requiring login; empty, unknown, connectivity, HTTP, parse/format, context, and process failures are indeterminate and expose retry only. The check is cancellable, rejects old presentation/CLI-context results, blocks conflicting explicit CLI operations, and is repeated after close/reopen or a resolvable context change. Closing Settings resets the projection and transient Cursor login feedback. A successful explicit login projects connected immediately without follow-up work; onboarding keeps its independent optional login action. Settings labels the row `Cursor 登录`; the checking spinner and `已登录` indicator each render in the trailing action slot used by `自动登录`, never as duplicate rows below. Onboarding alone retains the `（可选）` suffix.
 - Temporary launchd compatibility exception: only when `autosubmit enable` returns a nonzero result whose combined raw stdout/stderr contains all four confirmed Tokscale defect signatures — `launchd bootout failed`, `launchctl bootout --wait`, `exit status: 64`, and `Unrecognized target specifier` — TokChan may run `/bin/launchctl` once with the discrete arguments `bootout` and `gui/<effective-uid>/ai.tokscale.autosubmit`. After launchd cleanup succeeds, TokChan must run the same configured Tokscale CLI's `autosubmit disable` exactly once with `TOKSCALE_AUTOSUBMIT_SKIP_SCHEDULER=1` scoped only to that child process, require it to succeed, and then retry the identical enable command exactly once with the normal environment. The executable path and service label are fixed constants; do not derive either from CLI output, accept a missing service, invoke a shell, recurse, leak the environment override to enable, or apply this recovery to user-requested disable/run/submit/other commands. Launchd cleanup and Tokscale state-cleanup failures identify their respective failed step with sanitized exit details, retry failure retains normal CLI error behavior, and status verification remains the view model's existing single read after successful configuration. Remove this classifier, direct launchctl call, recovery-only environment override, and focused tests together once the minimum supported Tokscale version includes the upstream fix.
 - A saved `npx` override must be an absolute executable file. Discovery preserves the deterministic precedence override → inherited `PATH` → fixed Homebrew/system paths → stable manager selections → installed-version fallbacks. It supports fnm, Volta, asdf, mise, nodenv, n, and nvm from their fixed macOS defaults and inherited absolute root overrides. Selected/default candidates precede strict stable `major.minor.patch` fallbacks; candidate paths are normalized and deduplicated, and the final target must exist, not be a directory, and be executable. Discovery only reads bounded known filesystem locations: it never starts a shell or manager, and it excludes fnm multishell paths, generic asdf/mise/nodenv shims, n caches, malformed versions, and unsafe config/alias tokens. Volta's documented `$VOLTA_HOME/bin/npx` shim is the sole manager-shim exception.
 - Settings present an empty override as automatic discovery and display the resolved executable path. Keep manual selection collapsed when automatic discovery succeeds; expand recovery controls for missing discovery or an invalid saved override. Clearing the override restores automatic mode without changing the persisted schema.
@@ -55,7 +61,7 @@ protocol TokscaleCLIService {
 - Profile reloads return an explicit updated/failed/superseded outcome to mutation callers; do not infer their success from a shared error cleared by another request. Re-resolve CLI context after suspended identity discovery, since Settings may have changed npx/version.
 - Switching scope is a pure projection from the latest complete batch; it neither submits, fetches one remote period, nor reads/modifies autosubmit. Guard batch requests by generation and account, but do not invalidate a batch merely because selection changed.
 - Status-item presentation uses the configured all/day/week/month projection from the same complete cache. It never initiates a request. The status menu exposes exactly two manual transfer actions: submit-and-refresh runs `submit` followed by one forced `fetchDashboardBatch`, and refresh-only runs `fetchDashboardBatch` alone. There is no submit-only action, because a bare `submit` leaves the visible numbers unchanged and reads as a no-op.
-- Automatic paths are read-only by construction. A statistics tick, app-start synchronization, or wake evaluation must record zero `submit`, `autosubmit run`, `configure`, and `disable` events. Only an explicit user action may mutate.
+- Automatic paths are read-only by construction. A statistics tick, app-start synchronization, or wake evaluation must record zero `cursor login`, `submit`, `autosubmit run`, `configure`, and `disable` events. Only an explicit user action may mutate.
 - Autosubmit status is status-only and event-driven: app start, a Settings window transition from hidden to visible, a manual status retry, a successful configure/disable, a successful run-now, and a resolvable npx/version change. A statistics tick, wake, or Dashboard open/close must not read it, and a status-only retry must not pull statistics alongside it.
 - General Settings bindings call `updatePreferences(_:)` with the latest complete preference value. Normalize username, Tokscale version, and npx path edges, but preserve status-template bytes. This operation only saves `UserDefaults` and publishes preferences: it performs zero CLI commands and zero profile/status requests. A real case-insensitive account change invalidates the profile generation and immediately persists a snapshot without the old profiles; version/npx changes invalidate only an in-flight autosubmit-status result and retain the profile batch.
 - Autosubmit status details and run-now live in Settings, with progress/success/failure feedback. Run-now uses persisted CLI settings, not unsaved form drafts.
@@ -80,8 +86,8 @@ protocol TokscaleCLIService {
 | Batch scopes or usernames differ | Reject as invalid response before the view model can publish |
 | Profile HTTP 404 | `profileNotFound` |
 | Other non-2xx response | Preserve HTTP status in `server(statusCode:)` |
-| Missing/non-executable `npx` | `TokscaleCLIError.missingNpx` |
-| Arbitrary npm specifier or shell-shaped version | `invalidVersion` before process launch |
+| Missing/non-executable `npx` | `TokscaleCLIError.missingNpx`; an explicit Cursor login shows terminal fallback without launching a process |
+| Arbitrary npm specifier or shell-shaped version | `invalidVersion` before process launch; never reproduce unsafe text in the Cursor terminal fallback |
 | Interval outside 1...525600 minutes | `invalidInterval` |
 | Unknown/shell-shaped client identifier | `invalidClient` |
 | Impossible or reversed date range | `invalidDateFilter` |
@@ -122,14 +128,14 @@ The SwiftUI `Settings` scene remains the sole settings-window owner. The AppKit 
 - Assert five-category fractions, empty values, malformed values and bundled icon resolution.
 - Decode current and sparse public profile fixtures; assert grouped client/model totals, percentages, and token-descending order.
 - Decode current and sparse autosubmit JSON; assert defaults and date summary.
-- Assert every command's exact argument suffix and rejection of invalid version, client, interval, and dates.
+- Assert every command's exact argument suffix and rejection of invalid version, client, interval, and dates. Cursor login and status must each launch exactly once through the resolved npx URL with discrete `cursor login` / `cursor status` arguments, never `/bin/sh`; status fixtures cover valid, no-account, expired, ANSI, empty, unknown, and connectivity/format output.
 - Assert ordinary autosubmit configuration succeeds without launchctl; the exact four-signal defect orders `enable → /bin/launchctl bootout gui/<effective-uid>/ai.tokscale.autosubmit → TOKSCALE_AUTOSUBMIT_SKIP_SCHEDULER=1 autosubmit disable → enable → status`; removing any one signal performs no cleanup; launchd cleanup, state cleanup, and retry failures stop without further retry; and the scheduler-skip environment override appears only on the recovery-disable child process.
 - Execute a fixture `npx` with an `/usr/bin/env` shebang; assert sibling runtime resolution through the prepended child `PATH`.
 - Locator unit tests must inject or clear fixed system candidates; an empty `PATH` alone does not isolate Homebrew or `/usr/local` tools installed on CI runners. Cover explicit override/PATH/fixed precedence; every supported manager's default and absolute environment-root layout; selected/default preference; strict stable semantic sorting; deterministic cross-manager order; excluded shims, multishells and caches; broken aliases; unsafe roots/config tokens; and directory or non-executable impostors.
 - Settings tests must cover automatic/custom/fallback/unavailable presentation, including whether override controls start collapsed or expanded; locator tests separately prove executable discovery and precedence.
 - Custom-pricing file tests use temporary directories and cover missing/malformed files, add/edit/delete, zero versus nil, aliases, unknown/tier field preservation, duplicate IDs, and external-change conflicts.
 - Fixture tests cover legacy excluded-unpriced output, current zero-cost unpriced output, all-unpriced zero summaries, no data, degraded sources, ANSI output, and unknown formats. A fake runner must assert the exact `pricing list-overrides --json` and `submit --dry-run` suffixes and prove no real submit command runs.
-- With fake services, assert app start performs exactly one batch `fetch` and one `status` and zero mutations; assert a background tick and a wake evaluation perform zero `status` and zero mutations; assert panel open/close performs neither. Manual submit-and-refresh orders `submit` before a forced batch; run-now orders `run` before batch/status reload; a status-only retry records exactly one `status` and zero fetches.
+- With fake services, assert app start performs exactly one batch `fetch` and one `status` and zero mutations; assert a background tick and a wake evaluation perform zero `status` and zero mutations; assert panel open/close performs neither. Manual submit-and-refresh orders `submit` before a forced batch; run-now orders `run` before batch/status reload; a status-only retry records exactly one `status` and zero fetches. Explicit Cursor login records exactly one login and zero sync/submit/fetch/status/configure/disable/run follow-ups; duplicate and conflicting explicit actions are rejected, and missing npx, invalid version, nonzero exit, and timeout remain recoverable.
 - Assert General preference updates normalize/persist values with zero configure/disable/status/submit/fetch events; account changes synchronously clear persisted profiles and reject late generations, while version/npx changes preserve profiles and reject late status results.
 - Assert autosubmit Apply records exactly `configure,status` or `disable,status`, preserves profile `fetchedAt`, stops before status on mutation failure, and reports partial success without replacing cached status on status failure.
 - Test autosubmit draft synchronization: late status initializes a pristine draft, never overwrites a dirty draft, and successful confirmation replaces the draft and clears dirty state.
@@ -174,6 +180,7 @@ enum FirstUseOnboardingState: Equatable {
 
 @MainActor
 extension DashboardViewModel {
+    func discoverIdentity() async
     func saveAndVerifyUsername(_ username: String) async
     func editOnboardingUsername()
     func submitFirstUsage() async
@@ -183,20 +190,21 @@ extension DashboardViewModel {
 ### 3. Contracts
 
 - Do not persist an onboarding-complete flag. Empty username enters username setup; a complete same-account `.all.totalTokens > 0` batch hides onboarding; a complete zero-token batch shows first submission.
-- With no saved username, preserve `whoami` discovery. A successful discovery saves the normalized username before verification; failure exposes manual entry. A Settings username edit that wins while `whoami` is suspended must not be overwritten by the late discovery result or error.
+- With no saved username, launch directly into editable username setup and execute zero `whoami` calls. Only `discoverIdentity()` may invoke `whoami`, after the user clicks “识别本机登录”. A successful discovery saves the normalized username before exactly one complete-batch verification; failure returns to editable setup with recoverable feedback. Duplicate discovery clicks start no second process, and a Settings username or CLI-context edit that wins while `whoami` is suspended must not be overwritten by the late result or error.
 - Manual username confirmation uses `updatePreferences(_:)` for normalization, persistence, cache isolation, and generation invalidation, then forces exactly one complete profile batch. Blank input starts no service work.
 - On first verification only, typed `TokscaleAPIError.profileNotFound` means no submitted profile and advances to first submission. Other API failures stay recoverable in username setup. Never classify by matching localized error text.
 - First submission performs exactly one `submit` followed by exactly one forced complete batch for the same captured username. If the username changes while submit is suspended, the old operation must not fetch for or mutate the new account.
 - Submission hides onboarding only after a same-account complete batch reports `.all.totalTokens > 0`. Zero Tokens, 404, or delayed server visibility keeps step two visible with retry/edit guidance and never auto-submits again.
 - While onboarding discovery, verification, or submission is active, disable both status-menu transfer actions through the shared operation-busy projection. Keep ordinary loaded-dashboard refresh, stale-cache retention, and diagnostics semantics unchanged.
-- Render onboarding inside the existing 380×680 Dashboard root with native controls and local card backgrounds. AppKit's `NSPopover` remains the sole root-background owner.
+- Render onboarding inside the existing 380×680 Dashboard root with native controls and local card backgrounds. AppKit's `NSPopover` remains the sole root-background owner. The username field and both large account actions share one visual height; the two actions use equal flexible columns and full-width labels while preserving primary/default versus secondary styling.
 
 ### 4. Validation & Error Matrix
 
 | Condition | Required behavior |
 |---|---|
-| Empty saved username, `whoami` succeeds | Save discovered username and verify one complete batch |
-| Empty saved username, `whoami` or CLI context fails | Show manual username entry with recoverable feedback |
+| Empty saved username at launch | Show editable username setup; execute zero `whoami` calls |
+| User-triggered `whoami` succeeds | Save discovered username and verify one complete batch |
+| User-triggered `whoami` or CLI context fails | Show manual username entry with recoverable feedback |
 | Manual username is blank | Keep step one; no save, fetch, or submit |
 | First verification returns positive all Tokens | Hide onboarding and show Dashboard |
 | First verification returns zero all Tokens or typed 404 | Show first-submission step |
@@ -208,14 +216,14 @@ extension DashboardViewModel {
 
 ### 5. Good / Base / Bad Cases
 
-- Good: an already authenticated first launch records `whoami`, fetches one complete batch, and either opens the Dashboard or shows step two.
+- Good: an empty first launch performs no identity lookup; clicking “识别本机登录” records one `whoami`, fetches one complete batch, and either opens the Dashboard or shows step two.
 - Base: a username with no public usage receives a zero batch or 404 and can submit once, edit the username, or retry later.
 - Bad: store `hasCompletedOnboarding`, treat nonempty clients as completion, parse `profileNotFound` from text, reuse normal combined-refresh banners inside onboarding, or loop submit until Tokens appear.
 
 ### 6. Tests Required
 
 - Assert initial state from empty preferences, positive complete cache, zero complete cache, and configured account without a complete cache.
-- Assert automatic discovery success/failure and the race where Settings changes username while `whoami` is suspended.
+- Assert launch with an empty username records zero `whoami`; explicit discovery covers success, failure, duplicate rejection, and the race where Settings changes username or CLI context while `whoami` is suspended.
 - Assert trimmed manual save, blank rejection, positive/zero/404/error verification, and exactly one complete fetch.
 - Assert first submission orders `submit,fetch`, rejects duplicates, handles submit/fetch errors, remains visible after zero/404, and ignores an account switch during suspended submit.
 - Assert normal statistics retry can transition a verified zero account to step two without changing loaded-account stale-cache semantics.
