@@ -55,8 +55,8 @@ enum StatusItemTextRenderer {
 extension DashboardViewModel {
     var statusItemTitle: String? { get }
     func statusItemTitle(for preferences: UserPreferences) -> String?
-    func pushUsageNow() async
-    func pullStatisticsNow() async
+    func submitUsageAndRefreshStatistics() async
+    func refreshStatisticsNow() async
 }
 ```
 
@@ -66,8 +66,11 @@ extension DashboardViewModel {
 - Derive the title only from a complete, same-account all/day/week/month cache. The configured scope selects a cached projection and never starts a request. Missing data hides the title; refresh and failure keep the old title until a complete batch replaces it.
 - Observe saved preferences and cache publication in the one coordinator. `@Published` emits the incoming value from `willSet`, so preference-driven title updates must compute from the value delivered to `sink`, not reread the old stored property.
 - Use `NSStatusItem.variableLength`, `.imageLeading`, and an accessibility label containing the summary when a nonempty title exists. Preserve AppKit's native attributed title and apply a `-1` point baseline offset to its full range so text sits slightly lower beside the icon. Clear the title, restore `squareLength` / `.imageOnly`, and use `TokChan` as the accessibility label otherwise.
-- Build push/pull items into every dynamic secondary-click menu. Disable both while any explicit `DashboardOperation` is running.
-- `pushUsageNow()` runs exactly one CLI submit and no profile fetch. `pullStatisticsNow()` forces exactly one complete profile batch and no submit. Success is silent; push failures join diagnostics as `即时推送`, while pull failures use the existing statistics diagnostic.
+- Build both manual transfer items into every dynamic secondary-click menu, titled through `StatusMenuBuilder.title(for:)`. Disable both while any explicit `DashboardOperation` is running.
+- There is no submit-only entry point. `submitUsageAndRefreshStatistics()` runs exactly one CLI submit and then one forced complete batch; `refreshStatisticsNow()` forces exactly one complete batch and runs no submit. `StatusMenuBuilder.title(for:)` is the only definition of their user-facing titles (“提交并拉取” and “拉取远程数据”), and the Dashboard header button reuses it so the panel and the menu cannot drift apart.
+- Freshness copy describes the client read, never server aggregation. `RelativeDateTimeFormatter` renders a sub-minute or clock-rolled-back age as “0 秒后”, which reads as a future event, so any age below 60 seconds must collapse to a fixed “统计刚刚读取” instead.
+- Manual actions capture the account, generation, and CLI context at start. If any of them changes while the action is suspended, the action finishes as superseded and must not read or publish for the new account.
+- Success is silent. Submit failures publish `submitErrorMessage` into diagnostics as `用量提交：…` so a failure started from a closed popover is still discoverable; fetch failures use the existing statistics diagnostic.
 
 #### 4. Validation & Error Matrix
 
@@ -78,15 +81,17 @@ extension DashboardViewModel {
 | Status text disabled, template empty, wrong account, or incomplete cache | Icon-only square status item |
 | Unknown template placeholder | Preserve it verbatim; do not block Settings save |
 | Cached refresh pending or failed | Keep the previous complete-batch title |
-| Any explicit operation running | Disable both push and pull items |
-| Push fails | No fetch; record a light push diagnostic |
-| Pull fails | No submit; preserve old batch and statistics diagnostic |
+| Any explicit operation running | Disable both manual transfer items |
+| Submit fails | No fetch; record a `用量提交：…` diagnostic so a closed panel still surfaces it |
+| Submit succeeds but fetch fails | Keep the old batch and `fetchedAt`; report partial success without claiming the server is updated |
+| Refresh-only fails | No submit; preserve old batch and statistics diagnostic |
+| Account or CLI context changes mid-action | Finish as superseded; never read or publish for the new account |
 
 #### 5. Good / Base / Bad Cases
 
 - Good: save `.week` with `Weekly {token} / {cost}` and immediately recompute from the existing week cache without a request.
 - Base: a migrated install has no new preference keys, so it remains icon-only until the user enables the feature.
-- Bad: bind title computation to dashboard `selectedPeriod`, publish partial scope data, validate unknown placeholders, make push call the existing submit-plus-fetch refresh, or start an independent status-title polling loop.
+- Bad: bind title computation to dashboard `selectedPeriod`, publish partial scope data, validate unknown placeholders, reintroduce a submit-only menu entry, or start an independent status-title polling loop.
 
 #### 6. Tests Required
 
@@ -94,7 +99,7 @@ extension DashboardViewModel {
 - Preferences: round-trip all three keys, missing-key defaults, and invalid-period fallback.
 - Presentation: nil/empty/nonempty title, square versus variable length, image position, `-1` point baseline offset that preserves native title attributes, and accessibility text.
 - Cache/title flow: complete same-account cache, missing/incomplete/wrong-account cache, incoming saved preferences, stale retention, and complete-batch replacement.
-- Menu/actions: dynamic ordering with and without information, enabled/disabled descriptors, push performs submit with zero fetches, pull performs one batch with zero submits, duplicate operations are rejected, and failures enter diagnostics.
+- Menu/actions: dynamic ordering with and without information, enabled/disabled descriptors, submit-and-refresh orders exactly `submit` then one forced batch, refresh-only performs one batch with zero submits, duplicate operations are rejected, an account switch during a suspended submit publishes nothing for the new account, and submit failures enter diagnostics.
 
 #### 7. Wrong vs Correct
 
@@ -171,6 +176,10 @@ Check light and dark renderings, zero/absent breakdown data, long client lists, 
 
 Cache-first loading keeps the header button reserved for explicit submit/refresh feedback. A silent read with cached content must not spin or disable that button, clear metrics, reset the selected scope, or show a success/error banner. First load without data may use the existing loading/failure state.
 
-Popover delegate callbacks start and stop the five-minute refresh timer. Closing the popover stops future timer triggers but may let an already-started, time-bounded batch or manual operation finish. A completed manual-operation banner clears on close; if closing races with an in-flight operation, its eventual result remains available to non-dashboard consumers but must not appear after the popover is reopened.
+Popover delegate callbacks own presentation state only: visibility, the presentation generation, and banner lifetime. They must never start, stop, or reschedule statistics refresh, and they must never read autosubmit status. The five-minute schedule belongs to the application-level scheduler described in `data-persistence.md`, so a closed panel keeps the status-item title current. A completed manual-operation banner clears on close; if closing races with an in-flight operation, its eventual result remains available to non-dashboard consumers but must not appear after the popover is reopened.
+
+The application delegate owns the whole background lifecycle: build the status-item coordinator first so it is already subscribed before any background publication, register the `NSWorkspace.didWakeNotification` observer, then start the scheduler exactly once. Wake performs a single freshness evaluation and never replays missed intervals. Wrap the notification in a small owner such as `SystemWakeObserver` whose `start()` is idempotent and whose `stop()`/`deinit` remove the token; a raw `addObserver` call in `applicationDidFinishLaunching` leaks a registration and can double-fire after a relaunch cycle.
+
+The Settings window reports visibility transitions (`settingsDidBecomeVisible()` / `settingsDidBecomeHidden()`) rather than calling the combined loader from `.task`. Because `.task`, `onAppear`, and `scenePhase` can all fire for one presentation, the view model must collapse them so one continuous visible period reads autosubmit status exactly once.
 
 Use one snapshot-freshness formatter for both the dashboard header and the dynamically built status menu. It reports the last successful statistics fetch and includes the selected server `dateRange.end` when that day differs from today. Compare the server `yyyy-MM-dd` string against today using a Gregorian calendar in the user's local timezone, regardless of the user's preferred calendar. No successful snapshot means no fabricated freshness item. Statistics/status/persistence failures remain diagnostics in the status menu; explicit operation failures retain normal in-panel feedback while the originating popover remains visible.
