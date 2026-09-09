@@ -8,6 +8,7 @@ struct TokscaleCommandContext: Equatable {
 
 enum TokscaleCommand: Equatable {
     case whoami
+    case cursorLogin
     case submit
     case autosubmitStatus
     case configureAutosubmit(AutosubmitConfiguration)
@@ -25,6 +26,8 @@ enum TokscaleCommandBuilder {
         switch command {
         case .whoami:
             arguments += ["whoami"]
+        case .cursorLogin:
+            arguments += ["cursor", "login"]
         case .submit:
             arguments += ["submit"]
         case .autosubmitStatus:
@@ -288,6 +291,7 @@ protocol CustomPricingCLIService {
 
 protocol TokscaleCLIService {
     func whoAmI(context: TokscaleCommandContext) async throws -> String
+    func loginCursor(context: TokscaleCommandContext) async throws
     func submit(context: TokscaleCommandContext) async throws
     func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus
     func configureAutosubmit(
@@ -385,6 +389,10 @@ final class TokscaleCLIClient: TokscaleCLIService, CustomPricingCLIService {
             }
         }
         throw TokscaleCLIError.usernameNotFound
+    }
+
+    func loginCursor(context: TokscaleCommandContext) async throws {
+        _ = try await run(.cursorLogin, context: context)
     }
 
     func submit(context: TokscaleCommandContext) async throws {

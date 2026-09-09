@@ -41,6 +41,7 @@ enum DashboardOperation: Equatable {
     case idle
     case submitting
     case refreshingStatistics
+    case loggingInCursor
     case runningAutosubmit
     case applyingAutosubmit
     case succeeded(String)
@@ -48,7 +49,8 @@ enum DashboardOperation: Equatable {
 
     var isRunning: Bool {
         switch self {
-        case .submitting, .refreshingStatistics, .runningAutosubmit, .applyingAutosubmit: return true
+        case .submitting, .refreshingStatistics, .loggingInCursor, .runningAutosubmit, .applyingAutosubmit:
+            return true
         default: return false
         }
     }
@@ -57,7 +59,8 @@ enum DashboardOperation: Equatable {
 @MainActor
 final class DashboardViewModel: ObservableObject {
     @Published private(set) var profileState: LoadState<DashboardData> = .idle
-    @Published private(set) var firstUseOnboardingState: FirstUseOnboardingState = .discoveringIdentity
+    @Published private(set) var firstUseOnboardingState: FirstUseOnboardingState = .usernameEntry(message: nil)
+    @Published private(set) var cursorLoginState: CursorLoginState = .idle
     @Published private(set) var autosubmitState: LoadState<AutosubmitStatus> = .idle
     @Published private(set) var operation: DashboardOperation = .idle
     @Published private(set) var preferences: UserPreferences
@@ -302,37 +305,17 @@ final class DashboardViewModel: ObservableObject {
         defer { isLoadingServices = false }
         if autosubmitState.loadedValue == nil { autosubmitState = .loading }
 
-        let requiresIdentityDiscovery = normalizedUsername.isEmpty
-        var context: TokscaleCommandContext?
-        if requiresIdentityDiscovery {
-            firstUseOnboardingState = .discoveringIdentity
-            do {
-                context = try commandContext(for: preferences)
-                if let context {
-                    let username = try await resolvedUsername(context: context)
-                    firstUseOnboardingState = .verifying(username: username)
-                }
-            } catch {
-                if normalizedUsername.isEmpty {
-                    let message = "无法自动识别 Tokscale 账号：\(Self.message(for: error))"
-                    firstUseOnboardingState = .usernameEntry(message: message)
-                } else {
-                    // A Settings edit that completed while whoami was suspended wins.
-                    firstUseOnboardingState = .verifying(username: normalizedUsername)
-                }
-            }
-        }
-
-        // Discovery may suspend while Settings changes executable/version.
-        do { context = try commandContext(for: preferences) }
-        catch {
+        let context: TokscaleCommandContext?
+        do {
+            context = try commandContext(for: preferences)
+        } catch {
             context = nil
             recordAutosubmitError(error)
         }
 
         let shouldLoadProfiles = !normalizedUsername.isEmpty
         if let context, shouldLoadProfiles {
-            async let profiles = reloadProfiles(force: requiresIdentityDiscovery, automatic: true)
+            async let profiles = reloadProfiles(force: false, automatic: true)
             async let status = reloadAutosubmit(context: context)
             let (profileResult, _) = await (profiles, status)
             handleOnboardingProfileResult(profileResult)
@@ -341,6 +324,65 @@ final class DashboardViewModel: ObservableObject {
         } else if shouldLoadProfiles {
             handleOnboardingProfileResult(await reloadProfiles(force: false, automatic: true))
         }
+    }
+
+    func discoverIdentity() async {
+        guard !isLoadingServices,
+              !operation.isRunning,
+              normalizedUsername.isEmpty,
+              case .usernameEntry = firstUseOnboardingState else { return }
+
+        isLoadingServices = true
+        firstUseOnboardingState = .discoveringIdentity
+        defer { isLoadingServices = false }
+
+        do {
+            let context = try commandContext(for: preferences)
+            let discovered = try await cli.whoAmI(context: context)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard normalizedUsername.isEmpty else { return }
+            guard (try? commandContext(for: preferences)) == context else {
+                firstUseOnboardingState = .usernameEntry(
+                    message: "Tokscale 命令设置已变化，请重新识别本机登录。"
+                )
+                return
+            }
+            guard !discovered.isEmpty else { throw TokscaleAPIError.invalidUsername }
+            await saveAndVerifyUsername(discovered)
+        } catch {
+            guard normalizedUsername.isEmpty else { return }
+            firstUseOnboardingState = .usernameEntry(
+                message: "无法识别 Tokscale 账号：\(Self.message(for: error))"
+            )
+        }
+    }
+
+    func loginCursor() async {
+        guard !isPerformingOperation else { return }
+        let fallbackCommand = Self.cursorLoginFallbackCommand(version: preferences.tokscaleVersion)
+        let context: TokscaleCommandContext
+        do {
+            context = try commandContext(for: preferences)
+        } catch {
+            cursorLoginState = .failed(
+                message: Self.message(for: error),
+                fallbackCommand: fallbackCommand
+            )
+            return
+        }
+
+        beginOperation(.loggingInCursor)
+        cursorLoginState = .loggingIn
+        do {
+            try await cli.loginCursor(context: context)
+            cursorLoginState = .succeeded("Cursor 登录成功。")
+        } catch {
+            cursorLoginState = .failed(
+                message: Self.message(for: error),
+                fallbackCommand: fallbackCommand
+            )
+        }
+        completeSilentOperation()
     }
 
     func saveAndVerifyUsername(_ username: String) async {
@@ -425,7 +467,7 @@ final class DashboardViewModel: ObservableObject {
         submitErrorMessage = nil
         do {
             let context = try commandContext(for: preferences)
-            let username = try await resolvedUsername(context: context)
+            let username = try resolvedUsername()
             try await cli.submit(context: context)
             // An account switch while submit was suspended supersedes this operation.
             guard matchesUsername(username) else {
@@ -472,7 +514,7 @@ final class DashboardViewModel: ObservableObject {
         beginOperation(.runningAutosubmit)
         do {
             let context = try commandContext(for: preferences)
-            let username = try await resolvedUsername(context: context)
+            let username = try resolvedUsername()
             try await cli.runAutosubmitNow(context: context)
             // A CLI or account change while the run was suspended supersedes this operation.
             guard matchesUsername(username), (try? commandContext(for: preferences)) == context else {
@@ -604,7 +646,7 @@ final class DashboardViewModel: ObservableObject {
     private func reconcileInitialOnboardingState() {
         let username = normalizedUsername
         guard !username.isEmpty else {
-            firstUseOnboardingState = .discoveringIdentity
+            firstUseOnboardingState = .usernameEntry(message: nil)
             return
         }
         guard cacheSavedAt != nil, cacheIsComplete(for: username) else {
@@ -876,21 +918,10 @@ final class DashboardViewModel: ObservableObject {
             .caseInsensitiveCompare(username) == .orderedSame
     }
 
-    private func resolvedUsername(context: TokscaleCommandContext) async throws -> String {
+    private func resolvedUsername() throws -> String {
         let saved = normalizedUsername
-        if !saved.isEmpty { return saved }
-
-        let discovered = try await cli.whoAmI(context: context)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !discovered.isEmpty else { throw TokscaleAPIError.invalidUsername }
-
-        // Settings may have supplied an account while whoami was suspended.
-        if normalizedUsername.isEmpty {
-            var updatedPreferences = preferences
-            updatedPreferences.username = discovered
-            updatePreferences(updatedPreferences)
-        }
-        return normalizedUsername
+        guard !saved.isEmpty else { throw TokscaleAPIError.invalidUsername }
+        return saved
     }
 
     private func commandContext(for preferences: UserPreferences) throws -> TokscaleCommandContext {
@@ -939,6 +970,14 @@ final class DashboardViewModel: ObservableObject {
             statusTextTemplate: preferences.statusTextTemplate,
             statusTextPeriod: preferences.statusTextPeriod
         )
+    }
+
+    private static func cursorLoginFallbackCommand(version: String) -> String {
+        let normalizedVersion = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeVersion = TokscaleCommandBuilder.isValidVersion(normalizedVersion)
+            ? normalizedVersion
+            : "latest"
+        return "npx tokscale@\(safeVersion) cursor login"
     }
 
     private static func isProfileNotFound(_ error: Error) -> Bool {

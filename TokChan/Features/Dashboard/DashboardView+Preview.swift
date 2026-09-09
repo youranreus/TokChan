@@ -51,6 +51,7 @@ struct PreviewAPIService: TokscaleAPIService {
 
 struct PreviewCLIService: TokscaleCLIService, CustomPricingCLIService {
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
+    func loginCursor(context: TokscaleCommandContext) async throws {}
     func submit(context: TokscaleCommandContext) async throws {}
 
     func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus {

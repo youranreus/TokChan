@@ -133,7 +133,7 @@ struct DashboardView: View {
         switch viewModel.dashboardOperation {
         case .idle:
             EmptyView()
-        case .submitting, .refreshingStatistics, .runningAutosubmit, .applyingAutosubmit:
+        case .submitting, .refreshingStatistics, .loggingInCursor, .runningAutosubmit, .applyingAutosubmit:
             EmptyView()
         case let .succeeded(message):
             StatusBanner(text: message, color: .green, showsProgress: false)

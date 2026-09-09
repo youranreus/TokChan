@@ -79,6 +79,7 @@ final class TokChanUITests: XCTestCase {
         )
         XCTAssertFalse(application.buttons["保存"].exists)
         XCTAssertFalse(application.buttons["apply-autosubmit-settings"].exists)
+        XCTAssertTrue(application.buttons["cursor-login-button"].exists)
 
         let autosubmitTab = application.toolbars.buttons["自动提交"]
         XCTAssertTrue(autosubmitTab.waitForExistence(timeout: 3))
