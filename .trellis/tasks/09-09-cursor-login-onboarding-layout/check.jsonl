@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/macos/tokscale-integration.md", "reason": "Verify CLI safety, classification, lifecycle, and no-follow-up contracts"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "Verify native layout, settings behavior, accessibility, and viewport fit"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "Verify deterministic test scope and lifecycle race coverage"}
+{"file": ".trellis/tasks/09-09-cursor-login-onboarding-layout/research/cursor-status-contract.md", "reason": "Verify parser behavior against researched upstream outputs"}

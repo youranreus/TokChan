@@ -12,7 +12,7 @@ The Xcode project has `TokChanTests` and `TokChanUITests`; keep behavior checks 
 - Test JSON decoding and persistence migration when those features exist.
 - For dashboard refresh tests, inject the clock and sleep boundary. Cover the 300-second TTL edge, the 30 → 60 → 300 automatic-failure backoff and its reset on success, trigger coalescing, and old account/generation responses without wall-clock sleeps. Do not assert popover visibility cancels refresh: the scheduler is application-level and must keep ticking with the panel closed.
 - Cover the application lifecycle explicitly: the scheduler starts once and is idempotent, panel open/close changes no schedule, an empty username is a silent no-op, and wake evaluates freshness exactly once without replaying missed intervals. Test the wake observer itself for idempotent registration, forwarding, stop/restart, and token removal on deinit — with an injected `NotificationCenter`, never a real sleep.
-- Assert the separation of concerns by counting events: automatic paths record zero `submit`/`run`/`configure`/`disable`, statistics ticks and wake record zero `status`, and a status-only trigger records zero fetches. Assert `fetchedAt` and `autosubmitObservedAt` advance only from their own sources.
+- Assert the separation of concerns by counting events: automatic paths record zero `submit`/`run`/`configure`/`disable`, statistics ticks and wake record zero `status`, and a status-only trigger records zero fetches. Assert `fetchedAt` and `autosubmitObservedAt` advance only from their own sources. Cursor session checks use a distinct event: cover one check per continuous Settings presentation, close/reopen, retry, CLI-context and close races, explicit-operation exclusion, and zero submit/fetch/mutation follow-ups.
 - Treat an all/day/week/month refresh as one publication unit. Fail one remote request and assert no partial range becomes observable.
 - Test status-item routing as pure behavior: left mouse-up toggles the dashboard, right mouse-up requests the native status menu, and unrelated events are ignored. For the `LSUIElement` popover opening path, assert exact `activate → show → makeKey` ordering; for the closing path, assert it only closes. Assert dynamic menu ordering both with and without freshness/diagnostics. Manual or UI validation must distinguish a temporary `statusItem.menu` presentation from a cursor-anchored context menu and must cover transient dismissal against both the desktop and another app.
 - Test configurable status-item text as pure behavior: literal known-placeholder replacement, unknown-placeholder preservation, preference fallback/round-trip, complete same-account cache selection, and square/variable presentation. Because Combine `@Published` delivers its incoming value before storage changes, assert the coordinator path computes from the delivered preference rather than rereading stale view-model preferences.
@@ -25,13 +25,14 @@ The Xcode project has `TokChanTests` and `TokChanUITests`; keep behavior checks 
 ## UI tests
 
 - Cover the real status-item path where the UI environment exposes it: left-click opens/closes the popover, right-click opens the menu without leaving the popover visible, and Settings opens or raises the SwiftUI-owned window. Skip explicitly when SystemUIServer does not expose the item rather than replacing these with live-network assumptions.
-- Prefer stable accessibility identifiers only for controls that UI tests need.
+- Prefer stable accessibility identifiers only for controls that UI tests need. Cursor Settings states use stable identifiers for checking, connected, check failure, retry, and automatic login; unknown status must render retry without the login action.
 - Do not rely on live network services in UI tests.
 
 ## SwiftUI previews
 
 - Use previews as fast visual checks, not as a replacement for behavior tests.
 - Preview data should be deterministic and local.
+- Render first-use username entry, feedback, and busy states at 380×680 in light and dark appearances. Verify the username field and both large actions use the shared height, the actions divide the row equally, and no state clips the existing help or accessibility controls.
 
 ## Release/update pipeline tests
 
