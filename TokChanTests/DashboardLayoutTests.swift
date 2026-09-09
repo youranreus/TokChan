@@ -5,6 +5,10 @@ import XCTest
 
 @MainActor
 final class DashboardLayoutTests: XCTestCase {
+    func testOnboardingAccountControlsUseOneLargeControlHeight() {
+        XCTAssertEqual(FirstUseOnboardingView.accountControlHeight, 32)
+    }
+
     func testRenderFixedDashboardInBothAppearances() async throws {
         let model = DashboardViewModel(api: PreviewAPIService(), cli: PreviewCLIService(),
             preferencesStore: PreviewPreferencesStore(), npxLocator: PreviewNpxLocator(),
@@ -160,6 +164,7 @@ private actor SuspendedLayoutCursorCLI: TokscaleCLIService {
         loginContinuation = nil
     }
 
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus { .valid }
     func submit(context: TokscaleCommandContext) async throws {}
     func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus {
         try JSONDecoder().decode(AutosubmitStatus.self, from: Data(#"{"enabled":false}"#.utf8))

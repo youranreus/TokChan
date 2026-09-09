@@ -185,7 +185,7 @@ struct SettingsView: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(viewModel.operation.isRunning)
+                .disabled(viewModel.isPerformingOperation)
                 .accessibilityIdentifier("apply-autosubmit-settings")
             }
             .padding()
@@ -222,10 +222,12 @@ struct SettingsView: View {
             .disabled(viewModel.operation.isRunning)
 
             Section("Agent 连接") {
-                CursorLoginView(
-                    state: viewModel.cursorLoginState,
+                SettingsCursorLoginView(
+                    loginState: viewModel.cursorLoginState,
+                    connectionState: viewModel.cursorConnectionState,
                     isDisabled: viewModel.isPerformingOperation,
-                    login: { Task { await viewModel.loginCursor() } }
+                    login: { Task { await viewModel.loginCursor() } },
+                    retryStatus: { viewModel.retryCursorStatus() }
                 )
             }
 

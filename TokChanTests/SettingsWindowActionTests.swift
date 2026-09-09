@@ -4,6 +4,17 @@ import XCTest
 
 @MainActor
 final class StatusItemPresentationTests: XCTestCase {
+    func testCursorConnectionPresentationExposesOnlyTheSafeActionForEachState() {
+        XCTAssertFalse(CursorConnectionState.idle.showsLoginAction)
+        XCTAssertFalse(CursorConnectionState.checking.showsLoginAction)
+        XCTAssertFalse(CursorConnectionState.loggedIn.showsLoginAction)
+        XCTAssertTrue(CursorConnectionState.needsLogin.showsLoginAction)
+        XCTAssertFalse(CursorConnectionState.checkFailed("offline").showsLoginAction)
+
+        XCTAssertFalse(CursorConnectionState.needsLogin.showsRetryAction)
+        XCTAssertTrue(CursorConnectionState.checkFailed("offline").showsRetryAction)
+    }
+
     func testRoutesOnlyLeftAndRightMouseUp() {
         XCTAssertEqual(StatusItemClickAction.action(for: .leftMouseUp), .toggleDashboard)
         XCTAssertEqual(StatusItemClickAction.action(for: .rightMouseUp), .showStatusMenu)

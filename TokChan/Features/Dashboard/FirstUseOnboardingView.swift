@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct FirstUseOnboardingView: View {
+    static let accountControlHeight: CGFloat = 32
+
     @ObservedObject var viewModel: DashboardViewModel
     @State private var usernameDraft: String
 
@@ -110,6 +112,8 @@ struct FirstUseOnboardingView: View {
 
             TextField("Tokscale 用户名", text: $usernameDraft)
                 .textFieldStyle(.roundedBorder)
+                .controlSize(.large)
+                .frame(height: Self.accountControlHeight)
                 .disabled(viewModel.isPerformingOperation)
                 .onSubmit(verifyUsername)
                 .accessibilityLabel("Tokscale 用户名")
@@ -120,19 +124,32 @@ struct FirstUseOnboardingView: View {
             }
 
             HStack(spacing: 8) {
-                Button("继续") { verifyUsername() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .frame(maxWidth: .infinity)
-                    .disabled(trimmedUsername.isEmpty || viewModel.isPerformingOperation)
-                    .keyboardShortcut(.defaultAction)
-                    .help(trimmedUsername.isEmpty ? "请输入 Tokscale 用户名" : "保存用户名并验证全部范围统计")
-                    .accessibilityIdentifier("onboarding-continue-button")
+                Button {
+                    verifyUsername()
+                } label: {
+                    Text("继续")
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity)
+                .frame(height: Self.accountControlHeight)
+                .disabled(trimmedUsername.isEmpty || viewModel.isPerformingOperation)
+                .keyboardShortcut(.defaultAction)
+                .help(trimmedUsername.isEmpty ? "请输入 Tokscale 用户名" : "保存用户名并验证全部范围统计")
+                .accessibilityIdentifier("onboarding-continue-button")
 
-                Button("识别本机登录") {
+                Button {
                     Task { await viewModel.discoverIdentity() }
+                } label: {
+                    Text("识别本机登录")
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
                 }
                 .controlSize(.large)
+                .frame(maxWidth: .infinity)
+                .frame(height: Self.accountControlHeight)
                 .disabled(viewModel.isPerformingOperation)
                 .help("通过 Tokscale CLI 读取本机已登录用户名")
                 .accessibilityIdentifier("onboarding-discover-identity-button")

@@ -9,6 +9,7 @@ struct TokscaleCommandContext: Equatable {
 enum TokscaleCommand: Equatable {
     case whoami
     case cursorLogin
+    case cursorStatus
     case submit
     case autosubmitStatus
     case configureAutosubmit(AutosubmitConfiguration)
@@ -28,6 +29,8 @@ enum TokscaleCommandBuilder {
             arguments += ["whoami"]
         case .cursorLogin:
             arguments += ["cursor", "login"]
+        case .cursorStatus:
+            arguments += ["cursor", "status"]
         case .submit:
             arguments += ["submit"]
         case .autosubmitStatus:
@@ -144,6 +147,32 @@ struct ProcessOutput: Equatable {
     let exitCode: Int32
     let stdout: String
     let stderr: String
+}
+
+struct CursorSessionStatusParser {
+    func parse(_ output: ProcessOutput) -> CursorSessionStatus {
+        let combined = [output.stdout, output.stderr]
+            .map(Self.stripANSI)
+            .joined(separator: "\n")
+        let lines = combined.components(separatedBy: .newlines).map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        if lines.contains("Session: Valid") { return .valid }
+        if combined.contains("No saved Cursor accounts.")
+            || combined.contains("Session: Session token expired or invalid") {
+            return .unavailable
+        }
+        return .indeterminate
+    }
+
+    private static func stripANSI(_ value: String) -> String {
+        value.replacingOccurrences(
+            of: "\u{001B}\\[[0-?]*[ -/]*[@-~]",
+            with: "",
+            options: .regularExpression
+        )
+    }
 }
 
 protocol ProcessRunning {
@@ -292,6 +321,7 @@ protocol CustomPricingCLIService {
 protocol TokscaleCLIService {
     func whoAmI(context: TokscaleCommandContext) async throws -> String
     func loginCursor(context: TokscaleCommandContext) async throws
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus
     func submit(context: TokscaleCommandContext) async throws
     func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus
     func configureAutosubmit(
@@ -393,6 +423,10 @@ final class TokscaleCLIClient: TokscaleCLIService, CustomPricingCLIService {
 
     func loginCursor(context: TokscaleCommandContext) async throws {
         _ = try await run(.cursorLogin, context: context)
+    }
+
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus {
+        CursorSessionStatusParser().parse(try await run(.cursorStatus, context: context))
     }
 
     func submit(context: TokscaleCommandContext) async throws {

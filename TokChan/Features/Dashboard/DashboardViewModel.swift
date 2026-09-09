@@ -61,6 +61,7 @@ final class DashboardViewModel: ObservableObject {
     @Published private(set) var profileState: LoadState<DashboardData> = .idle
     @Published private(set) var firstUseOnboardingState: FirstUseOnboardingState = .usernameEntry(message: nil)
     @Published private(set) var cursorLoginState: CursorLoginState = .idle
+    @Published private(set) var cursorConnectionState: CursorConnectionState = .idle
     @Published private(set) var autosubmitState: LoadState<AutosubmitStatus> = .idle
     @Published private(set) var operation: DashboardOperation = .idle
     @Published private(set) var preferences: UserPreferences
@@ -109,10 +110,13 @@ final class DashboardViewModel: ObservableObject {
     private var profileRefreshTask: Task<ProfileReloadResult, Never>?
     private var backgroundRefreshTask: Task<Void, Never>?
     private var autosubmitStatusTask: Task<Void, Never>?
+    private var cursorStatusTask: Task<Void, Never>?
+    private var cursorStatusRequestID = UUID()
     private var lastAutomaticFailure: Date?
     private var consecutiveAutomaticFailures = 0
     private var isPanelVisible = false
     private var isSettingsVisible = false
+    private var settingsPresentationGeneration: UInt64 = 0
     private var hasSynchronizedOnLaunch = false
     private var lastAutosubmitStatusContext: TokscaleCommandContext?
     private var panelPresentationGeneration: UInt64 = 0
@@ -127,6 +131,7 @@ final class DashboardViewModel: ObservableObject {
 
     var isPerformingOperation: Bool {
         operation.isRunning
+            || cursorConnectionState == .checking
             || (firstUseOnboardingState.isBusy && (isLoadingServices || isRefreshing))
     }
 
@@ -215,6 +220,7 @@ final class DashboardViewModel: ObservableObject {
         profileRefreshTask?.cancel()
         backgroundRefreshTask?.cancel()
         autosubmitStatusTask?.cancel()
+        cursorStatusTask?.cancel()
     }
 
     func npxPathStatus(for preferredPath: String) -> NpxPathStatus {
@@ -275,15 +281,29 @@ final class DashboardViewModel: ObservableObject {
 
     /// Called whenever the Settings window transitions from hidden to visible.
     ///
-    /// Repeated callbacks inside one continuous visible period read autosubmit status only once.
+    /// Repeated callbacks inside one continuous visible period read each Settings status only once.
     func settingsDidBecomeVisible() {
         guard !isSettingsVisible else { return }
         isSettingsVisible = true
+        settingsPresentationGeneration &+= 1
+        cursorLoginState = .idle
         scheduleAutosubmitStatusRefresh()
+        scheduleCursorStatusRefresh()
     }
 
     func settingsDidBecomeHidden() {
+        guard isSettingsVisible else { return }
         isSettingsVisible = false
+        settingsPresentationGeneration &+= 1
+        invalidateCursorStatusCheck()
+        cursorConnectionState = .idle
+        cursorLoginState = .idle
+    }
+
+    func retryCursorStatus() {
+        guard isSettingsVisible,
+              cursorConnectionState.showsRetryAction else { return }
+        scheduleCursorStatusRefresh()
     }
 
     func selectPeriod(_ period: ProfilePeriod) async {
@@ -329,6 +349,7 @@ final class DashboardViewModel: ObservableObject {
     func discoverIdentity() async {
         guard !isLoadingServices,
               !operation.isRunning,
+              cursorConnectionState != .checking,
               normalizedUsername.isEmpty,
               case .usernameEntry = firstUseOnboardingState else { return }
 
@@ -359,6 +380,7 @@ final class DashboardViewModel: ObservableObject {
 
     func loginCursor() async {
         guard !isPerformingOperation else { return }
+        let settingsGeneration = isSettingsVisible ? settingsPresentationGeneration : nil
         let fallbackCommand = Self.cursorLoginFallbackCommand(version: preferences.tokscaleVersion)
         let context: TokscaleCommandContext
         do {
@@ -375,12 +397,30 @@ final class DashboardViewModel: ObservableObject {
         cursorLoginState = .loggingIn
         do {
             try await cli.loginCursor(context: context)
+            guard settingsGeneration == nil
+                    || (isSettingsVisible
+                        && settingsGeneration == settingsPresentationGeneration
+                        && (try? commandContext(for: preferences)) == context) else {
+                completeSilentOperation()
+                return
+            }
             cursorLoginState = .succeeded("Cursor 登录成功。")
+            if isSettingsVisible, (try? commandContext(for: preferences)) == context {
+                cursorConnectionState = .loggedIn
+            }
         } catch {
+            guard settingsGeneration == nil
+                    || (isSettingsVisible
+                        && settingsGeneration == settingsPresentationGeneration
+                        && (try? commandContext(for: preferences)) == context) else {
+                completeSilentOperation()
+                return
+            }
             cursorLoginState = .failed(
                 message: Self.message(for: error),
                 fallbackCommand: fallbackCommand
             )
+            if isSettingsVisible { cursorConnectionState = .needsLogin }
         }
         completeSilentOperation()
     }
@@ -415,6 +455,7 @@ final class DashboardViewModel: ObservableObject {
 
     func submitFirstUsage() async {
         guard !operation.isRunning,
+              cursorConnectionState != .checking,
               case let .firstSubmission(username, _) = firstUseOnboardingState,
               matchesUsername(username) else { return }
 
@@ -461,7 +502,7 @@ final class DashboardViewModel: ObservableObject {
 
     /// Uploads local usage once, then forces exactly one complete statistics batch.
     func submitUsageAndRefreshStatistics() async {
-        guard !operation.isRunning else { return }
+        guard !operation.isRunning, cursorConnectionState != .checking else { return }
         invalidateProfileRefresh()
         beginOperation(.submitting)
         submitErrorMessage = nil
@@ -509,7 +550,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func runAutosubmitNow() async {
-        guard !operation.isRunning else { return }
+        guard !operation.isRunning, cursorConnectionState != .checking else { return }
         invalidateProfileRefresh()
         beginOperation(.runningAutosubmit)
         do {
@@ -565,6 +606,7 @@ final class DashboardViewModel: ObservableObject {
         }
         if cliContextChanged {
             statusRequestID = UUID()
+            invalidateCursorStatusCheck()
         }
 
         preferences = normalized
@@ -581,10 +623,13 @@ final class DashboardViewModel: ObservableObject {
            context != lastAutosubmitStatusContext {
             scheduleAutosubmitStatusRefresh()
         }
+        if cliContextChanged, isSettingsVisible {
+            scheduleCursorStatusRefresh()
+        }
     }
 
     func applyAutosubmit(_ configuration: AutosubmitConfiguration) async -> Bool {
-        guard !operation.isRunning else { return false }
+        guard !operation.isRunning, cursorConnectionState != .checking else { return false }
         beginOperation(.applyingAutosubmit)
         do {
             let context = try commandContext(for: preferences)
@@ -796,6 +841,57 @@ final class DashboardViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             await self?.refreshAutosubmitStatus()
         }
+    }
+
+    private func scheduleCursorStatusRefresh() {
+        invalidateCursorStatusCheck()
+        let requestID = UUID()
+        cursorStatusRequestID = requestID
+        cursorConnectionState = .checking
+        cursorStatusTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if requestID == self.cursorStatusRequestID {
+                    self.cursorStatusTask = nil
+                }
+            }
+            do {
+                while self.operation.isRunning || self.isLoadingServices {
+                    try Task.checkCancellation()
+                    try await Task.sleep(nanoseconds: 50_000_000)
+                }
+                try Task.checkCancellation()
+                guard requestID == self.cursorStatusRequestID, self.isSettingsVisible else { return }
+
+                let context = try self.commandContext(for: self.preferences)
+                let status = try await self.cli.cursorStatus(context: context)
+                try Task.checkCancellation()
+                guard requestID == self.cursorStatusRequestID,
+                      self.isSettingsVisible,
+                      (try? self.commandContext(for: self.preferences)) == context else { return }
+                switch status {
+                case .valid:
+                    self.cursorConnectionState = .loggedIn
+                case .unavailable:
+                    self.cursorConnectionState = .needsLogin
+                case .indeterminate:
+                    self.cursorConnectionState = .checkFailed("无法确认 Cursor 登录状态，请重新检查。")
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard requestID == self.cursorStatusRequestID, self.isSettingsVisible else { return }
+                // Status output can contain account metadata. Keep process/context failures
+                // presentation-safe instead of projecting raw CLI diagnostics into Settings.
+                self.cursorConnectionState = .checkFailed("Cursor 状态检查失败，请重新检查。")
+            }
+        }
+    }
+
+    private func invalidateCursorStatusCheck() {
+        cursorStatusRequestID = UUID()
+        cursorStatusTask?.cancel()
+        cursorStatusTask = nil
     }
 
     private func reloadAutosubmit(context: TokscaleCommandContext) async -> String? {

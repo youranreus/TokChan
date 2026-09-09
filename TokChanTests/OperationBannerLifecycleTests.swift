@@ -73,6 +73,7 @@ final class OperationBannerLifecycleTests: XCTestCase {
 private struct FailingSubmitCLI: TokscaleCLIService {
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
     func loginCursor(context: TokscaleCommandContext) async throws {}
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus { .valid }
     func submit(context: TokscaleCommandContext) async throws { throw TestSubmitError.failed }
     func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus {
         try JSONDecoder().decode(AutosubmitStatus.self, from: Data(#"{"enabled":false}"#.utf8))
@@ -89,6 +90,7 @@ private actor SuspendedSubmitCLI: TokscaleCLIService {
 
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
     func loginCursor(context: TokscaleCommandContext) async throws {}
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus { .valid }
 
     func submit(context: TokscaleCommandContext) async throws {
         submitStarted = true
@@ -122,6 +124,7 @@ private actor SuspendedFailingSubmitCLI: TokscaleCLIService {
 
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
     func loginCursor(context: TokscaleCommandContext) async throws {}
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus { .valid }
 
     func submit(context: TokscaleCommandContext) async throws {
         submitStarted = true

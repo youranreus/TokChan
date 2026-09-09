@@ -142,6 +142,7 @@ private actor DiscoveryCLI: TokscaleCLIService {
 
     func discoveryCount() -> Int { discoveries }
     func loginCursor(context: TokscaleCommandContext) async throws {}
+    func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus { .valid }
     func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus {
         try JSONDecoder().decode(AutosubmitStatus.self, from: Data(#"{"enabled":false}"#.utf8))
     }

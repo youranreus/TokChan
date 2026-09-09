@@ -37,7 +37,7 @@ struct AutosubmitStatusView: View {
                             Task { await viewModel.runAutosubmitNow() }
                         }
                         .buttonStyle(.borderless)
-                        .disabled(viewModel.operation.isRunning)
+                        .disabled(viewModel.isPerformingOperation)
                         .help("使用已保存的自动提交配置运行：会上传本地用量，完成后刷新线上统计")
                         .accessibilityLabel("立即运行自动提交，会上传本地用量")
                         .accessibilityIdentifier("autosubmit-run-now")

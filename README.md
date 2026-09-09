@@ -126,7 +126,7 @@ npx tokscale@latest login
 
 ### 为什么统计里默认没有 Cursor 数据
 
-Tokscale 不会直接解析 `~/.cursor` 中的本地会话。Cursor 用量需要先通过 Cursor 账号完成授权。你可以在首次引导的可选 Cursor 模块，或设置的“常规 → Agent 连接”中点击“自动登录”。TokChan 只调用 Tokscale，并不读取或保存 Cookie、token。
+Tokscale 不会直接解析 `~/.cursor` 中的本地会话。Cursor 用量需要先通过 Cursor 账号完成授权。你可以在首次引导的可选 Cursor 模块点击“自动登录”；设置的“常规 → Agent 连接”会先检查现有会话，仅在确认尚未登录时提供该操作。TokChan 只调用 Tokscale，并不读取或保存 Cookie、token。
 
 Tokscale 会优先尝试复用 Cursor 桌面端的登录状态。若应用内登录失败，界面会给出可复制的终端命令，例如：
 
