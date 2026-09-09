@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/macos/index.md", "reason": "macOS package quality entry point"}
+{"file": ".trellis/spec/macos/tokscale-integration.md", "reason": "verify command safety, onboarding behavior, and event counts"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "verify native Settings/onboarding layout and accessibility"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "verify deterministic test coverage and full-suite command"}
+{"file": ".trellis/spec/macos/quality-guidelines.md", "reason": "quality and consistency review"}
+{"file": ".trellis/tasks/09-09-onboarding-agent-login/research/tokscale-client-login.md", "reason": "verify implementation matches upstream command behavior and product decisions"}

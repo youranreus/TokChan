@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/macos/index.md", "reason": "macOS package conventions and linked specs"}
+{"file": ".trellis/spec/macos/tokscale-integration.md", "reason": "Tokscale command, onboarding, safety, and test contracts"}
+{"file": ".trellis/spec/macos/state-management.md", "reason": "published async state and service-boundary conventions"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "onboarding, Settings, fixed viewport, and accessibility conventions"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "deterministic fake-service and UI test requirements"}
+{"file": ".trellis/tasks/09-09-onboarding-agent-login/research/tokscale-client-login.md", "reason": "upstream Cursor login and sync behavior plus settled scope"}
