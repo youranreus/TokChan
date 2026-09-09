@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
-- **Last Active**: 2026-09-07
+- **Total Sessions**: 14
+- **Last Active**: 2026-09-09
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~378 | Active |
+| `journal-1.md` | ~442 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 14 | 2026-09-09 | 自动生成中文版本发布文案 | `58deade` | `master` |
 | 12 | 2026-09-07 | 优化首次使用引导 | `29349dc` | `feat/first-use-onboarding` |
 | 8 | 2026-09-05 | 修复发布包 ad-hoc Bundle 签名 | `841e1aa` | `master` |
 | 7 | 2026-09-05 | 添加 macOS 开机自启动设置 | `eeaa585` | `master` |

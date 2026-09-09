@@ -407,3 +407,36 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 14: 自动生成中文版本发布文案
+<!-- trellis-session: v=2 fp=1869bab998f5532f -->
+
+**Date**: 2026-09-09
+**Task**: 自动生成中文版本发布文案
+**Branch**: `master`
+
+### Summary
+
+实现仓库内中文变更片段、确定性 Release/Sparkle 双渠道渲染及发布流程校验，并补充本次优化 fragment。
+
+### Main Changes
+
+- 新增 append-only 中文 release-note fragment 契约与生成器
+- GitHub Release 和 Sparkle 更新说明共享规范化内容并保持发布不可变性
+- 更新 Trellis 规范、维护文档和离线发布测试
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `58deade` | feat(release): generate Chinese release notes |
+
+### Testing
+
+- [OK] 中文发布说明 8 项、版本 7 项、签名 8 项、Action pin 1 项、Release 脚本 81 项通过
+- [OK] 完整 macOS Release 临时输出构建与三个资产验证通过
+
+### Status
+
+[OK] **Completed**
