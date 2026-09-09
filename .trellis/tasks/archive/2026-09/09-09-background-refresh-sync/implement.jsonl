@@ -1,0 +1,9 @@
+{"file":".trellis/spec/macos/state-management.md","reason":"MainActor view-model ownership, injected clock/sleep seams, and loading-state rules."}
+{"file":".trellis/spec/macos/data-persistence.md","reason":"Whole-batch cache, 300-second freshness, cooldown, account isolation, and lifecycle contract being intentionally revised."}
+{"file":".trellis/spec/macos/networking-guidelines.md","reason":"HTTP request timeout, cache revalidation, error mapping, and cancellation behavior for recurring full-batch reads."}
+{"file":".trellis/spec/macos/swiftui-guidelines.md","reason":"Status-item/popover ownership, menu actions, dashboard interaction, and old panel-timer contract being revised."}
+{"file":".trellis/spec/macos/tokscale-integration.md","reason":"Read versus submit safety boundary, autosubmit status events, batch semantics, and manual-action contract being revised."}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"Deterministic clock/sleep, lifecycle, menu-action, and no-live-service test requirements."}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"Swift concurrency, error handling, naming, accessibility, and dependency constraints."}
+{"file":".trellis/tasks/09-09-background-refresh-sync/research/background-refresh-architecture.md","reason":"Code-backed recommended lifecycle seam, scheduler ownership, wake behavior, tests, and risks."}
+{"file":".trellis/tasks/09-09-background-refresh-sync/research/background-refresh-design-review.md","reason":"Conflict inventory, backoff risk, unified user semantics, context races, and required validation."}

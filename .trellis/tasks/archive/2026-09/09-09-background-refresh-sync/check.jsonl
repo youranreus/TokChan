@@ -1,0 +1,9 @@
+{"file":".trellis/spec/macos/state-management.md","reason":"Verify MainActor ownership, injected timing seams, and absence of a duplicate request state machine."}
+{"file":".trellis/spec/macos/networking-guidelines.md","reason":"Verify recurring requests preserve timeout, revalidation, error, cancellation, and full-batch network contracts."}
+{"file":".trellis/spec/macos/data-persistence.md","reason":"Verify complete-batch publication, timestamps, backoff, account isolation, and updated app-level lifecycle contract."}
+{"file":".trellis/spec/macos/swiftui-guidelines.md","reason":"Verify AppKit ownership, popover presentation behavior, status-menu semantics, layout, and accessibility."}
+{"file":".trellis/spec/macos/tokscale-integration.md","reason":"Verify no implicit uploads, exact CLI event boundaries, context races, and full-batch reads."}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"Verify deterministic coverage and that tests never use live network, npx, or launchd."}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"Verify Swift concurrency, error handling, naming, and accessibility quality."}
+{"file":".trellis/tasks/09-09-background-refresh-sync/research/background-refresh-architecture.md","reason":"Cross-check implementation against the minimal scheduler/lifecycle architecture and listed races."}
+{"file":".trellis/tasks/09-09-background-refresh-sync/research/background-refresh-design-review.md","reason":"Cross-check resolved contract conflicts, failure request volume, UX semantics, and timestamps."}
