@@ -51,7 +51,9 @@ final class DiscoveryRaceTests: XCTestCase {
         await initialLoad.value
 
         let contexts = await cli.recordedStatusContexts()
-        XCTAssertEqual(contexts.count, 1)
+        // The CLI context change is itself a status event, so the count is not fixed;
+        // what matters is that the superseded old context never reaches the CLI.
+        XCTAssertFalse(contexts.isEmpty)
         let expected = TokscaleCommandContext(npxURL: URL(fileURLWithPath: "/new/npx"), version: "4.15.0")
         XCTAssertTrue(contexts.allSatisfy { $0 == expected })
         XCTAssertEqual(model.preferences, updated)

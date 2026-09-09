@@ -7,8 +7,8 @@ final class OperationBannerLifecycleTests: XCTestCase {
         let model = makeModel(cli: PreviewCLIService())
         model.panelDidAppear()
 
-        await model.refresh()
-        XCTAssertEqual(model.operation, .succeeded("用量已提交，全部范围已更新。"))
+        await model.submitUsageAndRefreshStatistics()
+        XCTAssertEqual(model.operation, .succeeded("用量已提交，统计读取完成。"))
         XCTAssertEqual(model.dashboardOperation, model.operation)
 
         model.panelDidDisappear()
@@ -20,7 +20,7 @@ final class OperationBannerLifecycleTests: XCTestCase {
         let model = makeModel(cli: FailingSubmitCLI())
         model.panelDidAppear()
 
-        await model.refresh()
+        await model.submitUsageAndRefreshStatistics()
         guard case .failed = model.operation else { return XCTFail("Expected visible failure") }
 
         model.panelDidDisappear()
@@ -32,14 +32,14 @@ final class OperationBannerLifecycleTests: XCTestCase {
         let model = makeModel(cli: cli)
         model.panelDidAppear()
 
-        let operation = Task { await model.refresh() }
+        let operation = Task { await model.submitUsageAndRefreshStatistics() }
         await cli.waitForSubmit()
         model.panelDidDisappear()
         XCTAssertEqual(model.operation, .submitting)
 
         await cli.resumeSubmit()
         await operation.value
-        XCTAssertEqual(model.operation, .succeeded("用量已提交，全部范围已更新。"))
+        XCTAssertEqual(model.operation, .succeeded("用量已提交，统计读取完成。"))
         XCTAssertEqual(model.dashboardOperation, .idle)
     }
 
@@ -48,7 +48,7 @@ final class OperationBannerLifecycleTests: XCTestCase {
         let model = makeModel(cli: cli)
         model.panelDidAppear()
 
-        let operation = Task { await model.refresh() }
+        let operation = Task { await model.submitUsageAndRefreshStatistics() }
         await cli.waitForSubmit()
         model.panelDidDisappear()
         XCTAssertEqual(model.operation, .submitting)

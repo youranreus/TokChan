@@ -40,8 +40,7 @@ enum NpxPathStatus: Equatable {
 enum DashboardOperation: Equatable {
     case idle
     case submitting
-    case pushing
-    case pulling
+    case refreshingStatistics
     case runningAutosubmit
     case applyingAutosubmit
     case succeeded(String)
@@ -49,7 +48,7 @@ enum DashboardOperation: Equatable {
 
     var isRunning: Bool {
         switch self {
-        case .submitting, .pushing, .pulling, .runningAutosubmit, .applyingAutosubmit: return true
+        case .submitting, .refreshingStatistics, .runningAutosubmit, .applyingAutosubmit: return true
         default: return false
         }
     }
@@ -68,7 +67,7 @@ final class DashboardViewModel: ObservableObject {
     @Published private(set) var loadErrorMessage: String?
     @Published private(set) var autosubmitLoadErrorMessage: String?
     @Published private(set) var cacheWriteErrorMessage: String?
-    @Published private(set) var pushErrorMessage: String?
+    @Published private(set) var submitErrorMessage: String?
     @Published private(set) var cacheSavedAt: Date?
     @Published private(set) var autosubmitObservedAt: Date?
     #if DEBUG
@@ -83,7 +82,8 @@ final class DashboardViewModel: ObservableObject {
     private let cacheStore: DashboardCacheStoring
     private let now: () -> Date
     private let refreshInterval: TimeInterval
-    private let retryInterval: TimeInterval
+    /// Graded delays applied after consecutive automatic statistics failures; the last entry is the cap.
+    private let automaticFailureBackoff: [TimeInterval]
     private let sleep: @Sendable (UInt64) async -> Void
 
     private enum ProfileReloadResult {
@@ -104,9 +104,14 @@ final class DashboardViewModel: ObservableObject {
     private var profileRequestID = UUID()
     private var statusRequestID = UUID()
     private var profileRefreshTask: Task<ProfileReloadResult, Never>?
-    private var timerTask: Task<Void, Never>?
-    private var lastAutomaticAttempt: Date?
+    private var backgroundRefreshTask: Task<Void, Never>?
+    private var autosubmitStatusTask: Task<Void, Never>?
+    private var lastAutomaticFailure: Date?
+    private var consecutiveAutomaticFailures = 0
     private var isPanelVisible = false
+    private var isSettingsVisible = false
+    private var hasSynchronizedOnLaunch = false
+    private var lastAutosubmitStatusContext: TokscaleCommandContext?
     private var panelPresentationGeneration: UInt64 = 0
     private var operationPresentationGeneration: UInt64?
     private var suppressDashboardOperationBanner = false
@@ -153,7 +158,7 @@ final class DashboardViewModel: ObservableObject {
             loadErrorMessage.map { "统计读取：\($0)" },
             autosubmitLoadErrorMessage.map { "自动提交状态：\($0)" },
             cacheWriteErrorMessage.map { "本地保存：\($0)" },
-            pushErrorMessage.map { "即时推送：\($0)" }
+            submitErrorMessage.map { "用量提交：\($0)" }
         ].compactMap { $0 }
     }
 
@@ -165,7 +170,7 @@ final class DashboardViewModel: ObservableObject {
         cacheStore: DashboardCacheStoring,
         now: @escaping () -> Date = Date.init,
         refreshInterval: TimeInterval = 300,
-        retryInterval: TimeInterval = 30,
+        automaticFailureBackoff: [TimeInterval] = [30, 60, 300],
         sleep: @escaping @Sendable (UInt64) async -> Void = { nanoseconds in
             try? await Task.sleep(nanoseconds: nanoseconds)
         }
@@ -177,7 +182,7 @@ final class DashboardViewModel: ObservableObject {
         self.cacheStore = cacheStore
         self.now = now
         self.refreshInterval = refreshInterval
-        self.retryInterval = retryInterval
+        self.automaticFailureBackoff = automaticFailureBackoff
         self.sleep = sleep
 
         let loadedPreferences = preferencesStore.load()
@@ -205,7 +210,8 @@ final class DashboardViewModel: ObservableObject {
 
     deinit {
         profileRefreshTask?.cancel()
-        timerTask?.cancel()
+        backgroundRefreshTask?.cancel()
+        autosubmitStatusTask?.cancel()
     }
 
     func npxPathStatus(for preferredPath: String) -> NpxPathStatus {
@@ -223,18 +229,34 @@ final class DashboardViewModel: ObservableObject {
         return .automaticFallback(locatedURL)
     }
 
+    /// Starts the single application-level statistics scheduler and performs one launch read.
+    ///
+    /// Idempotent: the scheduler survives popover open/close cycles for the whole app lifetime.
+    func startBackgroundSynchronization() {
+        startStatisticsSchedulerIfNeeded()
+        guard !hasSynchronizedOnLaunch else { return }
+        hasSynchronizedOnLaunch = true
+        Task { [weak self] in await self?.load() }
+    }
+
+    func stopBackgroundSynchronization() {
+        backgroundRefreshTask?.cancel()
+        backgroundRefreshTask = nil
+    }
+
+    /// Re-evaluates statistics freshness exactly once after the machine wakes.
+    ///
+    /// Missed intervals are never replayed: only the current snapshot age decides whether to read.
+    func reevaluateStatisticsAfterWake() async {
+        _ = await reloadProfiles(force: false, automatic: true)
+    }
+
     func panelDidAppear() {
         guard !isPanelVisible else { return }
         #if DEBUG
         panelAppearanceCount += 1
         #endif
         isPanelVisible = true
-        Task { [weak self] in
-            guard let self else { return }
-            await self.load()
-            guard self.isPanelVisible else { return }
-            self.startTimerIfNeeded()
-        }
     }
 
     func panelDidDisappear() {
@@ -245,9 +267,20 @@ final class DashboardViewModel: ObservableObject {
         isPanelVisible = false
         panelPresentationGeneration &+= 1
         suppressDashboardOperationBanner = true
-        timerTask?.cancel()
-        timerTask = nil
         clearOperationMessage()
+    }
+
+    /// Called whenever the Settings window transitions from hidden to visible.
+    ///
+    /// Repeated callbacks inside one continuous visible period read autosubmit status only once.
+    func settingsDidBecomeVisible() {
+        guard !isSettingsVisible else { return }
+        isSettingsVisible = true
+        scheduleAutosubmitStatusRefresh()
+    }
+
+    func settingsDidBecomeHidden() {
+        isSettingsVisible = false
     }
 
     func selectPeriod(_ period: ProfilePeriod) async {
@@ -384,23 +417,36 @@ final class DashboardViewModel: ObservableObject {
         }
     }
 
-    func refresh() async {
+    /// Uploads local usage once, then forces exactly one complete statistics batch.
+    func submitUsageAndRefreshStatistics() async {
         guard !operation.isRunning else { return }
         invalidateProfileRefresh()
         beginOperation(.submitting)
+        submitErrorMessage = nil
         do {
             let context = try commandContext(for: preferences)
-            _ = try await resolvedUsername(context: context)
+            let username = try await resolvedUsername(context: context)
             try await cli.submit(context: context)
+            // An account switch while submit was suspended supersedes this operation.
+            guard matchesUsername(username) else {
+                completeSilentOperation()
+                return
+            }
             switch await reloadProfiles(force: true, automatic: false) {
             case .updated:
-                completeOperation(.succeeded("用量已提交，全部范围已更新。"))
+                completeOperation(.succeeded("用量已提交，统计读取完成。"))
             case let .profileNotFound(message), let .failed(message):
                 completeOperation(.failed("用量已提交，但统计读取失败：\(message)"))
             case .superseded:
                 completeOperation(.succeeded("用量已提交。"))
             }
-        } catch { completeOperation(.failed(Self.message(for: error))) }
+        } catch {
+            // The status menu can run this with the popover closed, so the banner may never
+            // be shown; diagnostics keep the failure discoverable.
+            let message = Self.message(for: error)
+            submitErrorMessage = message
+            completeOperation(.failed(message))
+        }
     }
 
     func retryStatistics() async {
@@ -408,26 +454,10 @@ final class DashboardViewModel: ObservableObject {
         _ = await reloadProfiles(force: true, automatic: false)
     }
 
-    func pushUsageNow() async {
+    /// Reads one complete statistics batch without uploading anything.
+    func refreshStatisticsNow() async {
         guard !operation.isRunning else { return }
-        invalidateProfileRefresh()
-        beginOperation(.pushing)
-        pushErrorMessage = nil
-        do {
-            let context = try commandContext(for: preferences)
-            _ = try await resolvedUsername(context: context)
-            try await cli.submit(context: context)
-            completeSilentOperation()
-        } catch {
-            let message = Self.message(for: error)
-            pushErrorMessage = message
-            completeOperation(.failed(message))
-        }
-    }
-
-    func pullStatisticsNow() async {
-        guard !operation.isRunning else { return }
-        beginOperation(.pulling)
+        beginOperation(.refreshingStatistics)
         switch await reloadProfiles(force: true, automatic: false) {
         case .updated, .superseded:
             completeSilentOperation()
@@ -442,8 +472,13 @@ final class DashboardViewModel: ObservableObject {
         beginOperation(.runningAutosubmit)
         do {
             let context = try commandContext(for: preferences)
-            _ = try await resolvedUsername(context: context)
+            let username = try await resolvedUsername(context: context)
             try await cli.runAutosubmitNow(context: context)
+            // A CLI or account change while the run was suspended supersedes this operation.
+            guard matchesUsername(username), (try? commandContext(for: preferences)) == context else {
+                completeSilentOperation()
+                return
+            }
             async let profiles = reloadProfiles(force: true, automatic: false)
             async let status = reloadAutosubmit(context: context)
             let (profileResult, statusError) = await (profiles, status)
@@ -455,6 +490,16 @@ final class DashboardViewModel: ObservableObject {
                 completeOperation(.succeeded("自动提交已完成。"))
             }
         } catch { completeOperation(.failed(Self.message(for: error))) }
+    }
+
+    /// Reads autosubmit status only; it never touches statistics freshness or the cache batch.
+    func refreshAutosubmitStatus() async {
+        if autosubmitState.loadedValue == nil { autosubmitState = .loading }
+        do {
+            _ = await reloadAutosubmit(context: try commandContext(for: preferences))
+        } catch {
+            recordAutosubmitError(error)
+        }
     }
 
     func updatePreferences(_ newPreferences: UserPreferences) {
@@ -473,7 +518,7 @@ final class DashboardViewModel: ObservableObject {
             profileState = .idle
             identityProfile = nil
             cacheSavedAt = nil
-            lastAutomaticAttempt = nil
+            clearAutomaticFailureBackoff()
             loadErrorMessage = nil
         }
         if cliContextChanged {
@@ -488,6 +533,12 @@ final class DashboardViewModel: ObservableObject {
                 : .verifying(username: normalized.username)
             persistCurrentSnapshot()
         }
+        // A resolvable new CLI context makes the observed status stale, so reread status only.
+        if cliContextChanged,
+           let context = try? commandContext(for: normalized),
+           context != lastAutosubmitStatusContext {
+            scheduleAutosubmitStatusRefresh()
+        }
     }
 
     func applyAutosubmit(_ configuration: AutosubmitConfiguration) async -> Bool {
@@ -495,13 +546,20 @@ final class DashboardViewModel: ObservableObject {
         beginOperation(.applyingAutosubmit)
         do {
             let context = try commandContext(for: preferences)
-            guard !preferences.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            let username = preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !username.isEmpty else {
                 throw TokscaleAPIError.invalidUsername
             }
             if configuration.enabled {
                 try await cli.configureAutosubmit(configuration, context: context)
             } else {
                 try await cli.disableAutosubmit(context: context)
+            }
+
+            // A Settings edit that landed while configure/disable was suspended owns the new context.
+            guard matchesUsername(username), (try? commandContext(for: preferences)) == context else {
+                completeSilentOperation()
+                return false
             }
 
             if let statusError = await reloadAutosubmit(context: context) {
@@ -623,6 +681,8 @@ final class DashboardViewModel: ObservableObject {
         }
         let username = preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !username.isEmpty else {
+            // Background triggers stay silent until identity discovery supplies an account.
+            if automatic { return .superseded }
             let message = Self.message(for: TokscaleAPIError.invalidUsername)
             loadErrorMessage = message
             if profileState.loadedValue == nil { profileState = .failed(message) }
@@ -630,12 +690,8 @@ final class DashboardViewModel: ObservableObject {
         }
         let currentTime = now()
         if !force, isFresh(at: currentTime) { return .superseded }
-        if automatic, let lastAutomaticAttempt {
-            let elapsed = currentTime.timeIntervalSince(lastAutomaticAttempt)
-            if elapsed >= 0, elapsed < retryInterval { return .superseded }
-        }
+        if automatic, isInAutomaticBackoff(at: currentTime) { return .superseded }
 
-        if automatic { lastAutomaticAttempt = currentTime }
         generation &+= 1
         let requestGeneration = generation
         let requestID = UUID()
@@ -665,6 +721,7 @@ final class DashboardViewModel: ObservableObject {
                     self.profileState = .loaded(selected)
                 }
                 self.reconcileOnboardingWithCompleteCache(username: username)
+                self.clearAutomaticFailureBackoff()
                 self.persistCurrentSnapshot()
                 return .updated
             } catch is CancellationError {
@@ -673,6 +730,7 @@ final class DashboardViewModel: ObservableObject {
                 guard requestID == self.profileRequestID,
                       requestGeneration == self.generation,
                       self.matchesUsername(username) else { return .superseded }
+                if automatic { self.recordAutomaticFailure(at: self.now()) }
                 let message = Self.message(for: error)
                 self.loadErrorMessage = message
                 if self.profileState.loadedValue == nil { self.profileState = .failed(message) }
@@ -689,19 +747,31 @@ final class DashboardViewModel: ObservableObject {
         return result
     }
 
+    private func scheduleAutosubmitStatusRefresh() {
+        autosubmitStatusTask?.cancel()
+        autosubmitStatusTask = Task { [weak self] in
+            // Cancellation must be observed before launching npx, not only after it returns.
+            guard !Task.isCancelled else { return }
+            await self?.refreshAutosubmitStatus()
+        }
+    }
+
     private func reloadAutosubmit(context: TokscaleCommandContext) async -> String? {
         let requestID = UUID()
         statusRequestID = requestID
+        lastAutosubmitStatusContext = context
         autosubmitLoadErrorMessage = nil
         do {
             let status = try await cli.autosubmitStatus(context: context)
-            guard requestID == statusRequestID else { return nil }
+            guard requestID == statusRequestID,
+                  (try? commandContext(for: preferences)) == context else { return nil }
             autosubmitState = .loaded(status)
             autosubmitObservedAt = now()
             persistCurrentSnapshot()
             return nil
         } catch {
-            guard requestID == statusRequestID else { return nil }
+            guard requestID == statusRequestID,
+                  (try? commandContext(for: preferences)) == context else { return nil }
             recordAutosubmitError(error)
             return Self.message(for: error)
         }
@@ -742,40 +812,63 @@ final class DashboardViewModel: ObservableObject {
             }
     }
 
-    private func startTimerIfNeeded() {
-        guard timerTask == nil else { return }
-        timerTask = Task { [weak self, sleep] in
+    private func startStatisticsSchedulerIfNeeded() {
+        guard backgroundRefreshTask == nil else { return }
+        backgroundRefreshTask = Task { [weak self, sleep] in
             while !Task.isCancelled {
-                guard let self, self.isPanelVisible else { break }
+                guard let self else { break }
+                if !self.operation.isRunning {
+                    _ = await self.reloadProfiles(force: false, automatic: true)
+                }
+                guard !Task.isCancelled else { break }
                 let delay = self.nextAutomaticRefreshDelay()
-                let nanoseconds = UInt64(max(delay, 0.1) * 1_000_000_000)
-                await sleep(nanoseconds)
-                guard !Task.isCancelled, self.isPanelVisible else { break }
-                guard !self.operation.isRunning else { continue }
-                _ = await self.reloadProfiles(force: false, automatic: true)
+                await sleep(UInt64(max(delay, 0.1) * 1_000_000_000))
             }
         }
     }
 
+    /// Deadline until the next automatic evaluation is worth attempting.
+    ///
+    /// A rolled-back clock falls back to a full interval so the loop can never spin.
     private func nextAutomaticRefreshDelay() -> TimeInterval {
         if operation.isRunning { return 1 }
+        guard !normalizedUsername.isEmpty else { return refreshInterval }
         let currentTime = now()
-        var freshnessDelay: TimeInterval = 0
+        var delay: TimeInterval = 0
         if cacheIsComplete, let cacheSavedAt {
             let age = currentTime.timeIntervalSince(cacheSavedAt)
-            guard age >= 0 else { return 0.1 }
-            freshnessDelay = max(refreshInterval - age, 0)
+            delay = age < 0 ? refreshInterval : max(refreshInterval - age, 0)
         }
-        var retryDelay: TimeInterval = 0
-        if let lastAutomaticAttempt {
-            let elapsed = currentTime.timeIntervalSince(lastAutomaticAttempt)
-            guard elapsed >= 0 else { return 0.1 }
-            retryDelay = max(retryInterval - elapsed, 0)
+        if let lastAutomaticFailure {
+            let backoff = automaticBackoffDelay()
+            let elapsed = currentTime.timeIntervalSince(lastAutomaticFailure)
+            delay = max(delay, elapsed < 0 ? backoff : max(backoff - elapsed, 0))
         }
-        if freshnessDelay > 0 || retryDelay > 0 {
-            return max(freshnessDelay, retryDelay)
-        }
-        return lastAutomaticAttempt == nil ? refreshInterval : 0.1
+        return delay > 0 ? delay : refreshInterval
+    }
+
+    private func automaticBackoffDelay() -> TimeInterval {
+        guard consecutiveAutomaticFailures > 0, !automaticFailureBackoff.isEmpty else { return 0 }
+        let index = min(consecutiveAutomaticFailures - 1, automaticFailureBackoff.count - 1)
+        return automaticFailureBackoff[index]
+    }
+
+    private func isInAutomaticBackoff(at date: Date) -> Bool {
+        guard let lastAutomaticFailure else { return false }
+        let elapsed = date.timeIntervalSince(lastAutomaticFailure)
+        // A rolled-back clock makes elapsed negative; stay in backoff instead of retrying immediately.
+        if elapsed < 0 { return true }
+        return elapsed < automaticBackoffDelay()
+    }
+
+    private func recordAutomaticFailure(at date: Date) {
+        consecutiveAutomaticFailures += 1
+        lastAutomaticFailure = date
+    }
+
+    private func clearAutomaticFailureBackoff() {
+        consecutiveAutomaticFailures = 0
+        lastAutomaticFailure = nil
     }
 
     private func matchesUsername(_ username: String) -> Bool {

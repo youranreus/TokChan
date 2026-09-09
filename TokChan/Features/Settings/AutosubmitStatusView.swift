@@ -16,8 +16,8 @@ struct AutosubmitStatusView: View {
             }
         case let .failed(message):
             panelCard {
-                ErrorStateView(title: "自动提交状态不可用", message: message) {
-                    Task { await viewModel.load() }
+                ErrorStateView(title: "自动提交状态不可用", message: message, actionTitle: "重新读取状态") {
+                    Task { await viewModel.refreshAutosubmitStatus() }
                 }
             }
         case let .loaded(status):
@@ -33,12 +33,13 @@ struct AutosubmitStatusView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Button("立即运行") {
+                        Button("立即运行自动提交") {
                             Task { await viewModel.runAutosubmitNow() }
                         }
                         .buttonStyle(.borderless)
                         .disabled(viewModel.operation.isRunning)
-                        .help("使用已保存的自动提交配置运行")
+                        .help("使用已保存的自动提交配置运行：会上传本地用量，完成后刷新线上统计")
+                        .accessibilityLabel("立即运行自动提交，会上传本地用量")
                         .accessibilityIdentifier("autosubmit-run-now")
                     }
 

@@ -8,6 +8,7 @@ final class TokChanApplicationDelegate: NSObject, NSApplicationDelegate {
     let customPricingViewModel: CustomPricingViewModel
     let appUpdater: AppUpdater
     private var statusItemCoordinator: NSStatusItemCoordinator?
+    private var wakeObserver: SystemWakeObserver?
 
     override init() {
         let api: TokscaleAPIService
@@ -77,11 +78,26 @@ final class TokChanApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard statusItemCoordinator == nil else { return }
+        // Subscribe the status item before the first background publication can happen.
         statusItemCoordinator = NSStatusItemCoordinator(
             viewModel: viewModel,
             settingsAction: .live,
             terminate: { NSApplication.shared.terminate(nil) }
         )
+        let observer = SystemWakeObserver { [weak self] in
+            Task { @MainActor [weak self] in
+                await self?.viewModel.reevaluateStatisticsAfterWake()
+            }
+        }
+        observer.start()
+        wakeObserver = observer
+        viewModel.startBackgroundSynchronization()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        wakeObserver?.stop()
+        wakeObserver = nil
+        viewModel.stopBackgroundSynchronization()
     }
 }
 

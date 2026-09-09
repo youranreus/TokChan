@@ -21,8 +21,52 @@ final class SnapshotFreshnessFormatterTests: XCTestCase {
         )
 
         XCTAssertNotNil(text)
-        XCTAssertTrue(text?.hasPrefix("更新于 ") == true)
+        XCTAssertTrue(text?.hasPrefix("统计读取于 ") == true)
         XCTAssertFalse(text?.contains("数据日期") == true)
+    }
+
+    func testSubMinuteAgeReadsAsJustFetchedInsteadOfZeroSecondsFromNow() throws {
+        let now = try date("2026-09-06T12:00:00Z")
+
+        for age in [0.0, 1.0, 59.0] {
+            let text = SnapshotFreshnessFormatter.text(
+                fetchedAt: now.addingTimeInterval(-age),
+                dataDate: "2026-09-06",
+                now: now,
+                locale: Locale(identifier: "zh_CN"),
+                calendar: utcCalendar
+            )
+
+            XCTAssertEqual(text, "统计刚刚读取", "age \(age) must not render as a future read")
+        }
+    }
+
+    func testClockRollbackNeverRendersTheReadAsHappeningLater() throws {
+        let now = try date("2026-09-06T12:00:00Z")
+
+        let text = SnapshotFreshnessFormatter.text(
+            fetchedAt: now.addingTimeInterval(3600),
+            dataDate: "2026-09-06",
+            now: now,
+            locale: Locale(identifier: "zh_CN"),
+            calendar: utcCalendar
+        )
+
+        XCTAssertEqual(text, "统计刚刚读取")
+    }
+
+    func testStaleServerDateStillPrefixesAJustFetchedRead() throws {
+        let now = try date("2026-09-06T12:00:00Z")
+
+        let text = SnapshotFreshnessFormatter.text(
+            fetchedAt: now.addingTimeInterval(-5),
+            dataDate: "2026-09-05",
+            now: now,
+            locale: Locale(identifier: "zh_CN"),
+            calendar: utcCalendar
+        )
+
+        XCTAssertEqual(text, "数据日期 2026-09-05 · 统计刚刚读取")
     }
 
     func testNonGregorianInputCalendarStillComparesGregorianServerDateInItsTimeZone() throws {
@@ -50,7 +94,7 @@ final class SnapshotFreshnessFormatterTests: XCTestCase {
             calendar: utcCalendar
         )
 
-        XCTAssertTrue(text?.hasPrefix("数据日期 2026-09-05 · 更新于 ") == true)
+        XCTAssertTrue(text?.hasPrefix("数据日期 2026-09-05 · 统计读取于 ") == true)
     }
 
     private var utcCalendar: Calendar {

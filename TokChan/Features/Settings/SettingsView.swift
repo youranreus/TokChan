@@ -138,11 +138,19 @@ struct SettingsView: View {
         .navigationTitle("TokChan! 设置")
         .task {
             launchAtLoginModel.refresh()
-            await viewModel.load()
+            viewModel.settingsDidBecomeVisible()
         }
+        .onAppear { viewModel.settingsDidBecomeVisible() }
+        .onDisappear { viewModel.settingsDidBecomeHidden() }
         .onChange(of: scenePhase) { phase in
-            if phase == .active {
+            switch phase {
+            case .active:
                 launchAtLoginModel.refresh()
+                viewModel.settingsDidBecomeVisible()
+            case .background:
+                viewModel.settingsDidBecomeHidden()
+            default:
+                break
             }
         }
         .onChange(of: viewModel.currentAutosubmitStatus) { status in
@@ -193,7 +201,7 @@ struct SettingsView: View {
         case .applyingAutosubmit:
             ProgressView().controlSize(.small)
             Text("正在应用自动提交设置…").font(.caption)
-        case .submitting, .pushing, .pulling, .runningAutosubmit:
+        case .submitting, .refreshingStatistics, .runningAutosubmit:
             ProgressView().controlSize(.small)
             Text("正在运行…").font(.caption)
         case let .failed(message):

@@ -155,7 +155,7 @@ final class DashboardViewModelTests: XCTestCase {
         )
         let oldTitle = model.statusItemTitle
 
-        await model.pullStatisticsNow()
+        await model.refreshStatisticsNow()
 
         XCTAssertNotNil(oldTitle)
         XCTAssertEqual(model.statusItemTitle, oldTitle)
@@ -611,38 +611,26 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertNotNil(model.currentAutosubmitStatus)
     }
 
-    func testManualRefreshSubmitsBeforeFetchingAllRanges() async {
+    func testSubmitAndRefreshSubmitsBeforeReadingEveryRange() async {
         let recorder = EventRecorder()
         let cache = InMemoryCache()
         let model = makeViewModel(recorder: recorder, cache: cache)
 
-        await model.refresh()
+        await model.submitUsageAndRefreshStatistics()
 
         let events = await recorder.snapshot()
         XCTAssertEqual(events, ["submit", "fetch"])
         XCTAssertEqual(Set(cache.snapshot?.profiles.map(\.data.period) ?? []), Set(ProfilePeriod.allCases))
         XCTAssertNotNil(cache.snapshot?.fetchedAt)
-        XCTAssertEqual(model.operation, .succeeded("用量已提交，全部范围已更新。"))
+        XCTAssertEqual(model.operation, .succeeded("用量已提交，统计读取完成。"))
     }
 
-    func testPushOnlySubmitsExactlyOnceWithoutFetchingOrReadingStatus() async {
-        let recorder = EventRecorder()
-        let model = makeViewModel(recorder: recorder)
-
-        await model.pushUsageNow()
-
-        let events = await recorder.snapshot()
-        XCTAssertEqual(events, ["submit"])
-        XCTAssertEqual(model.operation, .idle)
-        XCTAssertNil(model.pushErrorMessage)
-    }
-
-    func testPullOnlyFetchesExactlyOneCompleteBatchWithoutSubmitting() async {
+    func testReadOnlyRefreshFetchesExactlyOneCompleteBatchWithoutSubmitting() async {
         let recorder = EventRecorder()
         let cache = InMemoryCache()
         let model = makeViewModel(recorder: recorder, cache: cache)
 
-        await model.pullStatisticsNow()
+        await model.refreshStatisticsNow()
 
         let events = await recorder.snapshot()
         XCTAssertEqual(events, ["fetch"])
@@ -650,38 +638,22 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(model.operation, .idle)
     }
 
-    func testImmediateActionFailuresAppearInDiagnostics() async {
-        let pushRecorder = EventRecorder()
-        let pushModel = DashboardViewModel(
-            api: FakeAPI(recorder: pushRecorder),
-            cli: FakeCLI(recorder: pushRecorder, submitError: TestFailure.unavailable),
-            preferencesStore: standardPreferences(),
-            npxLocator: FakeNpxLocator(),
-            cacheStore: InMemoryCache()
+    func testReadOnlyRefreshFailureAppearsInDiagnostics() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(
+            recorder: recorder,
+            api: FakeAPI(recorder: recorder, fetchError: TestFailure.unavailable)
         )
 
-        await pushModel.pushUsageNow()
+        await model.refreshStatisticsNow()
 
-        let pushEvents = await pushRecorder.snapshot()
-        XCTAssertEqual(pushEvents, ["submit"])
-        XCTAssertNotNil(pushModel.pushErrorMessage)
-        XCTAssertTrue(pushModel.diagnosticMessages.contains { $0.hasPrefix("即时推送：") })
-
-        let pullRecorder = EventRecorder()
-        let pullModel = makeViewModel(
-            recorder: pullRecorder,
-            api: FakeAPI(recorder: pullRecorder, fetchError: TestFailure.unavailable)
-        )
-
-        await pullModel.pullStatisticsNow()
-
-        let pullEvents = await pullRecorder.snapshot()
-        XCTAssertEqual(pullEvents, ["fetch"])
-        XCTAssertNotNil(pullModel.loadErrorMessage)
-        XCTAssertTrue(pullModel.diagnosticMessages.contains { $0.hasPrefix("统计读取：") })
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["fetch"])
+        XCTAssertNotNil(model.loadErrorMessage)
+        XCTAssertTrue(model.diagnosticMessages.contains { $0.hasPrefix("统计读取：") })
     }
 
-    func testRunningImmediatePushRejectsPullAndDuplicatePush() async {
+    func testRunningSubmitRejectsReadOnlyRefreshAndDuplicateSubmit() async {
         let recorder = EventRecorder()
         let cli = SuspendedPushCLI(recorder: recorder)
         let model = DashboardViewModel(
@@ -692,20 +664,20 @@ final class DashboardViewModelTests: XCTestCase {
             cacheStore: InMemoryCache()
         )
 
-        let firstPush = Task { await model.pushUsageNow() }
+        let firstSubmit = Task { await model.submitUsageAndRefreshStatistics() }
         await cli.waitForSubmit()
-        XCTAssertEqual(model.operation, .pushing)
+        XCTAssertEqual(model.operation, .submitting)
 
-        await model.pullStatisticsNow()
-        await model.pushUsageNow()
+        await model.refreshStatisticsNow()
+        await model.submitUsageAndRefreshStatistics()
         var events = await recorder.snapshot()
         XCTAssertEqual(events, ["submit"])
 
         await cli.resumeSubmit()
-        await firstPush.value
+        await firstSubmit.value
         events = await recorder.snapshot()
-        XCTAssertEqual(events, ["submit"])
-        XCTAssertEqual(model.operation, .idle)
+        XCTAssertEqual(events, ["submit", "fetch"])
+        XCTAssertEqual(model.operation, .succeeded("用量已提交，统计读取完成。"))
     }
 
     func testSubmitFailureStopsStatisticsRead() async {
@@ -718,11 +690,34 @@ final class DashboardViewModelTests: XCTestCase {
             cacheStore: InMemoryCache()
         )
 
-        await model.refresh()
+        await model.submitUsageAndRefreshStatistics()
 
         let events = await recorder.snapshot()
         XCTAssertEqual(events, ["submit"])
         guard case .failed = model.operation else { return XCTFail("Expected failed operation") }
+        // The status menu runs this action with the popover closed, so the banner is suppressed.
+        XCTAssertTrue(model.diagnosticMessages.contains { $0.hasPrefix("用量提交：") })
+    }
+
+    func testASucceedingSubmitClearsAPreviousSubmitDiagnostic() async {
+        let recorder = EventRecorder()
+        let failingCLI = FakeCLI(recorder: recorder, submitError: TestFailure.unavailable)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: failingCLI,
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache()
+        )
+
+        await model.submitUsageAndRefreshStatistics()
+        XCTAssertNotNil(model.submitErrorMessage)
+
+        failingCLI.submitError = nil
+        await model.submitUsageAndRefreshStatistics()
+
+        XCTAssertNil(model.submitErrorMessage)
+        XCTAssertFalse(model.diagnosticMessages.contains { $0.hasPrefix("用量提交：") })
     }
 
     func testRunNowCompletesBeforeRefreshingStatisticsAndStatus() async {
@@ -739,7 +734,7 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(model.operation, .succeeded("自动提交已完成。"))
     }
 
-    func testUpdatingGeneralPreferencesPersistsNormalizedValuesWithoutExternalWork() async throws {
+    func testUpdatingGeneralPreferencesPersistsNormalizedValuesWithoutStatisticsWork() async throws {
         let recorder = EventRecorder()
         let preferences = standardPreferences()
         let snapshot = try completeSnapshot(fetchedAt: referenceDate)
@@ -781,8 +776,10 @@ final class DashboardViewModelTests: XCTestCase {
             model.statusItemTitle,
             StatusItemTextRenderer.render(template: updated.statusTextTemplate, data: month)
         )
+        // A CLI context change reads autosubmit status only; statistics stay untouched.
+        for _ in 0..<20 { await Task.yield() }
         let events = await recorder.snapshot()
-        XCTAssertEqual(events, [])
+        XCTAssertEqual(events.filter { $0 != "status" }, [])
     }
 
     func testApplyingEnabledAutosubmitOnlyConfiguresAndReadsStatus() async throws {
@@ -1089,7 +1086,7 @@ final class DashboardViewModelTests: XCTestCase {
 
         let load = Task { await model.load() }
         await waitForRequestCount(1, api: api)
-        let refresh = Task { await model.refresh() }
+        let refresh = Task { await model.submitUsageAndRefreshStatistics() }
         await waitForRequestCount(2, api: api)
 
         var requestCount = await api.requestCount()
@@ -1109,7 +1106,7 @@ final class DashboardViewModelTests: XCTestCase {
         requestCount = await api.requestCount()
         XCTAssertEqual(requestCount, 2)
         XCTAssertEqual(model.profileState.loadedValue?.period, .all)
-        XCTAssertEqual(model.operation, .succeeded("用量已提交，全部范围已更新。"))
+        XCTAssertEqual(model.operation, .succeeded("用量已提交，统计读取完成。"))
     }
 
     func testUsernameChangeImmediatelyClearsOldCacheAndRejectsLateBatchWithoutRefetching() async throws {
@@ -1189,66 +1186,425 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(fetchCount, 2)
     }
 
-    func testVisibleTimerRefreshesAndStopsAfterPanelDisappears() async {
+    func testBackgroundSchedulerKeepsRefreshingWhileThePanelIsClosed() async throws {
+        let recorder = EventRecorder()
+        let clock = TestClock(referenceDate)
+        let sleeper = ManualSleeper()
+        let model = makeScheduledViewModel(
+            recorder: recorder,
+            cache: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            clock: clock,
+            sleeper: sleeper
+        )
+
+        model.startBackgroundSynchronization()
+        await sleeper.waitUntilSleeping()
+        let firstDelay = await sleeper.requestedNanoseconds()
+        XCTAssertEqual(firstDelay, 300_000_000_000)
+
+        clock.value.addTimeInterval(300)
+        await sleeper.advance()
+        await waitForFetchCount(1, recorder: recorder)
+        await sleeper.waitUntilSleeping()
+
+        model.stopBackgroundSynchronization()
+        await sleeper.advance()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events.filter { $0 == "fetch" }.count, 1)
+        XCTAssertEqual(model.cacheSavedAt, clock.value)
+        XCTAssertFalse(events.contains("submit"))
+        XCTAssertFalse(events.contains("run"))
+        XCTAssertFalse(events.contains("configure"))
+        XCTAssertFalse(events.contains("disable"))
+    }
+
+    func testStartingBackgroundSynchronizationTwiceKeepsOneScheduler() async throws {
+        let recorder = EventRecorder()
+        let clock = TestClock(referenceDate)
+        let sleeper = ManualSleeper()
+        let model = makeScheduledViewModel(
+            recorder: recorder,
+            cache: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            clock: clock,
+            sleeper: sleeper
+        )
+
+        model.startBackgroundSynchronization()
+        model.startBackgroundSynchronization()
+        await sleeper.waitUntilSleeping()
+        let sleepCount = await sleeper.sleepCount()
+        XCTAssertEqual(sleepCount, 1)
+
+        clock.value.addTimeInterval(300)
+        await sleeper.advance()
+        await waitForFetchCount(1, recorder: recorder)
+        await sleeper.waitUntilSleeping()
+        model.stopBackgroundSynchronization()
+        await sleeper.advance()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events.filter { $0 == "fetch" }.count, 1)
+    }
+
+    func testPanelVisibilityNeverStartsOrStopsStatisticsScheduling() async throws {
+        let recorder = EventRecorder()
+        let clock = TestClock(referenceDate)
+        let sleeper = ManualSleeper()
+        let model = makeScheduledViewModel(
+            recorder: recorder,
+            cache: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            clock: clock,
+            sleeper: sleeper
+        )
+
+        model.panelDidAppear()
+        model.panelDidDisappear()
+        model.panelDidAppear()
+        model.panelDidDisappear()
+        for _ in 0..<10 { await Task.yield() }
+        var sleepCount = await sleeper.sleepCount()
+        var events = await recorder.snapshot()
+        XCTAssertEqual(sleepCount, 0)
+        XCTAssertTrue(events.isEmpty)
+
+        model.startBackgroundSynchronization()
+        await sleeper.waitUntilSleeping()
+        model.panelDidAppear()
+        model.panelDidDisappear()
+        clock.value.addTimeInterval(300)
+        await sleeper.advance()
+        await waitForFetchCount(1, recorder: recorder)
+        await sleeper.waitUntilSleeping()
+        model.stopBackgroundSynchronization()
+        await sleeper.advance()
+
+        sleepCount = await sleeper.sleepCount()
+        events = await recorder.snapshot()
+        XCTAssertEqual(sleepCount, 2)
+        XCTAssertEqual(events.filter { $0 == "fetch" }.count, 1)
+    }
+
+    func testBackgroundSchedulerSleepsForTheRemainingFreshnessWindow() async throws {
+        let clock = TestClock(referenceDate.addingTimeInterval(240))
+        let sleeper = ManualSleeper()
+        let model = makeScheduledViewModel(
+            recorder: EventRecorder(),
+            cache: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            clock: clock,
+            sleeper: sleeper
+        )
+
+        model.startBackgroundSynchronization()
+        await sleeper.waitUntilSleeping()
+
+        let remainingDelay = await sleeper.requestedNanoseconds()
+        XCTAssertEqual(remainingDelay, 60_000_000_000)
+        model.stopBackgroundSynchronization()
+        await sleeper.advance()
+    }
+
+    func testBackgroundSchedulerWithoutUsernameStaysSilent() async {
         let recorder = EventRecorder()
         let clock = TestClock(referenceDate)
         let sleeper = ManualSleeper()
         let model = DashboardViewModel(
             api: FakeAPI(recorder: recorder),
-            cli: FakeCLI(recorder: recorder),
-            preferencesStore: standardPreferences(),
+            cli: FakeCLI(recorder: recorder, whoAmIError: TestFailure.unavailable),
+            preferencesStore: InMemoryPreferences(
+                value: UserPreferences(username: "", tokscaleVersion: "latest", npxPath: "")
+            ),
             npxLocator: FakeNpxLocator(),
             cacheStore: InMemoryCache(),
             now: { clock.value },
-            refreshInterval: 300,
-            retryInterval: 0,
             sleep: { await sleeper.sleep($0) }
         )
-        await model.load()
 
-        model.panelDidAppear()
+        await model.reevaluateStatisticsAfterWake()
+        var events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
+        XCTAssertNil(model.loadErrorMessage)
+
+        model.startBackgroundSynchronization()
+        await waitForEventCount(1, event: "whoami", recorder: recorder)
         await sleeper.waitUntilSleeping()
         clock.value.addTimeInterval(300)
         await sleeper.advance()
-        await waitForFetchCount(2, recorder: recorder)
-        var fetchCount = await recorder.snapshot().filter { $0 == "fetch" }.count
-        XCTAssertEqual(fetchCount, 2)
-
         await sleeper.waitUntilSleeping()
-        model.panelDidDisappear()
-        clock.value.addTimeInterval(300)
+        model.stopBackgroundSynchronization()
         await sleeper.advance()
-        for _ in 0..<10 { await Task.yield() }
-        fetchCount = await recorder.snapshot().filter { $0 == "fetch" }.count
-        XCTAssertEqual(fetchCount, 2)
+
+        events = await recorder.snapshot()
+        XCTAssertFalse(events.contains("fetch"))
+        XCTAssertFalse(events.contains("submit"))
+        XCTAssertFalse(events.contains("run"))
+        XCTAssertFalse(events.contains("configure"))
+        XCTAssertFalse(events.contains("disable"))
+        XCTAssertNil(model.loadErrorMessage)
     }
 
-    func testVisibleTimerUsesTheRemainingFreshnessWindow() async throws {
-        let clock = TestClock(referenceDate.addingTimeInterval(240))
+    func testWakeWithAFreshSnapshotIssuesNoRequest() async throws {
+        let recorder = EventRecorder()
+        let model = makeViewModel(
+            recorder: recorder,
+            cache: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            now: { self.referenceDate.addingTimeInterval(299) }
+        )
+
+        await model.reevaluateStatisticsAfterWake()
+
+        let events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testWakeAfterALongSleepReadsOneBatchWithoutCatchingUpMissedPeriods() async throws {
+        let recorder = EventRecorder()
+        let model = makeViewModel(
+            recorder: recorder,
+            cache: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            now: { self.referenceDate.addingTimeInterval(4 * 3_600) }
+        )
+
+        await model.reevaluateStatisticsAfterWake()
+        await model.reevaluateStatisticsAfterWake()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["fetch"])
+    }
+
+    func testConcurrentWakeAndSchedulerTriggersCoalesceIntoOneBatch() async {
+        let api = ControlledBatchAPI()
+        let recorder = EventRecorder()
+        let model = makeViewModel(recorder: recorder, api: api)
+
+        let wake = Task { await model.reevaluateStatisticsAfterWake() }
+        await api.waitForRequest(username: "youranreus")
+        let deadline = Task { await model.reevaluateStatisticsAfterWake() }
+        await api.resolve(username: "youranreus")
+        await wake.value
+        await deadline.value
+
+        let count = await api.requestCount()
+        XCTAssertEqual(count, 1)
+    }
+
+    func testAutomaticFailureBackoffEscalatesAndResetsAfterSuccess() async throws {
+        let recorder = EventRecorder()
+        let clock = TestClock(referenceDate.addingTimeInterval(300))
+        let api = ToggleableBatchAPI(recorder: recorder, isFailing: true)
+        let model = makeViewModel(
+            recorder: recorder,
+            api: api,
+            cache: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            now: { clock.value }
+        )
+
+        for backoff in [30.0, 60.0, 300.0, 300.0] {
+            let before = await fetchCount(recorder)
+            await model.reevaluateStatisticsAfterWake()
+            let afterAttempt = await fetchCount(recorder)
+            XCTAssertEqual(afterAttempt, before + 1)
+
+            clock.value.addTimeInterval(backoff - 1)
+            await model.reevaluateStatisticsAfterWake()
+            let insideBackoff = await fetchCount(recorder)
+            XCTAssertEqual(
+                insideBackoff,
+                before + 1,
+                "A wake inside the \(backoff)s backoff window must not read"
+            )
+            clock.value.addTimeInterval(1)
+        }
+
+        await api.setFailing(false)
+        await model.reevaluateStatisticsAfterWake()
+        XCTAssertEqual(model.cacheSavedAt, clock.value)
+
+        await api.setFailing(true)
+        clock.value.addTimeInterval(300)
+        await model.reevaluateStatisticsAfterWake()
+        let failedAgainAt = await fetchCount(recorder)
+        clock.value.addTimeInterval(29)
+        await model.reevaluateStatisticsAfterWake()
+        let insideFirstStep = await fetchCount(recorder)
+        XCTAssertEqual(insideFirstStep, failedAgainAt)
+        clock.value.addTimeInterval(1)
+        await model.reevaluateStatisticsAfterWake()
+        let afterFirstStep = await fetchCount(recorder)
+        XCTAssertEqual(
+            afterFirstStep,
+            failedAgainAt + 1,
+            "A successful batch must reset the backoff to its first step"
+        )
+    }
+
+    func testUserRequestedReadBypassesAutomaticBackoffAndKeepsOldSnapshot() async throws {
+        let recorder = EventRecorder()
+        let clock = TestClock(referenceDate.addingTimeInterval(300))
+        let model = makeViewModel(
+            recorder: recorder,
+            api: FakeAPI(recorder: recorder, fetchError: TestFailure.unavailable),
+            cache: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            now: { clock.value }
+        )
+
+        await model.reevaluateStatisticsAfterWake()
+        await model.reevaluateStatisticsAfterWake()
+        var fetches = await fetchCount(recorder)
+        XCTAssertEqual(fetches, 1)
+
+        await model.refreshStatisticsNow()
+
+        fetches = await fetchCount(recorder)
+        XCTAssertEqual(fetches, 2)
+        XCTAssertEqual(model.cacheSavedAt, referenceDate)
+        XCTAssertNotNil(model.profileState.loadedValue)
+    }
+
+    func testApplicationLaunchReadsStatisticsAndStatusWithoutMutatingAnything() async throws {
+        let recorder = EventRecorder()
+        let clock = TestClock(referenceDate.addingTimeInterval(300))
         let sleeper = ManualSleeper()
+        let model = makeScheduledViewModel(
+            recorder: recorder,
+            cache: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            clock: clock,
+            sleeper: sleeper
+        )
+
+        model.startBackgroundSynchronization()
+        await waitForFetchCount(1, recorder: recorder)
+        await waitForEventCount(1, event: "status", recorder: recorder)
+        await sleeper.waitUntilSleeping()
+        model.stopBackgroundSynchronization()
+        await sleeper.advance()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events.filter { $0 == "fetch" }.count, 1)
+        XCTAssertEqual(events.filter { $0 == "status" }.count, 1)
+        XCTAssertEqual(Set(events), Set(["fetch", "status"]))
+    }
+
+    func testSettingsVisibilityReadsStatusOncePerContinuousVisiblePeriod() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(recorder: recorder)
+
+        model.settingsDidBecomeVisible()
+        model.settingsDidBecomeVisible()
+        await waitForEventCount(1, event: "status", recorder: recorder)
+        for _ in 0..<10 { await Task.yield() }
+        var events = await recorder.snapshot()
+        XCTAssertEqual(events, ["status"])
+
+        model.settingsDidBecomeHidden()
+        model.settingsDidBecomeVisible()
+        await waitForEventCount(2, event: "status", recorder: recorder)
+
+        events = await recorder.snapshot()
+        XCTAssertEqual(events, ["status", "status"])
+        XCTAssertFalse(events.contains("fetch"))
+    }
+
+    func testAutosubmitStatusRefreshNeverReadsStatistics() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(recorder: recorder)
+
+        await model.refreshAutosubmitStatus()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["status"])
+        XCTAssertNotNil(model.currentAutosubmitStatus)
+    }
+
+    func testChangingTheCLIContextReadsStatusOnceWithoutReadingStatistics() async throws {
+        let recorder = EventRecorder()
+        let model = makeViewModel(
+            recorder: recorder,
+            cache: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            now: { self.referenceDate }
+        )
+
+        model.updatePreferences(UserPreferences(
+            username: "youranreus",
+            tokscaleVersion: "4.15.0",
+            npxPath: ""
+        ))
+        await waitForEventCount(1, event: "status", recorder: recorder)
+        for _ in 0..<10 { await Task.yield() }
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["status"])
+        XCTAssertEqual(model.cacheSavedAt, referenceDate)
+    }
+
+    func testChangingOnlyTheAccountRunsNoCommandAtAll() async {
+        let recorder = EventRecorder()
+        let model = makeViewModel(recorder: recorder)
+
+        model.updatePreferences(UserPreferences(
+            username: "another-account",
+            tokscaleVersion: "latest",
+            npxPath: ""
+        ))
+        for _ in 0..<20 { await Task.yield() }
+
+        let events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testSubmitSuccessWithFailedReadPreservesTheOldSnapshotAndReportsPartialSuccess() async throws {
+        let recorder = EventRecorder()
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
         let model = DashboardViewModel(
-            api: FakeAPI(recorder: EventRecorder()),
-            cli: FakeCLI(recorder: EventRecorder()),
+            api: FakeAPI(recorder: recorder, fetchError: TestFailure.unavailable),
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: snapshot),
+            now: { self.referenceDate.addingTimeInterval(301) }
+        )
+
+        await model.submitUsageAndRefreshStatistics()
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["submit", "fetch"])
+        XCTAssertEqual(model.cacheSavedAt, referenceDate)
+        XCTAssertEqual(model.profileState.loadedValue, snapshot.profile)
+        guard case let .failed(message) = model.operation else {
+            return XCTFail("A post-submit read failure must stay visible")
+        }
+        XCTAssertEqual(message.hasPrefix("用量已提交，但统计读取失败："), true)
+    }
+
+    func testAccountChangeDuringSuspendedSubmitNeverReadsForTheNewAccount() async throws {
+        let recorder = EventRecorder()
+        let cli = SuspendedPushCLI(recorder: recorder)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: cli,
             preferencesStore: standardPreferences(),
             npxLocator: FakeNpxLocator(),
             cacheStore: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
-            now: { clock.value },
-            refreshInterval: 300,
-            sleep: { await sleeper.sleep($0) }
+            now: { self.referenceDate }
         )
 
-        model.panelDidAppear()
-        await sleeper.waitUntilSleeping()
+        let submission = Task { await model.submitUsageAndRefreshStatistics() }
+        await cli.waitForSubmit()
+        model.updatePreferences(
+            UserPreferences(username: "new-account", tokscaleVersion: "latest", npxPath: "")
+        )
+        await cli.resumeSubmit()
+        await submission.value
 
-        let requestedNanoseconds = await sleeper.requestedNanoseconds()
-        XCTAssertEqual(requestedNanoseconds, 60_000_000_000)
-        model.panelDidDisappear()
-        await sleeper.advance()
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events, ["submit"])
+        XCTAssertEqual(model.operation, .idle)
+        XCTAssertNil(model.profileState.loadedValue)
     }
 
-    func testVisibleTimerSleepsForFailureCooldownAfterAStaleRefreshFails() async throws {
+    func testClockRollbackKeepsAutomaticBackoffAndWaitsAFullInterval() async throws {
         let recorder = EventRecorder()
-        let clock = TestClock(referenceDate.addingTimeInterval(301))
+        let clock = TestClock(referenceDate.addingTimeInterval(300))
         let sleeper = ManualSleeper()
         let model = DashboardViewModel(
             api: FakeAPI(recorder: recorder, fetchError: TestFailure.unavailable),
@@ -1257,18 +1613,95 @@ final class DashboardViewModelTests: XCTestCase {
             npxLocator: FakeNpxLocator(),
             cacheStore: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
             now: { clock.value },
-            refreshInterval: 300,
-            retryInterval: 30,
             sleep: { await sleeper.sleep($0) }
         )
 
-        model.panelDidAppear()
-        await sleeper.waitUntilSleeping()
+        await model.reevaluateStatisticsAfterWake()
+        var fetches = await fetchCount(recorder)
+        XCTAssertEqual(fetches, 1)
 
-        let requestedNanoseconds = await sleeper.requestedNanoseconds()
-        XCTAssertEqual(requestedNanoseconds, 30_000_000_000)
-        model.panelDidDisappear()
+        clock.value = referenceDate.addingTimeInterval(-60)
+        await model.reevaluateStatisticsAfterWake()
+        fetches = await fetchCount(recorder)
+        XCTAssertEqual(fetches, 1)
+
+        model.startBackgroundSynchronization()
+        await sleeper.waitUntilSleeping()
+        let delay = await sleeper.requestedNanoseconds()
+        XCTAssertEqual(delay, 300_000_000_000)
+        model.stopBackgroundSynchronization()
         await sleeper.advance()
+
+        fetches = await fetchCount(recorder)
+        XCTAssertEqual(fetches, 1)
+        XCTAssertEqual(model.cacheSavedAt, referenceDate)
+    }
+
+    func testCLIContextChangeDuringSuspendedApplyNeverReadsWithTheOldContext() async {
+        let recorder = EventRecorder()
+        let cli = SuspendedMutationCLI(recorder: recorder, kind: .configure)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: cli,
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(),
+            now: { self.referenceDate }
+        )
+        let configuration = AutosubmitConfiguration(
+            enabled: true,
+            intervalMinutes: 120,
+            clients: [],
+            filterKind: .all,
+            year: "",
+            since: "",
+            until: ""
+        )
+
+        let apply = Task { await model.applyAutosubmit(configuration) }
+        await cli.waitForMutation()
+        model.updatePreferences(
+            UserPreferences(username: "youranreus", tokscaleVersion: "4.15.0", npxPath: "")
+        )
+        await cli.resumeMutation()
+        let applied = await apply.value
+
+        XCTAssertFalse(applied)
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events.filter { $0 == "configure" }, ["configure"])
+        XCTAssertFalse(events.contains("fetch"))
+        XCTAssertEqual(model.operation, .idle)
+        let statusContexts = await cli.statusContexts()
+        XCTAssertTrue(statusContexts.allSatisfy { $0.version == "4.15.0" })
+    }
+
+    func testCLIContextChangeDuringSuspendedRunNeverReadsForTheNewContext() async throws {
+        let recorder = EventRecorder()
+        let cli = SuspendedMutationCLI(recorder: recorder, kind: .run)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: cli,
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate)),
+            now: { self.referenceDate }
+        )
+
+        let run = Task { await model.runAutosubmitNow() }
+        await cli.waitForMutation()
+        model.updatePreferences(
+            UserPreferences(username: "youranreus", tokscaleVersion: "4.15.0", npxPath: "")
+        )
+        await cli.resumeMutation()
+        await run.value
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events.filter { $0 == "run" }, ["run"])
+        XCTAssertFalse(events.contains("fetch"))
+        XCTAssertEqual(model.operation, .idle)
+        XCTAssertEqual(model.cacheSavedAt, referenceDate)
+        let statusContexts = await cli.statusContexts()
+        XCTAssertTrue(statusContexts.allSatisfy { $0.version == "4.15.0" })
     }
 
     private func waitForFetchCount(_ expected: Int, recorder: EventRecorder) async {
@@ -1278,11 +1711,40 @@ final class DashboardViewModelTests: XCTestCase {
         }
     }
 
+    private func fetchCount(_ recorder: EventRecorder) async -> Int {
+        await recorder.snapshot().filter { $0 == "fetch" }.count
+    }
+
+    private func waitForEventCount(_ expected: Int, event: String, recorder: EventRecorder) async {
+        for _ in 0..<200 {
+            if await recorder.snapshot().filter({ $0 == event }).count >= expected { return }
+            await Task.yield()
+        }
+    }
+
     private func waitForRequestCount(_ expected: Int, api: QueuedBatchAPI) async {
         for _ in 0..<100 {
             if await api.requestCount() >= expected { return }
             await Task.yield()
         }
+    }
+
+    private func makeScheduledViewModel(
+        recorder: EventRecorder,
+        cache: InMemoryCache,
+        clock: TestClock,
+        sleeper: ManualSleeper
+    ) -> DashboardViewModel {
+        DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: cache,
+            now: { clock.value },
+            refreshInterval: 300,
+            sleep: { await sleeper.sleep($0) }
+        )
     }
 
     private func makeViewModel(
@@ -1411,7 +1873,7 @@ private func scopedFixture(
 
 private final class FakeCLI: TokscaleCLIService {
     let recorder: EventRecorder
-    let submitError: Error?
+    var submitError: Error?
     let statusError: Error?
     let autosubmitMutationError: Error?
     let discoveredUsername: String
@@ -1540,6 +2002,66 @@ private actor SuspendedPushCLI: TokscaleCLIService {
     func runAutosubmitNow(context: TokscaleCommandContext) async throws {}
 }
 
+private actor SuspendedMutationCLI: TokscaleCLIService {
+    enum Kind { case configure, run }
+
+    private let recorder: EventRecorder
+    private let kind: Kind
+    private var mutationContinuation: CheckedContinuation<Void, Never>?
+    private var arrivalContinuation: CheckedContinuation<Void, Never>?
+    private var mutationStarted = false
+    private var recordedStatusContexts: [TokscaleCommandContext] = []
+
+    init(recorder: EventRecorder, kind: Kind) {
+        self.recorder = recorder
+        self.kind = kind
+    }
+
+    func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
+    func submit(context: TokscaleCommandContext) async throws {}
+    func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus {
+        await recorder.append("status")
+        recordedStatusContexts.append(context)
+        return try JSONDecoder().decode(AutosubmitStatus.self, from: Data(#"{"enabled":false}"#.utf8))
+    }
+
+    func configureAutosubmit(
+        _ configuration: AutosubmitConfiguration,
+        context: TokscaleCommandContext
+    ) async throws {
+        guard kind == .configure else { return }
+        await recorder.append("configure")
+        await suspendMutation()
+    }
+
+    func disableAutosubmit(context: TokscaleCommandContext) async throws {}
+
+    func runAutosubmitNow(context: TokscaleCommandContext) async throws {
+        guard kind == .run else { return }
+        await recorder.append("run")
+        await suspendMutation()
+    }
+
+    func waitForMutation() async {
+        if mutationStarted { return }
+        await withCheckedContinuation { arrivalContinuation = $0 }
+    }
+
+    func resumeMutation() {
+        mutationContinuation?.resume()
+        mutationContinuation = nil
+    }
+
+    func statusContexts() -> [TokscaleCommandContext] { recordedStatusContexts }
+
+    private func suspendMutation() async {
+        mutationStarted = true
+        arrivalContinuation?.resume()
+        arrivalContinuation = nil
+        await withCheckedContinuation { mutationContinuation = $0 }
+    }
+}
+
 private enum TestFailure: Error { case unavailable }
 
 @MainActor
@@ -1552,10 +2074,12 @@ private actor ManualSleeper {
     private var sleepContinuation: CheckedContinuation<Void, Never>?
     private var arrivalContinuation: CheckedContinuation<Void, Never>?
     private var latestNanoseconds: UInt64?
+    private var sleeps = 0
 
     func sleep(_ nanoseconds: UInt64) async {
         await withCheckedContinuation { continuation in
             latestNanoseconds = nanoseconds
+            sleeps += 1
             sleepContinuation = continuation
             arrivalContinuation?.resume()
             arrivalContinuation = nil
@@ -1573,6 +2097,8 @@ private actor ManualSleeper {
     }
 
     func requestedNanoseconds() -> UInt64? { latestNanoseconds }
+
+    func sleepCount() -> Int { sleeps }
 }
 
 private final class InMemoryPreferences: PreferencesStoring {
@@ -1614,6 +2140,24 @@ private actor SequencedBatchAPI: TokscaleAPIService {
         await recorder.append("fetch")
         let nextTotal = totalTokens.isEmpty ? nil : totalTokens.removeFirst()
         return try makeBatch(username: username, totalTokens: nextTotal)
+    }
+}
+
+private actor ToggleableBatchAPI: TokscaleAPIService {
+    private let recorder: EventRecorder
+    private var isFailing: Bool
+
+    init(recorder: EventRecorder, isFailing: Bool) {
+        self.recorder = recorder
+        self.isFailing = isFailing
+    }
+
+    func setFailing(_ value: Bool) { isFailing = value }
+
+    func fetchDashboardBatch(username: String) async throws -> DashboardProfileBatch {
+        await recorder.append("fetch")
+        if isFailing { throw TestFailure.unavailable }
+        return try makeBatch(username: username)
     }
 }
 

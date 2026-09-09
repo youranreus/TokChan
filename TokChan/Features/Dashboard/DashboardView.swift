@@ -28,7 +28,7 @@ struct DashboardView: View {
                     HStack {
                         Text("TokChan").font(.headline)
                         Spacer()
-                        refreshButton
+                        submitButton
                     }
                 }
                 operationBanner
@@ -97,13 +97,13 @@ struct DashboardView: View {
 
             Spacer(minLength: 8)
 
-            refreshButton
+            submitButton
         }
     }
 
-    private var refreshButton: some View {
+    private var submitButton: some View {
         Button {
-            Task { await viewModel.refresh() }
+            Task { await viewModel.submitUsageAndRefreshStatistics() }
         } label: {
             if viewModel.isLoading {
                 ProgressView().controlSize(.small)
@@ -114,8 +114,8 @@ struct DashboardView: View {
         .frame(width: 20, height: 20)
         .buttonStyle(.borderless)
         .disabled(viewModel.isLoading)
-        .help("提交本地用量并刷新全部范围")
-        .accessibilityLabel("提交并刷新")
+        .help(StatusMenuBuilder.title(for: .submitAndRefresh(isEnabled: true)) ?? "")
+        .accessibilityLabel(StatusMenuBuilder.title(for: .submitAndRefresh(isEnabled: true)) ?? "")
         .accessibilityIdentifier("submit-refresh-button")
     }
 
@@ -133,7 +133,7 @@ struct DashboardView: View {
         switch viewModel.dashboardOperation {
         case .idle:
             EmptyView()
-        case .submitting, .pushing, .pulling, .runningAutosubmit, .applyingAutosubmit:
+        case .submitting, .refreshingStatistics, .runningAutosubmit, .applyingAutosubmit:
             EmptyView()
         case let .succeeded(message):
             StatusBanner(text: message, color: .green, showsProgress: false)

@@ -20,8 +20,8 @@ enum StatusMenuDescriptor: Equatable {
     case information(String)
     case diagnostics([String])
     case separator
-    case push(isEnabled: Bool)
-    case pull(isEnabled: Bool)
+    case submitAndRefresh(isEnabled: Bool)
+    case refreshStatistics(isEnabled: Bool)
     case settings
     case quit
 }
@@ -36,12 +36,21 @@ enum StatusMenuBuilder {
         if let freshness { items.append(.information(freshness)) }
         if !diagnostics.isEmpty { items.append(.diagnostics(diagnostics)) }
         if !items.isEmpty { items.append(.separator) }
-        items.append(.push(isEnabled: actionsEnabled))
-        items.append(.pull(isEnabled: actionsEnabled))
+        items.append(.submitAndRefresh(isEnabled: actionsEnabled))
+        items.append(.refreshStatistics(isEnabled: actionsEnabled))
         items.append(.separator)
         items.append(.settings)
         items.append(.quit)
         return items
+    }
+
+    /// Action titles are defined here only, so the dashboard button and the menu cannot drift.
+    static func title(for descriptor: StatusMenuDescriptor) -> String? {
+        switch descriptor {
+        case .submitAndRefresh: return "提交并拉取"
+        case .refreshStatistics: return "拉取远程数据"
+        case .information, .diagnostics, .separator, .settings, .quit: return nil
+        }
     }
 }
 
@@ -299,19 +308,19 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
                 menu.addItem(item)
             case .separator:
                 menu.addItem(.separator())
-            case let .push(isEnabled):
+            case let .submitAndRefresh(isEnabled):
                 let item = NSMenuItem(
-                    title: "立刻推送",
-                    action: #selector(pushUsageNow(_:)),
+                    title: StatusMenuBuilder.title(for: descriptor) ?? "",
+                    action: #selector(submitUsageAndRefreshStatistics(_:)),
                     keyEquivalent: ""
                 )
                 item.target = self
                 item.isEnabled = isEnabled
                 menu.addItem(item)
-            case let .pull(isEnabled):
+            case let .refreshStatistics(isEnabled):
                 let item = NSMenuItem(
-                    title: "立刻拉取",
-                    action: #selector(pullStatisticsNow(_:)),
+                    title: StatusMenuBuilder.title(for: descriptor) ?? "",
+                    action: #selector(refreshStatisticsNow(_:)),
                     keyEquivalent: ""
                 )
                 item.target = self
@@ -354,12 +363,12 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
         button.setAccessibilityLabel(presentation.accessibilityLabel)
     }
 
-    @objc private func pushUsageNow(_ sender: Any?) {
-        Task { await viewModel.pushUsageNow() }
+    @objc private func submitUsageAndRefreshStatistics(_ sender: Any?) {
+        Task { await viewModel.submitUsageAndRefreshStatistics() }
     }
 
-    @objc private func pullStatisticsNow(_ sender: Any?) {
-        Task { await viewModel.pullStatisticsNow() }
+    @objc private func refreshStatisticsNow(_ sender: Any?) {
+        Task { await viewModel.refreshStatisticsNow() }
     }
 
     @objc private func openSettings(_ sender: Any?) {

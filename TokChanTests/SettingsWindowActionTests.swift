@@ -43,16 +43,16 @@ final class StatusItemPresentationTests: XCTestCase {
     func testMenuDescriptorsAreDynamicAndOrdered() {
         XCTAssertEqual(
             StatusMenuBuilder.descriptors(
-                freshness: "数据日期 2026-09-05 · 更新于 1 小时前",
+                freshness: "数据日期 2026-09-05 · 统计读取于 1 小时前",
                 diagnostics: ["统计读取：离线", "本地保存：只读"],
                 actionsEnabled: true
             ),
             [
-                .information("数据日期 2026-09-05 · 更新于 1 小时前"),
+                .information("数据日期 2026-09-05 · 统计读取于 1 小时前"),
                 .diagnostics(["统计读取：离线", "本地保存：只读"]),
                 .separator,
-                .push(isEnabled: true),
-                .pull(isEnabled: true),
+                .submitAndRefresh(isEnabled: true),
+                .refreshStatistics(isEnabled: true),
                 .separator,
                 .settings,
                 .quit
@@ -65,13 +65,18 @@ final class StatusItemPresentationTests: XCTestCase {
                 actionsEnabled: false
             ),
             [
-                .push(isEnabled: false),
-                .pull(isEnabled: false),
+                .submitAndRefresh(isEnabled: false),
+                .refreshStatistics(isEnabled: false),
                 .separator,
                 .settings,
                 .quit
             ]
         )
+    }
+
+    func testMenuActionTitlesDistinguishUploadFromReadOnlyRefresh() {
+        XCTAssertEqual(StatusMenuBuilder.title(for: .submitAndRefresh(isEnabled: true)), "提交并拉取")
+        XCTAssertEqual(StatusMenuBuilder.title(for: .refreshStatistics(isEnabled: true)), "拉取远程数据")
     }
 
     func testStatusItemPresentationSwitchesBetweenIconOnlyAndReadableTitle() {
