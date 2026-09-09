@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
+- **Total Sessions**: 16
 - **Last Active**: 2026-09-09
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~466 | Active |
+| `journal-1.md` | ~489 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-09-09 | 改进新手引导与 Cursor 登录 | `8597274`, `5e7f93c` | `feat/onboarding-agent-login` |
 | 15 | 2026-09-09 | 统一后台刷新与提交状态 | `1a67a65`, `16241a2`, `fee4e12` | `master` |
 | 14 | 2026-09-09 | 自动生成中文版本发布文案 | `58deade` | `master` |
 | 12 | 2026-09-07 | 优化首次使用引导 | `29349dc` | `feat/first-use-onboarding` |

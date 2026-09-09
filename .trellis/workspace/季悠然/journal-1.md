@@ -464,3 +464,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 16: 改进新手引导与 Cursor 登录
+<!-- trellis-session: v=2 fp=35297f08e205540a -->
+
+**Date**: 2026-09-09
+**Task**: 改进新手引导与 Cursor 登录
+**Branch**: `feat/onboarding-agent-login`
+
+### Summary
+
+将首次 Tokscale 身份识别改为用户手动触发，并在引导页与常规设置中加入安全的 Cursor 自动登录及终端回退；补充完整测试、README 与集成契约。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8597274` | feat(onboarding): 增加手动身份识别与 Cursor 登录 |
+| `5e7f93c` | docs: 更新 Cursor 登录与引导契约 |
+
+### Status
+
+[OK] **Completed**
