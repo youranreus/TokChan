@@ -184,6 +184,89 @@ The application delegate owns the whole background lifecycle: build the status-i
 
 The Settings window reports visibility transitions (`settingsDidBecomeVisible()` / `settingsDidBecomeHidden()`) rather than calling the combined loader from `.task`. Because `.task`, `onAppear`, and `scenePhase` can all fire for one presentation, the view model must collapse them so one continuous visible period reads autosubmit status and Cursor session status exactly once each. Cursor checking, connected, explicit-login-needed, and indeterminate retry-only states remain Settings-specific; onboarding continues to render its optional explicit login independently. Closing Settings cancels the presentation check and clears transient login feedback. In the shared Cursor row, Settings removes the `（可选）` suffix; both the checking spinner and `已登录` use the same trailing slot as `自动登录`, with no duplicate status row below. Onboarding retains the suffix.
 
+The first-use welcome now has three steps: data mode, account connection, and first submission. Render the mode step first with local as the default and recommended choice; choosing local completes initialization immediately and enters the panel without an account, while choosing online continues into the existing two-step flow. Keep the step indicator's active count derived from `firstUseOnboardingState`, including the `.modeSelection` case.
+
 In first-use account entry, use one shared control height for the rounded username field and both large actions. Put “继续” and “识别本机登录” in equal flexible columns, expand each label across its column, and retain the primary/default versus secondary hierarchy so intrinsic button widths cannot create asymmetric blank space in the 380×680 viewport.
 
+
+### Scenario: Status-menu data mode, application info, and update rows
+
+#### 1. Scope / Trigger
+
+Use this contract when changing the secondary-click status menu's information rows, its data-mode selector, or its update action. These rows observe existing state; they never introduce a second updater or a second refresh path.
+
+#### 2. Signatures
+
+```swift
+enum StatusMenuDescriptor: Equatable {
+    case information(String)
+    case diagnostics([String])
+    case separator
+    case submitAndRefresh(isEnabled: Bool)
+    case refreshStatistics(isEnabled: Bool)
+    case dataMode(DashboardDataMode, isSelected: Bool, isEnabled: Bool)
+    case checkForUpdates(isEnabled: Bool)
+    case settings
+    case quit
+}
+
+@MainActor extension StatusMenuBuilder {
+    static func descriptors(
+        freshness: String?,
+        diagnostics: [String],
+        actionsEnabled: Bool,
+        applicationInfo: String? = nil,
+        selectedMode: DashboardDataMode? = nil,
+        canCheckForUpdates: Bool = false
+    ) -> [StatusMenuDescriptor]
+    static func title(for descriptor: StatusMenuDescriptor) -> String?
+}
+```
+
+#### 3. Contracts
+
+- Put the application name and version row first, then freshness, then diagnostics. The name and version come from `CFBundleDisplayName`/`CFBundleName` and `CFBundleShortVersionString`; never hard-code them.
+- Render the data-mode group as two independently selectable items with a checkmark on the persisted `preferences.dataMode`. Both are disabled while an explicit operation runs, and selecting one routes through `DashboardViewModel.selectDataMode(_:)`, the same entry point Settings uses, so the two surfaces cannot diverge.
+- The update row reuses the existing `AppUpdating` boundary and its `canCheckForUpdates`; do not construct another `SPUStandardUpdaterController`. Keep the action's enabled state derived from that property at menu-build time.
+- Rebuild the whole descriptor list on every secondary click so freshness, diagnostics, application info, and mode selection are never startup snapshots.
+- The dashboard panel must not duplicate these actions; the status menu stays the single owner of diagnostics, mode selection, update, Settings, and Quit.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| No freshness or diagnostics | Omit those rows; keep the mode group and update action |
+| Explicit operation running | Disable both transfer items and both mode items |
+| Updater cannot check | Show the row disabled rather than hiding it |
+| Missing version key | Fall back to the bundle name alone |
+| Local mode selected | Check the local item and leave the online transfer actions available |
+
+#### 5. Good / Base / Bad Cases
+
+- Good: the menu shows “TokChan 1.0.12”, the freshness row, both transfer actions, a checkmark on the active mode, and an enabled update action.
+- Base: a build without a version string shows the name only and keeps every action usable.
+- Bad: hard-coding the version, creating a second updater, letting the menu and Settings persist the mode independently, or building the menu once and caching it.
+
+#### 6. Tests Required
+
+- Descriptor ordering and titles for application info, freshness, diagnostics, mode items, update, Settings, and Quit.
+- Mode items: correct `isSelected` state for each persisted mode, both disabled while an operation runs, and selection routed to `selectDataMode(_:)`.
+- Update row: enabled/disabled follows `canCheckForUpdates`, and invoking it forwards exactly once to the injected updater.
+- Bundle info: display-name precedence, version suffix, and the name-only fallback.
+
+#### 7. Wrong vs Correct
+
+#### Wrong
+
+```swift
+// A second updater and a hard-coded version drift apart from the app bundle.
+let item = NSMenuItem(title: "TokChan 1.0.0", action: #selector(update), keyEquivalent: "")
+```
+
+#### Correct
+
+```swift
+applicationInfo: applicationInfo(),   // reads CFBundleDisplayName + CFBundleShortVersionString
+canCheckForUpdates: appUpdater.canCheckForUpdates
+```
 Use one snapshot-freshness formatter for both the dashboard header and the dynamically built status menu. It reports the last successful statistics fetch and includes the selected server `dateRange.end` when that day differs from today. Compare the server `yyyy-MM-dd` string against today using a Gregorian calendar in the user's local timezone, regardless of the user's preferred calendar. No successful snapshot means no fabricated freshness item. Statistics/status/persistence failures remain diagnostics in the status menu; explicit operation failures retain normal in-panel feedback while the originating popover remains visible.

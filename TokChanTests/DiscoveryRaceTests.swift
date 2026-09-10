@@ -199,4 +199,5 @@ private struct DiscoveryLocator: NpxLocating {
 private final class DiscoveryCache: DashboardCacheStoring {
     func load() -> DashboardCacheSnapshot? { nil }
     func save(_ snapshot: DashboardCacheSnapshot) throws {}
+    func clear() throws {}
 }

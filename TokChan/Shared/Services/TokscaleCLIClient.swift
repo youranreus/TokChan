@@ -17,6 +17,8 @@ enum TokscaleCommand: Equatable {
     case runAutosubmitNow
     case pricingOverrides
     case pricingDryRun
+    case graph
+    case configuredTimezone
 }
 
 enum TokscaleCommandBuilder {
@@ -45,6 +47,10 @@ enum TokscaleCommandBuilder {
             arguments += ["pricing", "list-overrides", "--json"]
         case .pricingDryRun:
             arguments += ["submit", "--dry-run"]
+        case .graph:
+            arguments += ["graph", "--no-spinner"]
+        case .configuredTimezone:
+            arguments += ["config", "get", "timezone"]
         }
 
         return arguments

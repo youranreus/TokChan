@@ -21,6 +21,8 @@ npx --yes tokscale@<version> autosubmit disable
 npx --yes tokscale@<version> autosubmit run --force
 npx --yes tokscale@<version> pricing list-overrides --json
 npx --yes tokscale@<version> submit --dry-run
+npx --yes tokscale@<version> graph --no-spinner
+npx --yes tokscale@<version> config get timezone
 ```
 
 Swift boundaries:
@@ -252,4 +254,88 @@ case .failed(let message):
 default:
     reconcileOnboardingWithCompleteCache(username: username)
 }
+```
+
+## Scenario: Local usage source (graph export)
+
+### 1. Scope / Trigger
+
+Use this contract when changing how TokChan reads local usage without an account. The local source is a read-only adapter over the official CLI's `graph` export; TokChan must not parse client logs, compute costs, or store usage itself.
+
+### 2. Signatures
+
+```swift
+enum DashboardSourceError: LocalizedError {
+    case invalidGraph
+    case invalidTimezone
+    case incompatibleCLI(version: String, detail: String)
+}
+
+protocol DashboardDataReading {
+    var source: DashboardDataMode { get }
+    func fetchDashboardBatch(_ request: DashboardSourceRequest) async throws -> DashboardSourceBatch
+}
+
+final class TokscaleLocalDashboardDataSource: DashboardDataReading {
+    init(runner: ProcessRunning, timeout: TimeInterval = 300)
+}
+```
+
+Decoded graph contract: `contributions[]` (each with `date`, `totals.tokens`, `totals.cost`, `tokenBreakdown`, `clients[].client|modelId|tokens|cost|models`), optional `meta.generatedAt`, and `summary.totalTokens|totalCost`.
+
+### 3. Contracts
+
+- Execute exactly `config get timezone` then `graph --no-spinner` through the resolved npx URL with discrete arguments. Never build a shell string. Run the timezone command first: two concurrent `npx --yes` processes can race the package-install cache on a machine that has not used that version yet.
+- Read the JSON payload only from stdout. stderr is diagnostics; keep at most a bounded, de-identified warning and never surface raw model identifiers.
+- Derive all four periods from the single export: `.all` uses every contribution, `.day` is the configured timezone's today, `.week` is today plus the preceding 6 days, and `.month` is today plus the preceding 29 days. Never call `--month` for the month tab: upstream `--month` means the calendar month, while the online contract means a trailing 30 days.
+- Build `yyyy-MM-dd` parsing and formatting from one Gregorian calendar pinned to the CLI's configured timezone. If the timezone command fails or returns an unrecognized identifier, throw `invalidTimezone` instead of falling back to the host timezone.
+- Validate before publishing: every value must be non-negative and finite; each contribution's `totals.tokens` must equal its breakdown total and the sum of its client tokens; and the export `summary` must match the sum of contributions. A mismatch throws `invalidGraph` and publishes nothing. An export with zero contributions and zero summary totals is a valid zero-usage batch.
+- Missing-price diagnostics degrade to one bounded warning that says cost may be incomplete. Never present a missing-price result as exact cost, and never replace usage with zeros.
+- `graph` may update pricing and sync Cursor upstream, so local mode is not offline mode. It still performs no `submit` and no public-profile request.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Empty export with zero summary | Valid zero-usage batch; four zero periods |
+| No contribution for today | `.day` is zero; `.week`/`.month` still start from the configured today |
+| Unparseable JSON | `incompatibleCLI`, in-panel retry guidance; never zero usage |
+| Non-finite, negative, or inconsistent totals | `invalidGraph`; publish nothing and keep the old cache |
+| `summary` disagrees with contributions | `invalidGraph`; never publish the summary alone |
+| `config get timezone` fails or is unrecognized | `invalidTimezone` |
+| CLI exit non-zero with an unknown-command/argument signal | `incompatibleCLI` with the version named; user adjusts it in Settings |
+| Other non-zero exit | Surface exit code and at most 4,000 characters of stderr/stdout |
+| stderr contains unpriced/missing-pricing diagnostics | Publish usage with one bounded cost-incomplete warning |
+
+### 5. Good / Base / Bad Cases
+
+- Good: one export fills all four periods, `summary` matches the contributions, and today's bucket is chosen with the CLI's configured timezone.
+- Base: the export has no contribution for today but earlier days exist; `.day` reads zero while `.week` and `.month` still cover their trailing windows.
+- Bad: using `--month` for the month tab, treating `meta.dateRange.end` as today, falling back to the host timezone, summing only `summary`, or turning a decode failure into zero usage.
+
+### 6. Tests Required
+
+- Fixture-driven aggregation over a graph with gap days: assert per-period totals, cost, five-category breakdown, client/model grouping, and the configured-today boundary.
+- Midnight and no-today-data cases: assert the period windows follow the injected timezone's today, not the last usage date.
+- Empty fixture: assert a valid zero batch rather than an error.
+- Malformed and inconsistent fixtures: assert `invalidGraph` and that no profile is published; assert the previous cache survives.
+- Missing-pricing stderr: assert exactly one bounded warning and unchanged usage totals.
+- Invalid timezone: assert `invalidTimezone` and that the host timezone is never substituted.
+- Command building: assert the exact `graph --no-spinner` and `config get timezone` argument suffixes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```swift
+// `--month` is the calendar month upstream, so the month tab silently changes meaning.
+TokscaleCommand.arguments(version: version, command: .graphMonth)
+```
+
+#### Correct
+
+```swift
+// One full export, then derive the trailing windows in the configured timezone.
+let graph = try await run(.graph, context: context)
+let monthStart = calendar.date(byAdding: .day, value: -29, to: today)
 ```

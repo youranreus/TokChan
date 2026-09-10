@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/macos/index.md", "reason": "macOS package guideline index for compliance review"}
+{"file": ".trellis/spec/macos/tokscale-integration.md", "reason": "verify API/CLI, refresh, onboarding, and automatic-path contracts"}
+{"file": ".trellis/spec/macos/data-persistence.md", "reason": "verify cache schema, migration, freshness, and preference behavior"}
+{"file": ".trellis/spec/macos/service-management.md", "reason": "verify reset safely reconciles launch-at-login state"}
+{"file": ".trellis/spec/macos/quality-guidelines.md", "reason": "quality and concurrency compliance"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "required deterministic unit, lifecycle, race, and UI validation"}
+{"file": ".trellis/tasks/09-10-local-online-data-mode/research/local-data-coverage.md", "reason": "cross-check implementation against verified local-data evidence and known gaps"}

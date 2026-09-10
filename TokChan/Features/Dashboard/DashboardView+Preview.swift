@@ -49,6 +49,27 @@ struct PreviewAPIService: TokscaleAPIService {
     }
 }
 
+struct PreviewLocalDashboardDataSource: DashboardDataReading {
+    let source = DashboardDataMode.local
+
+    func fetchDashboardBatch(_ request: DashboardSourceRequest) async throws -> DashboardSourceBatch {
+        guard case let .local(_, now) = request else { throw DashboardSourceError.invalidGraph }
+        let online = try await PreviewAPIService().fetchDashboardBatch(username: "")
+        let localProfiles = online.profiles.mapValues { data in
+            DashboardData(
+                period: data.period,
+                dateRange: data.dateRange,
+                breakdown: data.breakdown,
+                totalTokens: data.totalTokens,
+                totalCost: data.totalCost,
+                updatedAt: now,
+                clients: data.clients
+            )
+        }
+        return try DashboardSourceBatch(source: .local, account: nil, profiles: localProfiles)
+    }
+}
+
 struct PreviewCLIService: TokscaleCLIService, CustomPricingCLIService {
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
     func loginCursor(context: TokscaleCommandContext) async throws {}
@@ -98,11 +119,17 @@ struct PreviewCLIService: TokscaleCLIService, CustomPricingCLIService {
 final class PreviewPreferencesStore: PreferencesStoring {
     private var value: UserPreferences
 
-    init(username: String = "youranreus") {
+    init(
+        username: String = "youranreus",
+        dataMode: DashboardDataMode = .online,
+        hasCompletedInitialization: Bool = true
+    ) {
         value = UserPreferences(
             username: username,
             tokscaleVersion: "4.15.0",
-            npxPath: "/opt/homebrew/bin/npx"
+            npxPath: "/opt/homebrew/bin/npx",
+            dataMode: dataMode,
+            hasCompletedInitialization: hasCompletedInitialization
         )
     }
 
@@ -189,6 +216,7 @@ struct DashboardView_Previews: PreviewProvider {
 final class PreviewCacheStore: DashboardCacheStoring {
     func load() -> DashboardCacheSnapshot? { nil }
     func save(_ snapshot: DashboardCacheSnapshot) throws {}
+    func clear() throws {}
 }
 
 final class PreviewCustomPricingStore: CustomPricingFileStoring {

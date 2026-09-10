@@ -1,5 +1,13 @@
 import Foundation
 
+enum DashboardDataMode: String, Codable, CaseIterable, Identifiable {
+    case local
+    case online
+
+    var id: String { rawValue }
+    var title: String { self == .local ? "本地" : "在线" }
+}
+
 struct UserPreferences: Equatable {
     static let defaultStatusTextTemplate = "{token} · {cost}"
 
@@ -12,11 +20,15 @@ struct UserPreferences: Equatable {
     var hideZeroCostModels: Bool
     var hiddenClientsEnabled: Bool
     var hiddenClientIDs: Set<String>
+    var dataMode: DashboardDataMode
+    var hasCompletedInitialization: Bool
 
     init(
         username: String,
         tokscaleVersion: String,
         npxPath: String,
+        dataMode: DashboardDataMode = .online,
+        hasCompletedInitialization: Bool = true,
         statusTextEnabled: Bool = false,
         statusTextTemplate: String = "{token} · {cost}",
         statusTextPeriod: ProfilePeriod = .day,
@@ -27,6 +39,8 @@ struct UserPreferences: Equatable {
         self.username = username
         self.tokscaleVersion = tokscaleVersion
         self.npxPath = npxPath
+        self.dataMode = dataMode
+        self.hasCompletedInitialization = hasCompletedInitialization
         self.statusTextEnabled = statusTextEnabled
         self.statusTextTemplate = statusTextTemplate
         self.statusTextPeriod = statusTextPeriod
@@ -45,13 +59,20 @@ struct UserPreferences: Equatable {
     static let defaults = UserPreferences(
         username: "",
         tokscaleVersion: "latest",
-        npxPath: ""
+        npxPath: "",
+        dataMode: .local,
+        hasCompletedInitialization: false
     )
 }
 
 protocol PreferencesStoring {
     func load() -> UserPreferences
     func save(_ preferences: UserPreferences)
+    func clear() throws
+}
+
+extension PreferencesStoring {
+    func clear() throws { save(.defaults) }
 }
 
 final class UserDefaultsPreferencesStore: PreferencesStoring {
@@ -65,6 +86,14 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
         static let hideZeroCostModels = "hideZeroCostModels"
         static let hiddenClientsEnabled = "hiddenClientsEnabled"
         static let hiddenClientIDs = "hiddenClientIDs"
+        static let dataMode = "dashboardDataMode"
+        static let hasCompletedInitialization = "hasCompletedInitialization"
+
+        static let all = [
+            username, tokscaleVersion, npxPath, statusTextEnabled, statusTextTemplate,
+            statusTextPeriod, hideZeroCostModels, hiddenClientsEnabled, hiddenClientIDs,
+            dataMode, hasCompletedInitialization
+        ]
     }
 
     private let defaults: UserDefaults
@@ -78,6 +107,8 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
             username: defaults.string(forKey: Key.username) ?? "",
             tokscaleVersion: defaults.string(forKey: Key.tokscaleVersion) ?? "latest",
             npxPath: defaults.string(forKey: Key.npxPath) ?? "",
+            dataMode: defaults.string(forKey: Key.dataMode).flatMap(DashboardDataMode.init(rawValue:)) ?? .local,
+            hasCompletedInitialization: defaults.object(forKey: Key.hasCompletedInitialization) as? Bool ?? false,
             statusTextEnabled: defaults.object(forKey: Key.statusTextEnabled) as? Bool ?? false,
             statusTextTemplate: defaults.string(forKey: Key.statusTextTemplate)
                 ?? UserPreferences.defaultStatusTextTemplate,
@@ -93,6 +124,8 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
         defaults.set(preferences.username, forKey: Key.username)
         defaults.set(preferences.tokscaleVersion, forKey: Key.tokscaleVersion)
         defaults.set(preferences.npxPath, forKey: Key.npxPath)
+        defaults.set(preferences.dataMode.rawValue, forKey: Key.dataMode)
+        defaults.set(preferences.hasCompletedInitialization, forKey: Key.hasCompletedInitialization)
         defaults.set(preferences.statusTextEnabled, forKey: Key.statusTextEnabled)
         defaults.set(preferences.statusTextTemplate, forKey: Key.statusTextTemplate)
         defaults.set(preferences.statusTextPeriod.rawValue, forKey: Key.statusTextPeriod)
@@ -102,5 +135,9 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
             UserPreferences.normalizedClientIDs(preferences.hiddenClientIDs).sorted(),
             forKey: Key.hiddenClientIDs
         )
+    }
+
+    func clear() throws {
+        Key.all.forEach(defaults.removeObject(forKey:))
     }
 }

@@ -1,6 +1,6 @@
 # 实施计划
 
-当前未启动实施；方案与验证边界已收敛，等待最终方案审阅。
+实现与验证已完成；以下步骤保留为本次实施记录，任务尚未归档。
 
 1. 加载 trellis-before-dev 和相关 macOS specs，核对数据持久化、Tokscale、状态管理及测试合同。
 2. 按 research 已核对的 graph stdout 和 config timezone 合同实现能力验证；补充空数据、缺价及不兼容输出的脱敏 fixture。
@@ -24,3 +24,12 @@
 
 - 欢迎页模式分流、独立初始化标记与旧用户升级；本地无账号和读取失败仍可进入面板。
 - 清空覆盖磁盘、内存、初始化与旧快照回退；在途刷新迟到、清理失败及重试；只处理约定所有权范围。
+
+## 验证记录
+
+- 完整套件：`xcodebuild test -project TokChan.xcodeproj -scheme TokChan -destination 'platform=macOS'` → 275 个单元测试全部通过，0 失败；4 个 UI 测试因 SystemUIServer 未暴露菜单栏项按测试合同跳过。
+- Release 构建：`xcodebuild build -configuration Release CODE_SIGNING_ALLOWED=NO` 成功。
+- 离线发布检查：`test_project_version.py`（7 项）、`test_ci_signing.py`（8 项）、`test_release_scripts.sh`（81 项）全部通过；`bash -n` 脚本语法检查通过。
+- 检查阶段修复：graph 导出必须校验 summary 与逐日汇总一致（否则视为 `invalidGraph`，不再产出零用量）；本地加载在配置清空后不得再启动自动提交状态读取；缓存与偏好存储的 `clear()` 成为协议义务，禁止静默空实现。
+- 检查阶段修复：账号变更时即使当前为本地模式也立即重写快照，磁盘上不再保留旧账号的线上资料；新增回归测试，已验证该测试在无修复时失败。
+- 未执行：真实签名、公证、在线 Tokscale 请求、生产发布；本机未安装 `shellcheck` / `actionlint`。

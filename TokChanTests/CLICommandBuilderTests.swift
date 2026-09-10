@@ -18,7 +18,9 @@ final class CLICommandBuilderTests: XCTestCase {
             (.disableAutosubmit, ["autosubmit", "disable"]),
             (.runAutosubmitNow, ["autosubmit", "run", "--force"]),
             (.pricingOverrides, ["pricing", "list-overrides", "--json"]),
-            (.pricingDryRun, ["submit", "--dry-run"])
+            (.pricingDryRun, ["submit", "--dry-run"]),
+            (.graph, ["graph", "--no-spinner"]),
+            (.configuredTimezone, ["config", "get", "timezone"])
         ]
 
         for (command, suffix) in expected {

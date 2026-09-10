@@ -83,6 +83,7 @@ struct SettingsView: View {
     @State private var isNpxOverrideExpanded: Bool
     @State private var autosubmitDraft: AutosubmitSettingsDraft
     @State private var selectedTab: SettingsTab = .general
+    @State private var showsResetConfirmation = false
 
     init(
         viewModel: DashboardViewModel,
@@ -162,6 +163,18 @@ struct SettingsView: View {
                 break
             }
         }
+        .alert("清空 TokChan 配置？", isPresented: $showsResetConfirmation) {
+            Button("取消", role: .cancel) {}
+            Button("清空配置", role: .destructive) {
+                Task {
+                    _ = await viewModel.resetConfiguration {
+                        try launchAtLoginModel.disableForConfigurationReset()
+                    }
+                }
+            }
+        } message: {
+            Text("将清除 TokChan 偏好、初始化状态和统计缓存，并关闭登录时启动。不会删除 Tokscale 登录、用量、自定义价格或自动提交配置。")
+        }
         .onChange(of: viewModel.currentAutosubmitStatus) { status in
             if let status {
                 autosubmitDraft.synchronize(with: status)
@@ -223,6 +236,24 @@ struct SettingsView: View {
 
     private var generalSettings: some View {
         Form {
+            Section("数据来源") {
+                Picker("数据模式", selection: Binding(
+                    get: { viewModel.preferences.dataMode },
+                    set: { mode in Task { await viewModel.selectDataMode(mode) } }
+                )) {
+                    ForEach(DashboardDataMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .disabled(viewModel.isPerformingOperation)
+                .accessibilityIdentifier("dashboard-data-mode")
+                Text(viewModel.preferences.dataMode == .local
+                    ? "直接读取本机 Tokscale graph；读取时 Tokscale 仍可能更新价格或同步 Cursor。"
+                    : "读取 Tokscale 公开资料；面板刷新会先提交再拉取。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("基本配置") {
                 TextField("Tokscale 用户名", text: preferenceBinding(\UserPreferences.username))
                 TextField("Tokscale 版本", text: preferenceBinding(\UserPreferences.tokscaleVersion))
@@ -276,6 +307,24 @@ struct SettingsView: View {
                 }
             }
             .disabled(viewModel.operation.isRunning)
+
+            Section("重置") {
+                Button("清空 TokChan 配置…", role: .destructive) {
+                    showsResetConfirmation = true
+                }
+                .disabled(viewModel.isPerformingOperation)
+                .accessibilityIdentifier("reset-tokchan-configuration")
+                Text("保留 Tokscale 登录、用量、Cursor 缓存、自定义价格和自动提交配置。")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let message = viewModel.configurationResetErrorMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("reset-tokchan-configuration-error")
+                }
+            }
         }
         .formStyle(.grouped)
         .accessibilityIdentifier("settings-general-page")

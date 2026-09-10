@@ -120,8 +120,14 @@ Use this contract when changing dashboard loading, profile display models, autos
 ### 2. Signatures
 
 ```swift
+struct CachedDashboardProfile: Codable, Equatable {
+    let data: DashboardData
+    let savedAt: Date
+    let source: DashboardDataMode // Missing in schema 1/2 decodes as .online.
+}
+
 struct DashboardCacheSnapshot: Codable, Equatable {
-    static let currentSchemaVersion: Int
+    static let currentSchemaVersion: Int // 3 since the data-source split.
     let schemaVersion: Int
     let username: String?
     let generation: UInt64
@@ -130,13 +136,17 @@ struct DashboardCacheSnapshot: Codable, Equatable {
     let selectedPeriod: ProfilePeriod
     let autosubmit: AutosubmitStatus?
     let autosubmitObservedAt: Date?
-    let fetchedAt: Date? // Present only for a complete all/day/week/month batch.
+    let fetchedAt: Date? // Online-only compatibility field.
+    let fetchedAtBySource: [DashboardDataMode: Date] // One entry per complete batch.
     let savedAt: Date
+
+    func isCompleteBatch(for source: DashboardDataMode, account: String?) -> Bool
 }
 
 protocol DashboardCacheStoring {
     func load() -> DashboardCacheSnapshot?
     func save(_ snapshot: DashboardCacheSnapshot) throws
+    func clear() throws
 }
 ```
 
@@ -223,3 +233,95 @@ func panelDidAppear() {
 ### Cache-first regression requirements
 
 Round-trip a complete all/day/week/month batch through JSON, reconstruct the view model, and select every scope without requests. At 299 seconds assert no statistics request; at 300 seconds assert one read-only batch. Submit once and assert submit precedes one whole-batch fetch. Decode previous single-profile/multi-profile snapshots as stale migration input. Do not display background refresh narration or make the submit button spin for a cached silent read.
+
+## Scenario: Data-source modes, initialization, and configuration reset
+
+### 1. Scope / Trigger
+
+Use this contract when adding or changing the local/online dashboard data source, its persisted mode preference, the first-run mode welcome, or the TokChan configuration reset. The mode is a display-source choice; it never disables Tokscale's own autosubmit scheduler.
+
+### 2. Signatures
+
+```swift
+enum DashboardDataMode: String, Codable, CaseIterable, Identifiable { case local, online }
+
+struct UserPreferences {
+    var dataMode: DashboardDataMode      // missing key -> .local
+    var hasCompletedInitialization: Bool // missing key -> false
+}
+
+protocol PreferencesStoring {
+    func load() -> UserPreferences
+    func save(_ preferences: UserPreferences)
+    func clear() throws
+}
+
+protocol DashboardDataReading {
+    var source: DashboardDataMode { get }
+    func fetchDashboardBatch(_ request: DashboardSourceRequest) async throws -> DashboardSourceBatch
+}
+
+@MainActor extension DashboardViewModel {
+    func selectInitialMode(_ mode: DashboardDataMode) async
+    func selectDataMode(_ mode: DashboardDataMode) async
+    func refreshCurrentSourceFromPanel() async
+    func resetConfiguration(disableLaunchAtLogin: () throws -> Void) async -> Bool
+}
+```
+
+### 3. Contracts
+
+- `UserPreferences.defaults` is `dataMode: .local`, `hasCompletedInitialization: false`. A missing key decodes the same way, so new installs and upgrading users both land on the mode welcome; an explicit choice is persisted and survives relaunch.
+- `DashboardSourceBatch` carries `source`, optional `account`, exactly four periods, and bounded warnings. Its initializer throws `DashboardSourceError.invalidGraph` unless the periods are exactly all/day/week/month and each entry's `period` matches its key. Local batches carry `account: nil`.
+- Cache entries carry `source`. Schema 1/2 decodes every entry as `.online` and never as local, so legacy snapshots cannot masquerade as local usage. `isCompleteBatch(for:account:)` requires a `fetchedAtBySource` entry, exactly four same-source periods, and — for online only — a matching account.
+- Freshness, TTL, and automatic backoff are tracked per source in `fetchedAtBySource`. Switching mode restores that mode's own `cacheSavedAt` and cached profiles; it does not clear the other source's validity.
+- A panel refresh routes by mode: local reads the Tokscale graph immediately, online keeps submit-then-refetch. The status menu's online-only actions always pass `source: .online` explicitly, so they update the online cache without changing the visible mode, panel, or status-item title.
+- Entering local mode from the welcome page completes initialization immediately and does not require a successful read; online completes it only through the existing account flow. `markInitializationComplete()` is the single writer, and every automatic path stays a no-op until it is set.
+- `resetConfiguration` stops the scheduler, invalidates profile/status/cursor requests, then clears preferences, the current Application Support snapshot, and the legacy Caches snapshot before returning to `.modeSelection`. All of these are protocol obligations (`clear()`); a store that cannot clear must throw rather than silently succeed.
+- Any account change persists a snapshot without the previous account's online profiles, including while the visible source is local. Account identity is never required for a local batch, and local mode never fabricates a username or rank.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Mode key missing, or upgrading user with no initialization key | Show `.modeSelection`; keep existing username and caches |
+| Local choice with no Tokscale CLI or failing graph | Enter the panel; the read failure is retryable in-panel and never blocks initialization |
+| Batch periods incomplete, extra, or mismatched | Throw `invalidGraph`; publish nothing |
+| Empty graph export | Valid zero-usage batch, not an error |
+| Malformed JSON, non-finite/negative value, or summary/contribution mismatch | Throw; never report zero usage, and keep the previous cache |
+| Timezone command fails or returns an unsupported zone | `invalidTimezone`; never guess the host timezone |
+| Explicit online action while in local mode | Update only the online cache and diagnostics; keep mode, panel, and status title |
+| Mode switch during a running explicit operation | Ignored |
+| Late result after mode switch, account change, CLI-context change, or reset | Finish as superseded; publish nothing |
+| Reset partially fails | Return `false`, keep a retryable error, and never report success |
+
+### 5. Good / Base / Bad Cases
+
+- Good: an uninitialized install shows the mode welcome; choosing local hides onboarding and starts one graph read, and a failing read still leaves the panel usable.
+- Base: an existing online install upgrades, sees the mode welcome once, keeps its username and cache, and afterwards switches modes from either the status menu or Settings with the same persisted preference.
+- Bad: treating schema 2 data as local usage, requiring a username for a local batch, publishing an online menu read into the local panel, reusing one `fetchedAt` for both sources, or calling `save(.defaults)` and calling it a reset while the disk snapshot survives.
+
+### 6. Tests Required
+
+- Preferences round trip for both new keys, missing-key defaults (`.local`, `false`), and `clear()` removing every owned key.
+- Cache: schema 1/2 migration forces `.online`, `isCompleteBatch(for:account:)` rejects wrong-account and mixed-source batches, and `clear()` removes current and legacy files.
+- Sources: assert four-period aggregation, midnight/empty-range boundaries, `invalidGraph` on malformed or inconsistent payloads, and zero published usage on failure.
+- Mode coordination: local panel refresh records zero submits and zero public-API calls; online keeps submit-before-fetch; explicit online actions in local mode record one online read and leave visible state untouched.
+- Races: a suspended local read that resumes after a CLI-context change, an account change, or a reset publishes nothing, and a reset cannot be revived by a late autosubmit-status read.
+- Reset: assert preferences, cache, in-memory profiles, initialization, and launch-at-login are all cleared; a failing clear keeps state and can be retried.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```swift
+// One freshness value for two sources: switching modes shows the other source's age.
+self.cacheSavedAt = fetchedAt
+```
+
+#### Correct
+
+```swift
+self.fetchedAtBySource[source] = fetchedAt
+if source == self.preferences.dataMode { self.cacheSavedAt = fetchedAt }
+```

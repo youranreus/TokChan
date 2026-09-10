@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/macos/index.md", "reason": "macOS package architecture and guideline index"}
+{"file": ".trellis/spec/macos/tokscale-integration.md", "reason": "Tokscale API and CLI contracts, refresh semantics, onboarding constraints"}
+{"file": ".trellis/spec/macos/data-persistence.md", "reason": "preferences, dashboard snapshot migration, cache freshness and isolation"}
+{"file": ".trellis/spec/macos/state-management.md", "reason": "observable state, main-actor, and dependency boundaries"}
+{"file": ".trellis/spec/macos/networking-guidelines.md", "reason": "online source networking, decoding, timeout, and error behavior"}
+{"file": ".trellis/spec/macos/service-management.md", "reason": "launch-at-login reset ownership and safe system reconciliation"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "dashboard, settings, onboarding, and menu UI conventions"}
+{"file": ".trellis/spec/macos/quality-guidelines.md", "reason": "Swift concurrency, accessibility, and error-handling quality rules"}
+{"file": ".trellis/tasks/09-10-local-online-data-mode/research/local-data-coverage.md", "reason": "verified Tokscale graph coverage, date semantics, storage paths, and implementation evidence"}

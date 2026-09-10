@@ -37,7 +37,7 @@ struct FirstUseOnboardingView: View {
             VStack(spacing: 5) {
                 Text("欢迎使用 TokChan")
                     .font(.title2.weight(.semibold))
-                Text("两步连接 Tokscale，并显示你的用量。")
+                Text("选择数据来源，开始查看你的 Tokscale 用量。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -48,16 +48,17 @@ struct FirstUseOnboardingView: View {
 
     private var stepIndicator: some View {
         HStack(spacing: 8) {
-            stepBadge(number: 1, title: "连接账号", isActive: activeStep == 1)
-            Rectangle()
-                .fill(Color.secondary.opacity(0.25))
-                .frame(width: 30, height: 1)
+            stepBadge(number: 1, title: "数据模式", isActive: activeStep == 1)
+            Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: 22, height: 1)
                 .accessibilityHidden(true)
-            stepBadge(number: 2, title: "首次提交", isActive: activeStep == 2)
+            stepBadge(number: 2, title: "连接账号", isActive: activeStep == 2)
+            Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: 22, height: 1)
+                .accessibilityHidden(true)
+            stepBadge(number: 3, title: "首次提交", isActive: activeStep == 3)
         }
         .padding(.top, 4)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("首次设置，第 \(activeStep) 步，共 2 步")
+        .accessibilityLabel("首次设置，第 \(activeStep) 步，共 3 步")
     }
 
     private func stepBadge(number: Int, title: String, isActive: Bool) -> some View {
@@ -76,6 +77,8 @@ struct FirstUseOnboardingView: View {
     @ViewBuilder
     private var currentStep: some View {
         switch viewModel.firstUseOnboardingState {
+        case .modeSelection:
+            modeSelection
         case .discoveringIdentity:
             progressCard(
                 title: "正在识别 Tokscale 账号",
@@ -98,6 +101,37 @@ struct FirstUseOnboardingView: View {
         case .hidden:
             EmptyView()
         }
+    }
+
+    private var modeSelection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("选择数据模式").font(.headline)
+            Text("本地模式直接读取这台 Mac 上的 Tokscale 统计，不需要公开账号。在线模式继续连接 Tokscale 公开资料。")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                Task { await viewModel.selectInitialMode(.local) }
+            } label: {
+                Label("使用本地数据", systemImage: "desktopcomputer")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .keyboardShortcut(.defaultAction)
+            .accessibilityIdentifier("onboarding-mode-local")
+            Button {
+                Task { await viewModel.selectInitialMode(.online) }
+            } label: {
+                Label("使用在线数据", systemImage: "cloud")
+                    .frame(maxWidth: .infinity)
+            }
+            .controlSize(.large)
+            .accessibilityIdentifier("onboarding-mode-online")
+            Text("默认推荐本地模式。之后可在设置或右键菜单中切换。")
+                .font(.caption).foregroundStyle(.tertiary)
+        }
+        .padding(18)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func usernameEntry(message: String?) -> some View {
@@ -266,8 +300,10 @@ struct FirstUseOnboardingView: View {
 
     private var activeStep: Int {
         switch viewModel.firstUseOnboardingState {
-        case .firstSubmission, .submitting: return 2
-        case .discoveringIdentity, .usernameEntry, .verifying, .hidden: return 1
+        case .modeSelection: return 1
+        case .discoveringIdentity, .usernameEntry, .verifying: return 2
+        case .firstSubmission, .submitting: return 3
+        case .hidden: return 1
         }
     }
 
