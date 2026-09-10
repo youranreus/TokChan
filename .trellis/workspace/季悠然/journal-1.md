@@ -511,3 +511,35 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 18: 新增客户端列表展示过滤配置
+<!-- trellis-session: v=2 -->
+
+**Date**: 2026-09-10
+**Task**: 新增客户端列表展示过滤配置
+**Branch**: `master`
+
+### Summary
+
+设置新增“展示配置”原生页签，可即时持久化隐藏零开销模型与指定客户端选项；客户端候选项来自四个统计周期并集并保留暂时缺席的已选项。Dashboard 仅投影过滤可见列表，不改变汇总、状态栏或缓存。同步对齐 Tokscale 的 55 个客户端 ID，补齐品牌图标、来源记录和统一的 macOS 圆角阴影样式。
+
+### Validation
+
+- 246 个单元测试通过，0 失败
+- 4 个 UI 测试因 SystemUIServer 未暴露状态栏项目而跳过
+- macOS 13 Release 构建通过
+- Release fragment 测试 8 项通过
+- `git diff --check` 通过
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a96a1b8` | feat: 新增客户端展示过滤配置 |
+| `8899aed` | docs: 记录客户端展示过滤规范 |
+| `2c48cd2` | chore(task): archive 09-10-client-list-display-filters |
+
+### Status
+
+[OK] **Completed**
