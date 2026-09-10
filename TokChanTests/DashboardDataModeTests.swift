@@ -343,6 +343,10 @@ final class DashboardDataModeTests: XCTestCase {
         XCTAssertFalse(model.preferences.hasCompletedInitialization)
         XCTAssertEqual(model.firstUseOnboardingState, .modeSelection)
         XCTAssertNil(model.profileState.loadedValue)
+        XCTAssertEqual(model.selectedPeriod, .day)
+
+        model.panelDidAppear()
+        XCTAssertEqual(model.selectedPeriod, .day)
     }
 
     func testConfigurationResetFailureKeepsStateAndCanRetry() async {

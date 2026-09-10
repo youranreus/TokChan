@@ -257,7 +257,10 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
                 isShown: popover.isShown,
                 activate: { NSApplication.shared.activate(ignoringOtherApps: true) },
                 close: { [popover] in popover.performClose(sender) },
-                show: { [popover] in
+                show: { [popover, viewModel] in
+                    // Apply the configured scope before the first frame so the popover never draws
+                    // the scope restored from the cache snapshot and then jumps.
+                    viewModel.panelWillAppear()
                     popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
                 },
                 makeKey: { [popover] in
