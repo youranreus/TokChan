@@ -565,3 +565,47 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 20: 面板默认时间范围配置实现与验证
+<!-- trellis-session: v=2 fp=8d4d3ef70e127add -->
+
+**Date**: 2026-09-11
+**Task**: 面板默认时间范围配置实现与验证
+**Branch**: `feat/default-period-preference`
+
+### Summary
+
+为用量面板新增「默认时间范围」配置：设置 → 展示配置页用下拉选择（默认「日」），每次打开面板前于 NSPopover.show 之前同步应用该范围，取代原先由缓存快照恢复的 selectedPeriod；resetConfiguration 同样改为落到该偏好。用户手动审查后发现两处偏差并修正：控件由分段 tab 改为下拉选择；冷启动首帧仍会先渲染快照恢复的旧粒度再跳转（根因是偏好只在 popoverDidShow 之后应用），因此新增 panelWillAppear() 预应用钩子。283 个单元测试全部通过；UI 测试因 SystemUIServer 未暴露状态栏项全部跳过。
+
+### Main Changes
+
+- UserPreferences 新增 defaultPeriod（UserDefaults key defaultPeriod + Key.all + load/save 往返 + 缺失/未知 raw value 回退 .day），DashboardViewModel.normalized(_:) 透传
+- DashboardViewModel 提取 applyCachedPeriod(_:clearIdentityWhenUnavailable:) 私有助手，供 selectPeriod(_:) 与面板钩子共用，避免两条路径漂移
+- 新增 panelWillAppear()：仅消费内存批次应用 preferences.defaultPeriod，不做可见性记账；StatusItemCoordinator 在 popover.show 之前调用，使首帧即为配置粒度
+- panelDidAppear() 保留 guard / isPanelVisible / DEBUG panelAppearanceCount，改为复用 panelWillAppear()，pre-show 与 post-show 幂等
+- SettingsView 展示配置页新增「时间范围」Section：Picker 使用 .pickerStyle(.menu) 下拉选择（取代分段 tab）+ accessibilityIdentifier(default-period) + 说明文案
+- resetConfiguration 的 selectedPeriod 由硬编码 .all 改为 preferences.defaultPeriod
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8737328` | docs: 保存默认时间粒度配置规划 |
+| `4eee327` | feat: 新增面板默认时间范围配置 |
+| `af2a082` | docs: 补充默认时间范围说明与发布片段 |
+| `14c6bee` | docs(spec): 记录面板默认时间范围的持久化与呈现契约 |
+
+### Testing
+
+- [OK] TokChanTests 283 tests / 0 failures（新增 PreferencesStore 往返与回退、面板打开零事件零缓存写入、陈旧快照不自发请求、面板重开回归偏好、panelWillAppear 预应用幂等共 5 项）
+- [OK] UI 测试改写为 application.popUpButtons["default-period"] + menuItems 选择：本机 4 项 UI 测试全部 skip（SystemUIServer 未暴露状态栏项），AC8 目前仅有人工证据
+- [OK] Release fragment JSON 全量校验通过；工作树在 4 个提交后干净
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 在可用隔离环境或 CI 中运行 TokChanUITests，补齐 AC8 的自动化证据
