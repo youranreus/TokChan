@@ -137,6 +137,14 @@ final class DashboardViewModel: ObservableObject {
 
     var currentAutosubmitStatus: AutosubmitStatus? { autosubmitState.loadedValue }
 
+    var availableClientIDs: [String] {
+        var clientIDs = preferences.hiddenClientIDs
+        for cachedProfile in cachedProfiles.values {
+            clientIDs.formUnion(cachedProfile.data.clients.map(\.id))
+        }
+        return clientIDs.sorted()
+    }
+
     var statusItemTitle: String? {
         statusItemTitle(for: preferences)
     }
@@ -1064,7 +1072,10 @@ final class DashboardViewModel: ObservableObject {
             npxPath: preferences.npxPath.trimmingCharacters(in: .whitespacesAndNewlines),
             statusTextEnabled: preferences.statusTextEnabled,
             statusTextTemplate: preferences.statusTextTemplate,
-            statusTextPeriod: preferences.statusTextPeriod
+            statusTextPeriod: preferences.statusTextPeriod,
+            hideZeroCostModels: preferences.hideZeroCostModels,
+            hiddenClientsEnabled: preferences.hiddenClientsEnabled,
+            hiddenClientIDs: UserPreferences.normalizedClientIDs(preferences.hiddenClientIDs)
         )
     }
 

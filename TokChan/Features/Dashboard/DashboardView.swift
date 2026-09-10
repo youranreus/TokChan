@@ -153,14 +153,24 @@ struct DashboardView: View {
             }
             .padding(.horizontal, 14)
         case let .loaded(profile):
+            let visibleClients = DashboardDisplayFilter.clients(
+                from: profile.clients,
+                preferences: viewModel.preferences
+            )
             if profile.clients.isEmpty {
                 Text("此范围暂时没有已提交的客户端或模型明细。")
                     .font(.callout).foregroundStyle(.secondary)
                     .padding(.horizontal, 14)
+                    .accessibilityIdentifier("client-usage-source-empty")
+            } else if visibleClients.isEmpty {
+                Text("所有客户端均已被展示配置隐藏。")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .padding(.horizontal, 14)
+                    .accessibilityIdentifier("client-usage-filter-empty")
             } else {
                 ScrollView {
                     LazyVStack(spacing: 10) {
-                        ForEach(profile.clients) { client in
+                        ForEach(visibleClients) { client in
                             ClientUsageView(client: client)
                         }
                     }

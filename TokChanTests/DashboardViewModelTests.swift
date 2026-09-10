@@ -918,6 +918,59 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(model.operation, .succeeded("自动提交已完成。"))
     }
 
+    func testAvailableClientIDsUnitesEveryCachedPeriodAndPersistedAbsentSelections() throws {
+        let snapshot = try snapshotWithDistinctClients(fetchedAt: referenceDate)
+        let preferences = InMemoryPreferences(value: UserPreferences(
+            username: "youranreus",
+            tokscaleVersion: "latest",
+            npxPath: "",
+            hiddenClientIDs: [" selected-absent ", "cursor"]
+        ))
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: EventRecorder()),
+            cli: FakeCLI(recorder: EventRecorder()),
+            preferencesStore: preferences,
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: snapshot),
+            now: { self.referenceDate }
+        )
+
+        XCTAssertEqual(
+            model.availableClientIDs,
+            ["amp", "codex", "cursor", "selected-absent", "zed"]
+        )
+    }
+
+    func testUpdatingDisplayPreferencesNormalizesAndPersistsWithoutExternalWorkOrCacheWrites() async throws {
+        let recorder = EventRecorder()
+        let preferences = standardPreferences()
+        let snapshot = try completeSnapshot(fetchedAt: referenceDate)
+        let cache = InMemoryCache(snapshot: snapshot)
+        let model = DashboardViewModel(
+            api: FakeAPI(recorder: recorder),
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: preferences,
+            npxLocator: FakeNpxLocator(),
+            cacheStore: cache,
+            now: { self.referenceDate }
+        )
+        var updated = model.preferences
+        updated.hideZeroCostModels = true
+        updated.hiddenClientsEnabled = true
+        updated.hiddenClientIDs = [" cursor ", "", "\n", "cursor", "absent"]
+
+        model.updatePreferences(updated)
+
+        XCTAssertTrue(model.preferences.hideZeroCostModels)
+        XCTAssertTrue(model.preferences.hiddenClientsEnabled)
+        XCTAssertEqual(model.preferences.hiddenClientIDs, ["cursor", "absent"])
+        XCTAssertEqual(preferences.value, model.preferences)
+        XCTAssertEqual(cache.snapshot, snapshot)
+        XCTAssertEqual(cache.saveCount, 0)
+        let events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
+    }
+
     func testUpdatingGeneralPreferencesPersistsNormalizedValuesWithoutStatisticsWork() async throws {
         let recorder = EventRecorder()
         let preferences = standardPreferences()
@@ -2145,6 +2198,48 @@ final class DashboardViewModelTests: XCTestCase {
         )
     }
 
+    private func snapshotWithDistinctClients(fetchedAt: Date) throws -> DashboardCacheSnapshot {
+        let clientIDs: [ProfilePeriod: String] = [
+            .all: "zed",
+            .day: "codex",
+            .week: "cursor",
+            .month: "amp"
+        ]
+        let profiles = try ProfilePeriod.allCases.map { period in
+            CachedDashboardProfile(
+                data: try dashboardData(period: period, clientID: try XCTUnwrap(clientIDs[period])),
+                savedAt: fetchedAt
+            )
+        }
+        return DashboardCacheSnapshot(
+            profile: profiles.first { $0.data.period == .all }?.data,
+            autosubmit: nil,
+            savedAt: fetchedAt,
+            profiles: profiles,
+            username: "youranreus",
+            fetchedAt: fetchedAt
+        )
+    }
+
+    private func dashboardData(period: ProfilePeriod, clientID: String) throws -> DashboardData {
+        let json: [String: Any] = [
+            "period": period.rawValue,
+            "user": ["username": "youranreus", "displayName": "Youran"],
+            "stats": ["totalTokens": 1, "totalCost": 0, "activeDays": 1],
+            "contributions": [[
+                "clients": [[
+                    "client": clientID,
+                    "models": ["zero-cost-model": ["tokens": 1, "cost": 0]],
+                    "tokens": ["input": 1],
+                    "cost": 0
+                ]]
+            ]]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let response = try JSONDecoder().decode(PublicProfileResponse.self, from: data)
+        return DashboardData(response: response)
+    }
+
     private func completeSnapshot(
         fetchedAt: Date,
         username: String = "youranreus",
@@ -2647,6 +2742,7 @@ private struct MissingNpxLocator: NpxLocating {
 
 private final class InMemoryCache: DashboardCacheStoring {
     var snapshot: DashboardCacheSnapshot?
+    private(set) var saveCount = 0
     let saveError: Error?
 
     init(snapshot: DashboardCacheSnapshot? = nil, saveError: Error? = nil) {
@@ -2655,6 +2751,7 @@ private final class InMemoryCache: DashboardCacheStoring {
     }
     func load() -> DashboardCacheSnapshot? { snapshot }
     func save(_ snapshot: DashboardCacheSnapshot) throws {
+        saveCount += 1
         if let saveError { throw saveError }
         self.snapshot = snapshot
     }

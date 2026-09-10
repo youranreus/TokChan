@@ -9,6 +9,9 @@ struct UserPreferences: Equatable {
     var statusTextEnabled: Bool
     var statusTextTemplate: String
     var statusTextPeriod: ProfilePeriod
+    var hideZeroCostModels: Bool
+    var hiddenClientsEnabled: Bool
+    var hiddenClientIDs: Set<String>
 
     init(
         username: String,
@@ -16,7 +19,10 @@ struct UserPreferences: Equatable {
         npxPath: String,
         statusTextEnabled: Bool = false,
         statusTextTemplate: String = "{token} · {cost}",
-        statusTextPeriod: ProfilePeriod = .day
+        statusTextPeriod: ProfilePeriod = .day,
+        hideZeroCostModels: Bool = false,
+        hiddenClientsEnabled: Bool = false,
+        hiddenClientIDs: Set<String> = []
     ) {
         self.username = username
         self.tokscaleVersion = tokscaleVersion
@@ -24,6 +30,16 @@ struct UserPreferences: Equatable {
         self.statusTextEnabled = statusTextEnabled
         self.statusTextTemplate = statusTextTemplate
         self.statusTextPeriod = statusTextPeriod
+        self.hideZeroCostModels = hideZeroCostModels
+        self.hiddenClientsEnabled = hiddenClientsEnabled
+        self.hiddenClientIDs = Self.normalizedClientIDs(hiddenClientIDs)
+    }
+
+    static func normalizedClientIDs(_ clientIDs: Set<String>) -> Set<String> {
+        Set(clientIDs.compactMap { clientID in
+            let normalized = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalized.isEmpty ? nil : normalized
+        })
     }
 
     static let defaults = UserPreferences(
@@ -46,6 +62,9 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
         static let statusTextEnabled = "statusTextEnabled"
         static let statusTextTemplate = "statusTextTemplate"
         static let statusTextPeriod = "statusTextPeriod"
+        static let hideZeroCostModels = "hideZeroCostModels"
+        static let hiddenClientsEnabled = "hiddenClientsEnabled"
+        static let hiddenClientIDs = "hiddenClientIDs"
     }
 
     private let defaults: UserDefaults
@@ -63,7 +82,10 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
             statusTextTemplate: defaults.string(forKey: Key.statusTextTemplate)
                 ?? UserPreferences.defaultStatusTextTemplate,
             statusTextPeriod: defaults.string(forKey: Key.statusTextPeriod)
-                .flatMap(ProfilePeriod.init(rawValue:)) ?? .day
+                .flatMap(ProfilePeriod.init(rawValue:)) ?? .day,
+            hideZeroCostModels: defaults.object(forKey: Key.hideZeroCostModels) as? Bool ?? false,
+            hiddenClientsEnabled: defaults.object(forKey: Key.hiddenClientsEnabled) as? Bool ?? false,
+            hiddenClientIDs: Set(defaults.stringArray(forKey: Key.hiddenClientIDs) ?? [])
         )
     }
 
@@ -74,5 +96,11 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
         defaults.set(preferences.statusTextEnabled, forKey: Key.statusTextEnabled)
         defaults.set(preferences.statusTextTemplate, forKey: Key.statusTextTemplate)
         defaults.set(preferences.statusTextPeriod.rawValue, forKey: Key.statusTextPeriod)
+        defaults.set(preferences.hideZeroCostModels, forKey: Key.hideZeroCostModels)
+        defaults.set(preferences.hiddenClientsEnabled, forKey: Key.hiddenClientsEnabled)
+        defaults.set(
+            UserPreferences.normalizedClientIDs(preferences.hiddenClientIDs).sorted(),
+            forKey: Key.hiddenClientIDs
+        )
     }
 }

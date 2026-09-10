@@ -33,5 +33,147 @@
     "client-synthetic.png",
     "client-trae.png",
     "client-zed.webp"
+  ],
+  "externalFiles": [
+    {
+      "file": "client-augment.png",
+      "sourceURL": "https://github.com/augmentcode.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "380637a4b9ba25077d2f2df04ad2cbb90e1a20c776794aad5c5b5ac8a0dc08f2",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-cline.png",
+      "sourceURL": "https://github.com/cline.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "3743e030729b57229fedbfc765759bd3e6c0c4709a467d5885b156947041e6a0",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-codebuddy.png",
+      "sourceURL": "https://pc3.gtimg.com/softmgr/logo/48/43068_48_1764842447.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/main/README.md",
+      "sha256": "af00e39deab174b94e36b042b2d7391149e4aeac2428c226f70cd4abe7e81c3e",
+      "licenseNote": "External image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-commandcode.png",
+      "sourceURL": "https://raw.githubusercontent.com/CommandCodeAI/command-code/main/.github/commandcode/logo/command-code-logo-black-bg.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "2d8a9cdcfa592037eb3aac96212319c40826e06587d29cbfe8c8959e834c3890",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-dsh.png",
+      "sourceURL": "https://github.com/deepseek-ai.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "55e6e0c1ba0c453749211368b8a26e00f470b4ab696ce1fed539d70777d4aab1",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-gjc.png",
+      "sourceURL": "https://github.com/user-attachments/assets/7246e920-f3f8-4b6e-847e-030ae04e86c2",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "54e7183e011a6e17cf2f7c4599253bb4c5ea33c84f3bfc3e73fe1f5c70f78970",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-grok.png",
+      "sourceURL": "https://github.com/xai-org.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "6bebf0c70edd78022a74819fc5c7518af2841860c0f695bfc800087be2504400",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-junie.png",
+      "sourceURL": "https://github.com/JetBrains.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "41b16012713c00ab40d4383161d853937907bcc66219855c4fa4834394bbeca0",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-kimchi.png",
+      "sourceURL": "https://github.com/getkimchi.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "f623fab20dc6e80095c13493af2019ce0b47d08361154c16fe89c137424c374a",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-kiro.jpg",
+      "sourceURL": "https://github.com/kirodotdev.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "736ae5cbf57ddf93bbce9b317188be014b4636189383029aaf697a21312f7952",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-lmstudio.png",
+      "sourceURL": "https://github.com/lmstudio-ai.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "10b5985a86afc001bffdb24e190e86a1fccb519bd4b6c3edaae9cafef591921d",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-mcode.jpg",
+      "sourceURL": "https://github.com/MiniMax-AI.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "d095a4fff8770ace5d8b537a9f642e3c4f1230a56a36177a16537d36d84b2e33",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-micode.jpg",
+      "sourceURL": "https://github.com/XiaomiMiMo.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "37095e5417348f56c997373045b8e975d6c4d92b0d2dcad521f1ce66090d0f85",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-omp.jpg",
+      "sourceURL": "https://github.com/can1357.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "cb207e2e33ccb04d7eb3be7618960aad2ca98d9fbefab6b7ee9b93b6f4e0f722",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-opencodereview.png",
+      "sourceURL": "https://github.com/alibaba.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "13fce6a4cdd19983e6cb80858836c9b9ef533738a21f192ac2c92b53c19baec3",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-prime-agent.jpg",
+      "sourceURL": "https://github.com/PrimeIntellect-ai.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "0f0b0cf00d7d57f6ba5ffaeb295095a9d1383d2224f1a7b788e081d6736d855b",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-unsloth.png",
+      "sourceURL": "https://github.com/unslothai.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "03e3fea0f0578eec973efbfa524893090d7573f8c87894a1124f75962a0f1480",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-warp.png",
+      "sourceURL": "https://github.com/warpdotdev.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "43d38cf382f8836a757393d7461af48147633b19ea938bcaed06821c85acdfab",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-workbuddy.png",
+      "sourceURL": "https://static.workbuddy.cn/web/agents/008054d6beaaf4a83e2d049e982e1244560726dc/assets/share-logo.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "7d3f61f8ac056c9bab7a2da92e22ca58ce616c3bcce21cecebb2952e163bdf38",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    },
+    {
+      "file": "client-zcode.png",
+      "sourceURL": "https://github.com/zai-org.png",
+      "referencedFrom": "https://github.com/junhoyeo/tokscale/blob/4b343e43bf0f1aa78f5032cb082f1c2c4cc76f65/packages/frontend/src/lib/constants.ts",
+      "sha256": "1dcbca35b5988fa3cfde8a14fd4c9509760c7f855683bca7f2721fb5bd0eecd8",
+      "licenseNote": "External product-identification image; not covered by Tokscale-LICENSE.txt. Refer to the source owner's terms."
+    }
   ]
 }

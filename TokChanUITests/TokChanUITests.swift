@@ -81,6 +81,52 @@ final class TokChanUITests: XCTestCase {
         XCTAssertFalse(application.buttons["apply-autosubmit-settings"].exists)
         XCTAssertTrue(application.buttons["cursor-login-button"].exists)
 
+        let displayTab = application.toolbars.buttons["展示配置"]
+        XCTAssertTrue(displayTab.waitForExistence(timeout: 3))
+        displayTab.click()
+        XCTAssertTrue(
+            application.descendants(matching: .any)["settings-display-page"]
+                .waitForExistence(timeout: 3)
+        )
+        let hideZeroCostModels = application.switches["hide-zero-cost-models"]
+        let hiddenClientsEnabled = application.switches["hidden-clients-enabled"]
+        XCTAssertTrue(hideZeroCostModels.exists)
+        XCTAssertTrue(hiddenClientsEnabled.exists)
+        if isToggleOn(hideZeroCostModels) {
+            hideZeroCostModels.click()
+            XCTAssertTrue(waitUntil(timeout: 3) { !self.isToggleOn(hideZeroCostModels) })
+        }
+        hideZeroCostModels.click()
+        XCTAssertTrue(waitUntil(timeout: 3) { self.isToggleOn(hideZeroCostModels) })
+
+        if isToggleOn(hiddenClientsEnabled) {
+            hiddenClientsEnabled.click()
+            XCTAssertTrue(waitUntil(timeout: 3) { !self.isToggleOn(hiddenClientsEnabled) })
+        }
+        XCTAssertFalse(application.switches["hidden-client-codex"].exists)
+        hiddenClientsEnabled.click()
+        XCTAssertTrue(waitUntil(timeout: 3) { self.isToggleOn(hiddenClientsEnabled) })
+
+        let codexSelection = application.switches["hidden-client-codex"]
+        XCTAssertTrue(codexSelection.waitForExistence(timeout: 3))
+        if isToggleOn(codexSelection) {
+            codexSelection.click()
+            XCTAssertTrue(waitUntil(timeout: 3) { !self.isToggleOn(codexSelection) })
+        }
+        codexSelection.click()
+        XCTAssertTrue(waitUntil(timeout: 3) { self.isToggleOn(codexSelection) })
+
+        hiddenClientsEnabled.click()
+        XCTAssertTrue(waitUntil(timeout: 3) { !self.isToggleOn(hiddenClientsEnabled) })
+        XCTAssertTrue(waitUntil(timeout: 3) { !codexSelection.exists })
+
+        hiddenClientsEnabled.click()
+        XCTAssertTrue(waitUntil(timeout: 3) { self.isToggleOn(hiddenClientsEnabled) })
+        XCTAssertTrue(codexSelection.waitForExistence(timeout: 3))
+        XCTAssertTrue(self.isToggleOn(codexSelection))
+        XCTAssertFalse(application.buttons["保存"].exists)
+        XCTAssertFalse(application.buttons["apply-autosubmit-settings"].exists)
+
         let autosubmitTab = application.toolbars.buttons["自动提交"]
         XCTAssertTrue(autosubmitTab.waitForExistence(timeout: 3))
         autosubmitTab.click()
@@ -122,6 +168,12 @@ final class TokChanUITests: XCTestCase {
         let button = application.buttons["check-for-updates"]
         XCTAssertTrue(button.waitForExistence(timeout: 3))
         XCTAssertFalse(button.isEnabled)
+    }
+
+    private func isToggleOn(_ element: XCUIElement) -> Bool {
+        if let number = element.value as? NSNumber { return number.boolValue }
+        guard let value = element.value as? String else { return false }
+        return value == "1" || value.caseInsensitiveCompare("on") == .orderedSame
     }
 
     private func lifecycleCounts(of panel: XCUIElement) -> (appearances: Int, disappearances: Int)? {

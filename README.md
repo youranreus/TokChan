@@ -181,7 +181,7 @@ xcodebuild -project TokChan.xcodeproj \
 
 TokChan 的数据采集、成本计算和提交能力来自 [Tokscale](https://github.com/junhoyeo/tokscale)。感谢 Tokscale 作者 [Junho Yeo](https://github.com/junhoyeo) 和所有上游贡献者，让不同 AI 编程工具的用量可以用统一方式查看。
 
-应用中的客户端原始图标取自 Tokscale 仓库，来源提交记录保存在 [`provenance.json`](TokChan/Resources/ClientOriginals/provenance.json)，对应的 MIT 许可证副本见 [`Tokscale-LICENSE.txt`](TokChan/Resources/ClientOriginals/Tokscale-LICENSE.txt)。这份许可证只说明所引用上游资源的授权情况，不代表 TokChan 仓库已经声明了项目许可证。
+除单独注明的资源外，应用中的客户端原始图标复制自 Tokscale 仓库，来源提交记录保存在 [`provenance.json`](TokChan/Resources/ClientOriginals/provenance.json)，Tokscale 的 MIT 许可证副本见 [`Tokscale-LICENSE.txt`](TokChan/Resources/ClientOriginals/Tokscale-LICENSE.txt)。Tokscale 注册表中引用的外部产品图标按原地址获取，其 URL 与 SHA-256 同样记录在 `provenance.json` 中，不属于上述 Tokscale MIT 许可证副本的覆盖范围。各资源的实际授权以来源方条款为准，图标仅用于标识对应产品，不代表来源方认可 TokChan；这些说明也不代表 TokChan 仓库已经声明了项目许可证。
 
 本项目认可 「[LINUXDO](https://linux.do/)」社区。
 

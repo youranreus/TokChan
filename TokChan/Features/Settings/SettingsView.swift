@@ -74,6 +74,7 @@ struct SettingsView: View {
 
     private enum SettingsTab: Hashable {
         case general
+        case display
         case autosubmit
         case customPricing
         case about
@@ -110,6 +111,14 @@ struct SettingsView: View {
                 Label("常规", systemImage: "slider.horizontal.3")
             }
             .tag(SettingsTab.general)
+
+            settingsPage {
+                displaySettings
+            }
+            .tabItem {
+                Label("展示配置", systemImage: "eye")
+            }
+            .tag(SettingsTab.display)
 
             autosubmitPage
             .tabItem {
@@ -270,6 +279,57 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .accessibilityIdentifier("settings-general-page")
+    }
+
+    private var displaySettings: some View {
+        Form {
+            Section("模型明细") {
+                Toggle(
+                    "隐藏开销为 0 的模型",
+                    isOn: preferenceBinding(\UserPreferences.hideZeroCostModels)
+                )
+                .toggleStyle(.switch)
+                .accessibilityIdentifier("hide-zero-cost-models")
+
+                Text("只隐藏模型明细，客户端汇总和顶部统计不会改变。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("客户端") {
+                Toggle(
+                    "隐藏指定客户端",
+                    isOn: preferenceBinding(\UserPreferences.hiddenClientsEnabled)
+                )
+                .toggleStyle(.switch)
+                .accessibilityIdentifier("hidden-clients-enabled")
+
+                Text("开启后，所选客户端将不会显示在面板的客户端用量列表中。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if viewModel.preferences.hiddenClientsEnabled {
+                    if viewModel.availableClientIDs.isEmpty {
+                        Label("本地统计中还没有可选择的客户端。", systemImage: "tray")
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("hidden-client-candidates-empty")
+                    } else {
+                        ForEach(viewModel.availableClientIDs, id: \.self) { clientID in
+                            Toggle(isOn: hiddenClientBinding(clientID)) {
+                                HStack(spacing: 8) {
+                                    ClientIcon(clientID: clientID)
+                                    Text(clientID)
+                                }
+                            }
+                            .toggleStyle(.switch)
+                            .accessibilityIdentifier("hidden-client-\(clientID)")
+                        }
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .accessibilityIdentifier("settings-display-page")
     }
 
     private var launchAtLoginSettings: some View {
@@ -549,6 +609,21 @@ struct SettingsView: View {
             set: { value in
                 var updated = viewModel.preferences
                 updated[keyPath: keyPath] = value
+                viewModel.updatePreferences(updated)
+            }
+        )
+    }
+
+    private func hiddenClientBinding(_ clientID: String) -> Binding<Bool> {
+        Binding(
+            get: { viewModel.preferences.hiddenClientIDs.contains(clientID) },
+            set: { shouldHide in
+                var updated = viewModel.preferences
+                if shouldHide {
+                    updated.hiddenClientIDs.insert(clientID)
+                } else {
+                    updated.hiddenClientIDs.remove(clientID)
+                }
                 viewModel.updatePreferences(updated)
             }
         )
