@@ -543,3 +543,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 19: 本地与在线数据模式切换实现与验证
+<!-- trellis-session: v=2 fp=c6921b00594488e4 -->
+
+**Date**: 2026-09-10
+**Task**: 本地与在线数据模式切换实现与验证
+**Branch**: `feat/local-online-data-mode`
+
+### Summary
+
+完成本地/在线双数据源实现：新增 DashboardDataReading 抽象与 Tokscale graph 本地数据源（按 CLI 时区派生 all/day/week/month）、缓存 schema 3 按来源隔离与旧 schema 仅迁移为线上、欢迎页模式选择与独立初始化标记、设置清空配置入口、右键菜单模式切换与检查更新。271→275 个单元测试全部通过，Release 构建成功，81 项离线发布检查通过；检查阶段修复 graph summary 一致性校验、重置后迟到自动提交状态读取、clear() 协议义务与本地模式下账号变更未重写快照四项问题。UI 测试因 SystemUIServer 未暴露菜单栏项跳过，未做真机视觉核对。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ff28d45` | feat: 支持本地与在线数据模式切换 |
+
+### Status
+
+[OK] **Completed**
