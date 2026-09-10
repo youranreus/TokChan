@@ -234,6 +234,127 @@ func panelDidAppear() {
 
 Round-trip a complete all/day/week/month batch through JSON, reconstruct the view model, and select every scope without requests. At 299 seconds assert no statistics request; at 300 seconds assert one read-only batch. Submit once and assert submit precedes one whole-batch fetch. Decode previous single-profile/multi-profile snapshots as stale migration input. Do not display background refresh narration or make the submit button spin for a cached silent read.
 
+## Scenario: Panel default period preference
+
+### 1. Scope / Trigger
+
+Use this contract when changing which statistics scope the menu panel opens in. This is a presentation-only preference: it is independent of `statusTextPeriod`, and it must not become a cache field, an aggregation input, or a scheduler trigger.
+
+### 2. Signatures
+
+```swift
+enum ProfilePeriod: String, Codable, CaseIterable, Identifiable { case all, day, week, month }
+
+struct UserPreferences {
+    var defaultPeriod: ProfilePeriod        // missing or unknown key -> .day
+    var statusTextPeriod: ProfilePeriod     // unrelated; still defaults to .day
+    var dataMode: DashboardDataMode
+    var hasCompletedInitialization: Bool
+}
+
+@MainActor extension DashboardViewModel {
+    func panelWillAppear()   // cache-only; runs before NSPopover.show
+    func panelDidAppear()    // popoverDidShow; repeats the same application
+    func selectPeriod(_ period: ProfilePeriod) async
+    func resetConfiguration(disableLaunchAtLogin: () throws -> Void) async -> Bool
+}
+
+@MainActor private extension DashboardViewModel {
+    func applyCachedPeriod(_ period: ProfilePeriod, clearIdentityWhenUnavailable: Bool) -> Bool
+}
+```
+
+### 3. Contracts
+
+- Persist `defaultPeriod` through `UserDefaultsPreferencesStore` as its `rawValue`; a missing key and an unknown raw value both decode `.day`. The key belongs to `Key.all` so `clear()` removes it. `UserPreferences.defaults.defaultPeriod` is `.day`, so a fresh install and an upgraded install behave identically. `DashboardViewModel.normalized(_:)` passes the field through unchanged.
+- `panelWillAppear()` applies `preferences.defaultPeriod` on **every** open, and `StatusItemCoordinator` calls it inside the `show:` closure **before** `popover.show(...)`. Running ahead of the show is what keeps the scope restored from the snapshot off screen; applying it only from `popoverDidShow` draws the restored scope first and then jumps. It overrides both the snapshot-restored `selectedPeriod` and any manual in-session switch, so a manual scope change is deliberately **not** remembered across panel re-opens — a deliberate behavior change from the earlier persisted-selection behavior.
+- `panelWillAppear()` does no visibility bookkeeping, so it never touches `isPanelVisible` or the DEBUG `panelAppearanceCount`; `panelDidAppear()` keeps both and calls the same application, making the pre-show and post-show paths idempotent rather than divergent.
+- The panel-open reset consumes only the in-memory batch and completes in one synchronous MainActor turn, setting `selectedPeriod`, `profileState`, and `identityProfile` together so no intermediate frame renders the previous scope.
+- The reset issues **zero** Tokscale CLI/API calls, **zero** cache snapshot writes, and **zero** scheduler changes. On a batch miss it shows the loading state, clears identity, and waits for the application-level scheduler instead of fabricating an independent scope request.
+- `selectPeriod(_:)` keeps its existing behavior: a cached hit applies immediately; a miss keeps the currently visible `identityProfile`, shows `.loading`, and performs exactly one whole-batch read; a successful selection persists the snapshot. Both paths share `applyCachedPeriod(_:clearIdentityWhenUnavailable:)` so they cannot drift; only the panel-open path clears identity on a miss.
+- `resetConfiguration` resolves `selectedPeriod` from the reloaded cleared preferences (`preferences.defaultPeriod`), never from a hardcoded `.all`.
+- Init-time hydration from `DashboardCacheSnapshot.selectedPeriod` is unchanged, so the snapshot schema and its round-trip behavior stay intact. `selectedPeriod` may therefore hold the restored snapshot scope between launch and the first panel open; the panel is the only surface that renders it, and the pre-show application keeps that value from ever being drawn. No test should assert the preference value at init time.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| `defaultPeriod` key missing or unknown raw value | Decode `.day`; panel opens on 日 |
+| Configured scope present in the in-memory batch | Apply scope plus matching metrics/identity synchronously; zero events, zero cache writes |
+| Configured scope absent from the batch | Show `.loading`, clear identity, issue zero requests and zero cache writes |
+| Snapshot restored a different scope | Panel open replaces it with the preference |
+| User switched scope manually, then closed and reopened the panel | Reopened panel shows the configured value |
+| `clear()` runs | Removes the `defaultPeriod` key along with the other owned keys |
+| Configuration reset completes | `selectedPeriod` equals `UserPreferences.defaults.defaultPeriod` (`.day`) |
+| Snapshot `selectedPeriod` decodes/round-trips | Unchanged; no schema or migration change |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a complete batch is cached, the preference is `.week`, and opening the panel shows week metrics in one render with zero requests and no cache write.
+- Base: an upgraded install has no `defaultPeriod` key, decodes `.day`, and the panel opens on 日 exactly like a fresh install.
+- Bad: calling `reloadProfiles` or `persistCurrentSnapshot()` from a panel hook, clearing `identityProfile` on `selectPeriod`'s cache-miss path, hardcoding `.all` in `resetConfiguration`, repurposing `statusTextPeriod` as the panel default, or applying the scope only after the popover is on screen (no `panelWillAppear()` before `popover.show`), which draws the snapshot-restored scope first and then jumps.
+
+### 6. Tests Required
+
+- Preferences: `defaultPeriod` round-trips a non-default value and stores its raw string; a missing key and an unknown raw value both decode `.day`; `clear()` removes the key; `UserPreferences.defaults.defaultPeriod == .day`.
+- Panel open: on a complete batch whose snapshot scope differs, `selectedPeriod`, `profileState.loadedValue?.period`, and `identityProfile?.period` all equal the preference after one synchronous call; assert zero recorded `submit`/`run`/`fetch`/`configure`/`disable` events and an unchanged cache `saveCount`.
+- Async-regression sensitivity: repeat the zero-side-effect assertion against a **stale** snapshot and drain the main-actor queue (`for _ in 0..<10 { await Task.yield() }`) before asserting, so a `Task`-spawned `reloadProfiles` regression fails the test instead of racing past it.
+- Batch miss: the configured scope absent from the batch yields `.loading`, a cleared `identityProfile`, and still zero events and zero cache writes.
+- Manual switch: `selectPeriod(.month)` followed by `panelDidDisappear()` + `panelDidAppear()` returns to the configured value.
+- `selectPeriod` cache miss: assert `.loading`, the previous `identityProfile` retained, and exactly one whole-batch read.
+- Reset: after `resetConfiguration`, `selectedPeriod == .day`, and a subsequent `panelDidAppear()` keeps `.day`.
+- Cache: `DashboardCacheStoreTests` snapshot round-trip passes unchanged.
+- Pre-show hook: `panelWillAppear()` settles the configured scope while leaving `panelAppearanceCount` unchanged, and the following `panelDidAppear()` increments it once and repeats the same scope — proving the no-flash ordering without a UI test.
+- UI/accessibility: the Settings display page exposes `default-period` as a **pop-up select** (`.pickerStyle(.menu)`), so assert it through `application.popUpButtons["default-period"]` and read the chosen scope from `value` (a `String` title); change it by `click()`ing the control and picking from `application.menuItems[...]`. Do not query `radioButtons`, and never use `XCUIElement.isSelected`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```swift
+func panelDidAppear() {
+    isPanelVisible = true
+    selectedPeriod = preferences.defaultPeriod
+    if cachedProfiles[selectedPeriod] == nil {
+        Task { _ = await reloadProfiles(force: false, automatic: true) }  // panel open now owns freshness
+    }
+}
+
+// No pre-show hook: the popover draws the snapshot-restored scope, then jumps.
+func popoverDidShow(_ notification: Notification) {
+    viewModel.panelDidAppear()
+}
+```
+
+#### Correct
+
+```swift
+// StatusItemCoordinator calls this inside the popover `show:` closure, before `popover.show(...)`.
+func panelWillAppear() {
+    applyCachedPeriod(preferences.defaultPeriod, clearIdentityWhenUnavailable: true)
+}
+
+func panelDidAppear() {
+    guard !isPanelVisible else { return }
+    panelAppearanceCount += 1          // DEBUG build only
+    isPanelVisible = true
+    panelWillAppear()                  // same idempotent application, post-show
+}
+
+@discardableResult
+private func applyCachedPeriod(_ period: ProfilePeriod, clearIdentityWhenUnavailable: Bool) -> Bool {
+    selectedPeriod = period
+    if let cached = cachedProfiles[period], matchesCurrentSource(cached.data) {
+        profileState = .loaded(cached.data)
+        identityProfile = cached.data
+        return true
+    }
+    profileState = .loading
+    if clearIdentityWhenUnavailable { identityProfile = nil }
+    return false
+}
+```
+
 ## Scenario: Data-source modes, initialization, and configuration reset
 
 ### 1. Scope / Trigger

@@ -119,7 +119,7 @@ viewModel.$preferences.sink { [weak self] incoming in
     self.updateStatusItem(with: self.viewModel.statusItemTitle(for: incoming))
 }
 ```
-Only `NSPopoverDelegate.popoverDidShow` and `popoverDidClose` may call `DashboardViewModel.panelDidAppear()` and `panelDidDisappear()`. `DashboardView` must not duplicate those callbacks with `onAppear`/`onDisappear`; SwiftUI view lifecycle is not authoritative popover visibility.
+Only `NSPopoverDelegate.popoverDidShow` and `popoverDidClose` may call `DashboardViewModel.panelDidAppear()` and `panelDidDisappear()`. The status-item coordinator additionally calls `panelWillAppear()` inside the `show:` action, immediately before `popover.show(...)`; that call performs no visibility bookkeeping and exists only so the popover's first frame already shows the configured scope. `DashboardView` must not duplicate those callbacks with `onAppear`/`onDisappear`; SwiftUI view lifecycle is not authoritative popover visibility.
 
 ### Native preferences toolbar
 
@@ -177,6 +177,8 @@ Each client defaults to its top five models in existing token-descending order. 
 Check light and dark renderings, zero/absent breakdown data, long client lists, and rapid scope changes. DashboardLayoutTests renders the real SwiftUI view at its fixed dimensions without remote dependencies.
 
 Cache-first loading keeps the header button reserved for explicit submit/refresh feedback. A silent read with cached content must not spin or disable that button, clear metrics, reset the selected scope, or show a success/error banner. First load without data may use the existing loading/failure state.
+
+**Distinguish this from the intentional panel-open reset.** The rule above constrains silent background reads. `panelWillAppear()` deliberately re-applies `UserPreferences.defaultPeriod` before the popover is shown, and `panelDidAppear()` repeats it, so the selected scope does change on every open; that reset is cache-only, issues no request, and writes no snapshot. Keep the pre-show call ahead of `popover.show`, otherwise the snapshot-restored scope is drawn first. Do not delete the reset to satisfy the rule above, and do not implement it by spawning a read. See `.trellis/spec/macos/data-persistence.md` → 「Scenario: Panel default period preference」.
 
 Popover delegate callbacks own presentation state only: visibility, the presentation generation, and banner lifetime. They must never start, stop, or reschedule statistics refresh, and they must never read autosubmit status. The five-minute schedule belongs to the application-level scheduler described in `data-persistence.md`, so a closed panel keeps the status-item title current. A completed manual-operation banner clears on close; if closing races with an in-flight operation, its eventual result remains available to non-dashboard consumers but must not appear after the popover is reopened.
 
