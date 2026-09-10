@@ -172,6 +172,8 @@ The 380×680 dashboard popover has a fixed outer VStack. Identity/status (includ
 
 Each client defaults to its top five models in existing token-descending order. Expand/collapse affects visible rows only. Reset the client subtree identity on scope change so expansion and scroll position reset. Use Tokens in user-facing copy.
 
+`ClientIcon` is the single client-ID-to-asset registry and visual treatment for Dashboard and Settings. Keep its authoritative ID set aligned with Tokscale's `SUPPORTED_CLIENT_TYPES`; explicit aliases may share one asset only for the same product or an upstream-documented compatibility mark. Keep distinct products distinct: `codebuddy` resolves to `client-codebuddy`, while `codebuff` resolves to `client-codebuff`. Apply the macOS-app-style rounded mask and subtle shadow inside `ClientIcon`, not independently at call sites. When adding an externally sourced icon, bundle it in the asset catalog, retain the original under `Resources/ClientOriginals`, record URL and SHA-256 in `provenance.json`, and do not imply that Tokscale's MIT license covers an external image. Asset tests must assert full authoritative mapping coverage and successful bundle loading.
+
 Check light and dark renderings, zero/absent breakdown data, long client lists, and rapid scope changes. DashboardLayoutTests renders the real SwiftUI view at its fixed dimensions without remote dependencies.
 
 Cache-first loading keeps the header button reserved for explicit submit/refresh feedback. A silent read with cached content must not spin or disable that button, clear metrics, reset the selected scope, or show a success/error banner. First load without data may use the existing loading/failure state.

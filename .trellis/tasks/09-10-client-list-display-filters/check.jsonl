@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/macos/index.md", "reason": "Full macOS quality checklist entry point"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "Verify native Settings and Dashboard presentation contracts"}
+{"file": ".trellis/spec/macos/data-persistence.md", "reason": "Verify backward-compatible preferences and untouched cache semantics"}
+{"file": ".trellis/spec/macos/quality-guidelines.md", "reason": "Review Swift quality and accessibility"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "Run and assess required tests"}

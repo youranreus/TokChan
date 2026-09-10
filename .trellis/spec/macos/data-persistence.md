@@ -28,6 +28,89 @@ No persistence requirement exists yet. Choose the smallest durable storage that 
 
 Keep `statusTextEnabled`, `statusTextTemplate`, and `statusTextPeriod` in `UserPreferences` through `UserDefaultsPreferencesStore`; they are small user choices, not dashboard cache fields. Missing keys decode as `false`, `{token} · {cost}`, and `.day`; an unknown period raw value also falls back to `.day`. Preserve template bytes as entered, including empty strings and unknown placeholders. Persist General control changes immediately through `DashboardViewModel.updatePreferences(_:)`; this local update must not submit usage, configure autosubmit, or fetch profile/status data. Round-trip all keys in tests and assert old stores remain compatible.
 
+## Scenario: Dashboard display-filter preferences
+
+### 1. Scope / Trigger
+
+Use this contract when adding or changing local preferences that hide dashboard client or model detail. Display filtering is a projection over loaded data; it must not become part of Tokscale aggregation or the dashboard snapshot schema.
+
+### 2. Signatures
+
+```swift
+struct UserPreferences {
+    var hideZeroCostModels: Bool       // default false
+    var hiddenClientsEnabled: Bool     // default false
+    var hiddenClientIDs: Set<String>   // default []
+}
+
+enum DashboardDisplayFilter {
+    static func clients(
+        from sourceClients: [ClientUsageGroup],
+        preferences: UserPreferences
+    ) -> [ClientUsageGroup]
+}
+
+@MainActor
+extension DashboardViewModel {
+    var availableClientIDs: [String] { get }
+}
+```
+
+### 3. Contracts
+
+- Persist the three fields through `UserDefaultsPreferencesStore`. Save `hiddenClientIDs` as a sorted string array; trim whitespace, discard empty IDs, and deduplicate on construction/normalization.
+- Missing keys decode as disabled switches and an empty set, preserving pre-feature display after upgrade.
+- `availableClientIDs` is derived from the union of every in-memory all/day/week/month cached profile plus persisted hidden IDs. Sort the result for stable Settings presentation; do not persist a second candidate-list source of truth.
+- Client filtering applies only when `hiddenClientsEnabled` is true. Model filtering removes only models whose `cost == 0`, preserves negative and positive nonzero costs, and never removes a client merely because its projected model list is empty.
+- Preserve client/model order, client totals, percentages, metrics, status-item text, and the raw cache. Ordinary control changes persist immediately through `updatePreferences(_:)` and must issue no API/CLI call or cache write.
+- Dashboard source-empty and display-filter-empty states are distinct. Settings uses a native `TabView` page; the master enable control and each independent client membership choice use native switch semantics with `ClientIcon`. Do not model persistent settings as modifier-key `List` selection. Render candidate rows only while the master switch is enabled; disabling it collapses the list without clearing `hiddenClientIDs`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| New UserDefaults keys missing | Show every client/model; hidden-client selection is empty |
+| Stored client IDs contain whitespace, duplicates, or empty values | Trim, deduplicate, and discard empties |
+| Hidden IDs are absent from every current period | Keep them persisted and include them in Settings candidates |
+| Client master switch is off | Preserve selections, show all clients, and collapse candidate rows in Settings |
+| Zero-cost filtering removes every model under a client | Keep the client summary card with an empty model list |
+| Client filtering removes every source client | Show the display-filter-empty message, not the source-empty message |
+| Display preference changes | Save preferences and republish UI only; perform zero API/CLI/cache operations |
+
+### 5. Good / Base / Bad Cases
+
+- Good: four cached periods contribute different client IDs; Settings shows their sorted union plus one selected absent ID, and enabling both filters changes only rendered rows.
+- Base: an upgraded install has none of the new keys and renders exactly the unfiltered dashboard.
+- Bad: filtering `DashboardData` during aggregation, rewriting the snapshot with projected clients, using only the selected period for candidates, or clearing selections when the master switch turns off.
+
+### 6. Tests Required
+
+- Preferences: round-trip all fields, assert sorted array storage, and assert missing-key defaults plus client-ID normalization.
+- Projection: assert default pass-through, exact-zero model removal, independent and combined client filtering, stable order/totals/percentages, source immutability, and retention of a client with no projected models.
+- View model: hydrate distinct clients across all four cached periods, include persisted absent selections, and assert a display-only update records zero external events and zero cache writes.
+- UI/accessibility: expose stable identifiers for the display page, master switch, and client switches; assert candidate rows collapse while disabled and reappear with retained selections after re-enabling, and distinguish source-empty from filter-empty copy.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```swift
+// This corrupts the cache/metrics boundary by treating a display preference as source data.
+profile.clients.removeAll { preferences.hiddenClientIDs.contains($0.id) }
+cacheStore.save(profile)
+```
+
+#### Correct
+
+```swift
+let visibleClients = DashboardDisplayFilter.clients(
+    from: profile.clients,
+    preferences: preferences
+)
+// Render visibleClients; keep profile and its cached representation unchanged.
+```
+
+
 ## Scenario: Dashboard snapshot cache
 
 ### 1. Scope / Trigger

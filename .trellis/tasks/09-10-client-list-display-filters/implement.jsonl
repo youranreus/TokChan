@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/macos/index.md", "reason": "TokChan macOS package conventions and pre-development checklist"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "Native Settings tabs, immediate preference bindings, Dashboard viewport and accessibility contracts"}
+{"file": ".trellis/spec/macos/state-management.md", "reason": "Derived state and observable view-model boundaries"}
+{"file": ".trellis/spec/macos/data-persistence.md", "reason": "UserDefaults preference compatibility and immutable dashboard cache boundary"}
+{"file": ".trellis/spec/macos/quality-guidelines.md", "reason": "Swift quality, accessibility, and dependency constraints"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "Required deterministic unit, view-model, and UI validation"}

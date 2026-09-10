@@ -65,6 +65,6 @@ Required checks:
 
 ## Client brand resources
 
-ClientIcon maps canonical API IDs to bundled client-* image sets; codex maps to openai and kilo to kilocode. Unknown IDs use the generic terminal fallback. Keep original upstream files and commit provenance under Resources/ClientOriginals and include the upstream license. Asset catalogs use original rendering; the Zed WebP has a PNG presentation copy because actool requires a supported format. Add every upstream client image, not only clients currently present in an account.
+`ClientIcon` maps Tokscale's authoritative `SUPPORTED_CLIENT_TYPES` IDs to bundled `client-*` image sets; documented same-product IDs may share an asset, while distinct products must remain distinct. Unknown IDs use the generic terminal fallback. Keep exact upstream/external originals and provenance under `Resources/ClientOriginals`; include the upstream license for copied Tokscale files and explicit source-owner license notes for external images. Asset catalogs may use normalized PNG presentation copies when the exact source encoding or shape is unsuitable for `actool`. Add every authoritative client image, not only clients currently present in an account.
 
-TokenBreakdownTests must load all known image names from the app bundle. Network image loading is reserved for the user avatar, never client logos.
+`TokenBreakdownTests` must compare the authoritative ID set explicitly, resolve every ID, and load every mapped image name from the app bundle. Network image loading is reserved for the user avatar, never client logos.
