@@ -1,0 +1,61 @@
+{
+  "meta": {
+    "generatedAt": "2026-09-10T08:00:00Z"
+  },
+  "summary": {
+    "totalTokens": 111,
+    "totalCost": 1.11,
+    "activeDays": 4
+  },
+  "contributions": [
+    {
+      "date": "2026-08-11",
+      "totals": { "tokens": 1, "cost": 0.01 },
+      "tokenBreakdown": { "input": 1 },
+      "clients": [
+        { "client": "codex", "modelId": "old", "tokens": { "input": 1 }, "cost": 0.01 }
+      ]
+    },
+    {
+      "date": "2026-08-12",
+      "totals": { "tokens": 10, "cost": 0.1 },
+      "tokenBreakdown": { "input": 10 },
+      "clients": [
+        { "client": "codex", "modelId": "month", "tokens": { "input": 10 }, "cost": 0.1 }
+      ]
+    },
+    {
+      "date": "2026-09-04",
+      "totals": { "tokens": 30, "cost": 0.3 },
+      "tokenBreakdown": { "output": 30 },
+      "clients": [
+        { "client": "cursor", "modelId": "shared", "tokens": { "output": 30 }, "cost": 0.3 }
+      ]
+    },
+    {
+      "date": "2026-09-10",
+      "totals": { "tokens": 70, "cost": 0.7 },
+      "tokenBreakdown": {
+        "input": 10,
+        "output": 20,
+        "cacheRead": 30,
+        "cacheWrite": 5,
+        "reasoning": 5
+      },
+      "clients": [
+        {
+          "client": "cursor",
+          "modelId": "shared",
+          "tokens": {
+            "input": 10,
+            "output": 20,
+            "cacheRead": 30,
+            "cacheWrite": 5,
+            "reasoning": 5
+          },
+          "cost": 0.7
+        }
+      ]
+    }
+  ]
+}

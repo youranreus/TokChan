@@ -32,6 +32,10 @@ struct DashboardView: View {
                     }
                 }
                 operationBanner
+                if let warning = viewModel.sourceWarningMessage {
+                    StatusBanner(text: warning, color: .orange, showsProgress: false)
+                        .accessibilityIdentifier("dashboard-source-warning")
+                }
                 Picker("时间范围", selection: Binding(
                     get: { viewModel.selectedPeriod },
                     set: { period in Task { await viewModel.selectPeriod(period) } }
@@ -67,21 +71,28 @@ struct DashboardView: View {
 
     private func header(_ profile: DashboardData) -> some View {
         HStack(spacing: 10) {
-            AsyncImage(url: profile.avatarURL) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                Image(systemName: "person.crop.circle.fill")
-                    .resizable()
+            if viewModel.preferences.dataMode == .local {
+                Image(systemName: "desktopcomputer")
+                    .font(.system(size: 24))
                     .foregroundStyle(.secondary)
+                    .frame(width: 34, height: 34)
+            } else {
+                AsyncImage(url: profile.avatarURL) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    Image(systemName: "person.crop.circle.fill")
+                        .resizable()
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 34, height: 34)
+                .clipShape(Circle())
             }
-            .frame(width: 34, height: 34)
-            .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(profile.displayName)
+                Text(viewModel.preferences.dataMode == .local ? "本地模式" : profile.displayName)
                     .font(.headline)
                     .lineLimit(1)
-                Text("@\(profile.username)")
+                Text(viewModel.preferences.dataMode == .local ? "Tokscale 本地统计" : "@\(profile.username)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -103,7 +114,7 @@ struct DashboardView: View {
 
     private var submitButton: some View {
         Button {
-            Task { await viewModel.submitUsageAndRefreshStatistics() }
+            Task { await viewModel.refreshCurrentSourceFromPanel() }
         } label: {
             if viewModel.isLoading {
                 ProgressView().controlSize(.small)
@@ -114,8 +125,8 @@ struct DashboardView: View {
         .frame(width: 20, height: 20)
         .buttonStyle(.borderless)
         .disabled(viewModel.isLoading)
-        .help(StatusMenuBuilder.title(for: .submitAndRefresh(isEnabled: true)) ?? "")
-        .accessibilityLabel(StatusMenuBuilder.title(for: .submitAndRefresh(isEnabled: true)) ?? "")
+        .help(viewModel.preferences.dataMode == .local ? "读取本地数据" : (StatusMenuBuilder.title(for: .submitAndRefresh(isEnabled: true)) ?? ""))
+        .accessibilityLabel(viewModel.preferences.dataMode == .local ? "读取本地数据" : (StatusMenuBuilder.title(for: .submitAndRefresh(isEnabled: true)) ?? ""))
         .accessibilityIdentifier("submit-refresh-button")
     }
 
@@ -123,8 +134,10 @@ struct DashboardView: View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
             MetricView(title: "Tokens", value: DisplayFormatters.compactNumber(profile.totalTokens))
             MetricView(title: "成本", value: DisplayFormatters.currency(profile.totalCost))
-            MetricView(title: "排名", value: profile.rank.map { "#\($0)" } ?? "—")
-            MetricView(title: "活跃天数", value: "\(profile.activeDays)")
+            if viewModel.preferences.dataMode == .online {
+                MetricView(title: "排名", value: profile.rank.map { "#\($0)" } ?? "—")
+                MetricView(title: "活跃天数", value: "\(profile.activeDays)")
+            }
         }
     }
 
@@ -158,7 +171,9 @@ struct DashboardView: View {
                 preferences: viewModel.preferences
             )
             if profile.clients.isEmpty {
-                Text("此范围暂时没有已提交的客户端或模型明细。")
+                Text(viewModel.preferences.dataMode == .local
+                    ? "此范围暂时没有本地客户端或模型明细。"
+                    : "此范围暂时没有已提交的客户端或模型明细。")
                     .font(.callout).foregroundStyle(.secondary)
                     .padding(.horizontal, 14)
                     .accessibilityIdentifier("client-usage-source-empty")

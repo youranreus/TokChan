@@ -20,6 +20,59 @@ final class DashboardCacheStoreTests: XCTestCase {
         XCTAssertEqual(store.load(), expected)
     }
 
+    func testRoundTripsSourceIsolatedProfilesAndFetchTimes() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TokChanCacheSources-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("snapshot.json")
+        let online = try makeProfile()
+        let local = DashboardData(
+            period: .all,
+            dateRange: online.dateRange,
+            breakdown: online.breakdown,
+            totalTokens: 7,
+            totalCost: 0.07,
+            updatedAt: online.updatedAt,
+            clients: []
+        )
+        let onlineDate = Date(timeIntervalSince1970: 100)
+        let localDate = Date(timeIntervalSince1970: 200)
+        let snapshot = DashboardCacheSnapshot(
+            profile: local,
+            autosubmit: nil,
+            savedAt: localDate,
+            profiles: [
+                CachedDashboardProfile(data: online, savedAt: onlineDate, source: .online),
+                CachedDashboardProfile(data: local, savedAt: localDate, source: .local)
+            ],
+            fetchedAt: onlineDate,
+            fetchedAtBySource: [.online: onlineDate, .local: localDate]
+        )
+        let store = FileDashboardCacheStore(fileURL: fileURL)
+
+        try store.save(snapshot)
+
+        XCTAssertEqual(store.load(), snapshot)
+    }
+
+    func testClearDeletesCurrentAndLegacySnapshots() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TokChanCacheClear-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let current = directory.appendingPathComponent("Application Support/snapshot.json")
+        let legacy = directory.appendingPathComponent("Caches/snapshot.json")
+        try FileManager.default.createDirectory(at: current.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: legacy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("current".utf8).write(to: current)
+        try Data("legacy".utf8).write(to: legacy)
+        let store = FileDashboardCacheStore(fileURL: current, legacyFileURL: legacy)
+
+        try store.clear()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: current.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacy.path))
+    }
+
     func testCorruptedCacheIsIgnored() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("TokChanCacheTests-\(UUID().uuidString)", isDirectory: true)
@@ -52,6 +105,70 @@ final class DashboardCacheStoreTests: XCTestCase {
         XCTAssertEqual(decoded.profiles.map(\.data), [profile])
         XCTAssertEqual(decoded.selectedPeriod, .all)
         XCTAssertFalse(decoded.isCompleteBatch)
+    }
+
+    func testMigratesSchemaTwoCompleteBatchAsOnlineOnly() throws {
+        let fetchedAt = Date(timeIntervalSince1970: 100)
+        let profile = try makeProfile()
+        let profiles = ProfilePeriod.allCases.map { period in
+            CachedDashboardProfile(
+                data: DashboardData(
+                    period: period,
+                    dateRange: profile.dateRange,
+                    breakdown: profile.breakdown,
+                    username: profile.username,
+                    displayName: profile.displayName,
+                    avatarURL: profile.avatarURL,
+                    rank: profile.rank,
+                    totalTokens: profile.totalTokens,
+                    totalCost: profile.totalCost,
+                    activeDays: profile.activeDays,
+                    updatedAt: profile.updatedAt,
+                    clients: profile.clients
+                ),
+                savedAt: fetchedAt
+            )
+        }
+        let snapshot = DashboardCacheSnapshot(
+            profile: profiles.first?.data,
+            autosubmit: nil,
+            savedAt: fetchedAt,
+            profiles: profiles,
+            schemaVersion: 2,
+            username: profile.username,
+            fetchedAt: fetchedAt
+        )
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
+        legacy.removeValue(forKey: "fetchedAtBySource")
+        legacy["profiles"] = try XCTUnwrap(legacy["profiles"] as? [[String: Any]]).map { entry in
+            var migrated = entry
+            // Schema 2 had no source contract; even an unexpected stale field must not relabel it as local.
+            migrated["source"] = DashboardDataMode.local.rawValue
+            return migrated
+        }
+
+        let decoded = try JSONDecoder().decode(
+            DashboardCacheSnapshot.self,
+            from: JSONSerialization.data(withJSONObject: legacy)
+        )
+
+        XCTAssertTrue(decoded.profiles.allSatisfy { $0.source == .online })
+        XCTAssertTrue(decoded.isCompleteBatch(for: .online, account: profile.username))
+        XCTAssertFalse(decoded.isCompleteBatch(for: .local))
+    }
+
+    func testSourceTimestampDoesNotMakeIncompleteBatchFresh() throws {
+        let fetchedAt = Date(timeIntervalSince1970: 100)
+        let profile = try makeProfile()
+        let snapshot = DashboardCacheSnapshot(
+            profile: profile,
+            autosubmit: nil,
+            savedAt: fetchedAt,
+            profiles: [CachedDashboardProfile(data: profile, savedAt: fetchedAt, source: .local)],
+            fetchedAtBySource: [.local: fetchedAt]
+        )
+
+        XCTAssertFalse(snapshot.isCompleteBatch(for: .local))
     }
 
     func testCorruptNewSnapshotFallsBackToLegacyCachesFile() throws {

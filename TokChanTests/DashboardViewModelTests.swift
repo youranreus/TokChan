@@ -2755,6 +2755,7 @@ private final class InMemoryCache: DashboardCacheStoring {
         if let saveError { throw saveError }
         self.snapshot = snapshot
     }
+    func clear() throws { snapshot = nil }
 }
 
 private actor SequencedBatchAPI: TokscaleAPIService {

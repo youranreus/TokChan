@@ -22,6 +22,8 @@ enum StatusMenuDescriptor: Equatable {
     case separator
     case submitAndRefresh(isEnabled: Bool)
     case refreshStatistics(isEnabled: Bool)
+    case dataMode(DashboardDataMode, isSelected: Bool, isEnabled: Bool)
+    case checkForUpdates(isEnabled: Bool)
     case settings
     case quit
 }
@@ -30,15 +32,27 @@ enum StatusMenuBuilder {
     static func descriptors(
         freshness: String?,
         diagnostics: [String],
-        actionsEnabled: Bool
+        actionsEnabled: Bool,
+        applicationInfo: String? = nil,
+        selectedMode: DashboardDataMode? = nil,
+        canCheckForUpdates: Bool = false
     ) -> [StatusMenuDescriptor] {
         var items: [StatusMenuDescriptor] = []
+        if let applicationInfo { items.append(.information(applicationInfo)) }
         if let freshness { items.append(.information(freshness)) }
         if !diagnostics.isEmpty { items.append(.diagnostics(diagnostics)) }
         if !items.isEmpty { items.append(.separator) }
         items.append(.submitAndRefresh(isEnabled: actionsEnabled))
         items.append(.refreshStatistics(isEnabled: actionsEnabled))
+        if let selectedMode {
+            items.append(.separator)
+            items.append(.dataMode(.local, isSelected: selectedMode == .local, isEnabled: actionsEnabled))
+            items.append(.dataMode(.online, isSelected: selectedMode == .online, isEnabled: actionsEnabled))
+        }
         items.append(.separator)
+        if applicationInfo != nil || selectedMode != nil {
+            items.append(.checkForUpdates(isEnabled: canCheckForUpdates))
+        }
         items.append(.settings)
         items.append(.quit)
         return items
@@ -49,6 +63,8 @@ enum StatusMenuBuilder {
         switch descriptor {
         case .submitAndRefresh: return "提交并拉取"
         case .refreshStatistics: return "拉取远程数据"
+        case let .dataMode(mode, _, _): return "\(mode.title)模式"
+        case .checkForUpdates: return "检查更新…"
         case .information, .diagnostics, .separator, .settings, .quit: return nil
         }
     }
@@ -168,6 +184,8 @@ struct SettingsWindowAction {
 final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate {
     private let viewModel: DashboardViewModel
     private let settingsAction: SettingsWindowAction
+    private let appUpdater: AppUpdating
+    private let applicationInfo: @MainActor () -> String
     private let terminate: () -> Void
     private let statusItem: NSStatusItem
     private let popover: NSPopover
@@ -178,10 +196,14 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
     init(
         viewModel: DashboardViewModel,
         settingsAction: SettingsWindowAction,
+        appUpdater: AppUpdating,
+        applicationInfo: @escaping @MainActor () -> String = NSStatusItemCoordinator.bundleApplicationInfo,
         terminate: @escaping () -> Void
     ) {
         self.viewModel = viewModel
         self.settingsAction = settingsAction
+        self.appUpdater = appUpdater
+        self.applicationInfo = applicationInfo
         self.terminate = terminate
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         popover = NSPopover()
@@ -287,7 +309,10 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
         let descriptors = StatusMenuBuilder.descriptors(
             freshness: freshness,
             diagnostics: viewModel.diagnosticMessages,
-            actionsEnabled: !viewModel.isPerformingOperation
+            actionsEnabled: !viewModel.isPerformingOperation,
+            applicationInfo: applicationInfo(),
+            selectedMode: viewModel.preferences.dataMode,
+            canCheckForUpdates: appUpdater.canCheckForUpdates
         )
         let menu = NSMenu(title: "TokChan")
         for descriptor in descriptors {
@@ -321,6 +346,26 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
                 let item = NSMenuItem(
                     title: StatusMenuBuilder.title(for: descriptor) ?? "",
                     action: #selector(refreshStatisticsNow(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.isEnabled = isEnabled
+                menu.addItem(item)
+            case let .dataMode(mode, isSelected, isEnabled):
+                let item = NSMenuItem(
+                    title: StatusMenuBuilder.title(for: descriptor) ?? "",
+                    action: #selector(selectDataMode(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = mode.rawValue
+                item.state = isSelected ? .on : .off
+                item.isEnabled = isEnabled
+                menu.addItem(item)
+            case let .checkForUpdates(isEnabled):
+                let item = NSMenuItem(
+                    title: StatusMenuBuilder.title(for: descriptor) ?? "",
+                    action: #selector(checkForUpdates(_:)),
                     keyEquivalent: ""
                 )
                 item.target = self
@@ -371,11 +416,30 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
         Task { await viewModel.refreshStatisticsNow() }
     }
 
+    @objc private func selectDataMode(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let mode = DashboardDataMode(rawValue: rawValue) else { return }
+        Task { await viewModel.selectDataMode(mode) }
+    }
+
+    @objc private func checkForUpdates(_ sender: Any?) {
+        appUpdater.checkForUpdates()
+    }
+
     @objc private func openSettings(_ sender: Any?) {
         settingsAction.perform()
     }
 
     @objc private func quit(_ sender: Any?) {
         terminate()
+    }
+
+    private static func bundleApplicationInfo() -> String {
+        let bundle = Bundle.main
+        let name = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+            ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
+            ?? "TokChan"
+        let version = (bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? ""
+        return version.isEmpty ? name : "\(name) \(version)"
     }
 }

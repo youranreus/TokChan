@@ -11,6 +11,8 @@ final class PreferencesStoreTests: XCTestCase {
             username: "youranreus",
             tokscaleVersion: "4.15.0",
             npxPath: "/opt/homebrew/bin/npx",
+            dataMode: .local,
+            hasCompletedInitialization: true,
             statusTextEnabled: true,
             statusTextTemplate: "今日 {token}，成本 {cost}",
             statusTextPeriod: .month,
@@ -35,6 +37,8 @@ final class PreferencesStoreTests: XCTestCase {
         let preferences = UserDefaultsPreferencesStore(defaults: defaults).load()
 
         XCTAssertEqual(preferences.username, "existing-user")
+        XCTAssertEqual(preferences.dataMode, .local)
+        XCTAssertFalse(preferences.hasCompletedInitialization)
         XCTAssertFalse(preferences.statusTextEnabled)
         XCTAssertEqual(preferences.statusTextTemplate, UserPreferences.defaultStatusTextTemplate)
         XCTAssertEqual(preferences.statusTextPeriod, .day)

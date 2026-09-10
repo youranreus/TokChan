@@ -85,6 +85,32 @@ final class StatusItemPresentationTests: XCTestCase {
         )
     }
 
+    func testMenuIncludesBundleInfoModeChoicesAndUpdaterAction() {
+        XCTAssertEqual(
+            StatusMenuBuilder.descriptors(
+                freshness: nil,
+                diagnostics: [],
+                actionsEnabled: true,
+                applicationInfo: "TokChan 1.2.3",
+                selectedMode: .local,
+                canCheckForUpdates: true
+            ),
+            [
+                .information("TokChan 1.2.3"),
+                .separator,
+                .submitAndRefresh(isEnabled: true),
+                .refreshStatistics(isEnabled: true),
+                .separator,
+                .dataMode(.local, isSelected: true, isEnabled: true),
+                .dataMode(.online, isSelected: false, isEnabled: true),
+                .separator,
+                .checkForUpdates(isEnabled: true),
+                .settings,
+                .quit
+            ]
+        )
+    }
+
     func testMenuActionTitlesDistinguishUploadFromReadOnlyRefresh() {
         XCTAssertEqual(StatusMenuBuilder.title(for: .submitAndRefresh(isEnabled: true)), "提交并拉取")
         XCTAssertEqual(StatusMenuBuilder.title(for: .refreshStatistics(isEnabled: true)), "拉取远程数据")

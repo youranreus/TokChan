@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 16
-- **Last Active**: 2026-09-09
+- **Total Sessions**: 19
+- **Last Active**: 2026-09-10
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~489 | Active |
+| `journal-1.md` | ~567 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 19 | 2026-09-10 | 本地与在线数据模式切换实现与验证 | `ff28d45` | `feat/local-online-data-mode` |
 | 16 | 2026-09-09 | 改进新手引导与 Cursor 登录 | `8597274`, `5e7f93c` | `feat/onboarding-agent-login` |
 | 15 | 2026-09-09 | 统一后台刷新与提交状态 | `1a67a65`, `16241a2`, `fee4e12` | `master` |
 | 14 | 2026-09-09 | 自动生成中文版本发布文案 | `58deade` | `master` |

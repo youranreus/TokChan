@@ -8,6 +8,7 @@ enum LoadState<Value> {
 }
 
 enum FirstUseOnboardingState: Equatable {
+    case modeSelection
     case discoveringIdentity
     case usernameEntry(message: String?)
     case verifying(username: String)
@@ -18,7 +19,7 @@ enum FirstUseOnboardingState: Equatable {
     var isBusy: Bool {
         switch self {
         case .discoveringIdentity, .verifying, .submitting: return true
-        case .usernameEntry, .firstSubmission, .hidden: return false
+        case .modeSelection, .usernameEntry, .firstSubmission, .hidden: return false
         }
     }
 }
@@ -69,9 +70,12 @@ final class DashboardViewModel: ObservableObject {
     @Published private(set) var identityProfile: DashboardData?
     @Published private(set) var isRefreshing = false
     @Published private(set) var loadErrorMessage: String?
+    @Published private(set) var sourceWarningMessage: String?
     @Published private(set) var autosubmitLoadErrorMessage: String?
     @Published private(set) var cacheWriteErrorMessage: String?
     @Published private(set) var submitErrorMessage: String?
+    @Published private(set) var onlineOperationErrorMessage: String?
+    @Published private(set) var configurationResetErrorMessage: String?
     @Published private(set) var cacheSavedAt: Date?
     @Published private(set) var autosubmitObservedAt: Date?
     #if DEBUG
@@ -79,7 +83,8 @@ final class DashboardViewModel: ObservableObject {
     @Published private(set) var panelDisappearanceCount = 0
     #endif
 
-    private let api: TokscaleAPIService
+    private let onlineDataSource: DashboardDataReading
+    private let localDataSource: DashboardDataReading
     private let cli: TokscaleCLIService
     private let preferencesStore: PreferencesStoring
     private let npxLocator: NpxLocating
@@ -123,7 +128,14 @@ final class DashboardViewModel: ObservableObject {
     private var operationPresentationGeneration: UInt64?
     private var suppressDashboardOperationBanner = false
     private var isLoadingServices = false
-    private var cachedProfiles: [ProfilePeriod: (data: DashboardData, savedAt: Date)] = [:]
+    private var cachedProfilesBySource: [DashboardDataMode: [ProfilePeriod: (data: DashboardData, savedAt: Date)]] = [:]
+    private var fetchedAtBySource: [DashboardDataMode: Date] = [:]
+    private var isResetting = false
+
+    private var cachedProfiles: [ProfilePeriod: (data: DashboardData, savedAt: Date)] {
+        get { cachedProfilesBySource[preferences.dataMode] ?? [:] }
+        set { cachedProfilesBySource[preferences.dataMode] = newValue }
+    }
 
     var isLoading: Bool {
         operation.isRunning || (profileState.loadedValue == nil && (isRefreshing || isLoadingServices))
@@ -139,8 +151,10 @@ final class DashboardViewModel: ObservableObject {
 
     var availableClientIDs: [String] {
         var clientIDs = preferences.hiddenClientIDs
-        for cachedProfile in cachedProfiles.values {
-            clientIDs.formUnion(cachedProfile.data.clients.map(\.id))
+        for sourceProfiles in cachedProfilesBySource.values {
+            for cachedProfile in sourceProfiles.values {
+                clientIDs.formUnion(cachedProfile.data.clients.map(\.id))
+            }
         }
         return clientIDs.sorted()
     }
@@ -151,11 +165,13 @@ final class DashboardViewModel: ObservableObject {
 
     func statusItemTitle(for preferences: UserPreferences) -> String? {
         let username = preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let source = preferences.dataMode
         guard preferences.statusTextEnabled,
-              cacheSavedAt != nil,
-              cacheIsComplete(for: username),
-              let cached = cachedProfiles[preferences.statusTextPeriod],
-              cached.data.username.caseInsensitiveCompare(username) == .orderedSame else {
+              fetchedAtBySource[source] != nil,
+              cacheIsComplete(source: source),
+              let cached = cachedProfilesBySource[source]?[preferences.statusTextPeriod],
+              source == .local
+                || cached.data.username.caseInsensitiveCompare(username) == .orderedSame else {
             return nil
         }
         let title = StatusItemTextRenderer.render(
@@ -172,15 +188,19 @@ final class DashboardViewModel: ObservableObject {
     var diagnosticMessages: [String] {
         [
             loadErrorMessage.map { "统计读取：\($0)" },
+            sourceWarningMessage.map { "统计读取：\($0)" },
             autosubmitLoadErrorMessage.map { "自动提交状态：\($0)" },
             cacheWriteErrorMessage.map { "本地保存：\($0)" },
-            submitErrorMessage.map { "用量提交：\($0)" }
+            submitErrorMessage.map { "用量提交：\($0)" },
+            onlineOperationErrorMessage.map { "在线操作：\($0)" },
+            configurationResetErrorMessage
         ].compactMap { $0 }
     }
 
     init(
         api: TokscaleAPIService,
         cli: TokscaleCLIService,
+        localDataSource: DashboardDataReading = UnavailableLocalDashboardDataSource(),
         preferencesStore: PreferencesStoring,
         npxLocator: NpxLocating,
         cacheStore: DashboardCacheStoring,
@@ -191,7 +211,8 @@ final class DashboardViewModel: ObservableObject {
             try? await Task.sleep(nanoseconds: nanoseconds)
         }
     ) {
-        self.api = api
+        self.onlineDataSource = OnlineDashboardDataSource(api: api)
+        self.localDataSource = localDataSource
         self.cli = cli
         self.preferencesStore = preferencesStore
         self.npxLocator = npxLocator
@@ -206,18 +227,29 @@ final class DashboardViewModel: ObservableObject {
         if let snapshot = cacheStore.load() {
             generation = snapshot.generation
             let username = loadedPreferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
-            for entry in snapshot.profiles where !username.isEmpty
-                && entry.data.username.caseInsensitiveCompare(username) == .orderedSame {
-                cachedProfiles[entry.data.period] = (entry.data, entry.savedAt)
+            for entry in snapshot.profiles {
+                if entry.source == .online {
+                    guard !username.isEmpty,
+                          entry.data.username.caseInsensitiveCompare(username) == .orderedSame else { continue }
+                }
+                cachedProfilesBySource[entry.source, default: [:]][entry.data.period] = (entry.data, entry.savedAt)
             }
+            fetchedAtBySource = Dictionary(uniqueKeysWithValues: DashboardDataMode.allCases.compactMap { source in
+                let account = source == .online ? username : nil
+                guard snapshot.isCompleteBatch(for: source, account: account),
+                      let fetchedAt = snapshot.fetchedAtBySource[source] else { return nil }
+                return (source, fetchedAt)
+            })
             selectedPeriod = snapshot.selectedPeriod
+            if loadedPreferences.dataMode == .local || !username.isEmpty {
+                cacheSavedAt = fetchedAtBySource[loadedPreferences.dataMode]
+            }
             if let cached = cachedProfiles[selectedPeriod] {
                 profileState = .loaded(cached.data)
                 identityProfile = cached.data
             } else {
                 identityProfile = cachedProfiles.values.first?.data
             }
-            if snapshot.isCompleteBatch && cacheIsComplete { cacheSavedAt = snapshot.fetchedAt }
             if let status = snapshot.autosubmit { autosubmitState = .loaded(status) }
             autosubmitObservedAt = snapshot.autosubmitObservedAt
         }
@@ -314,10 +346,67 @@ final class DashboardViewModel: ObservableObject {
         scheduleCursorStatusRefresh()
     }
 
+    func selectInitialMode(_ mode: DashboardDataMode) async {
+        guard !preferences.hasCompletedInitialization,
+              firstUseOnboardingState == .modeSelection else { return }
+        var updated = preferences
+        updated.dataMode = mode
+        if mode == .local { updated.hasCompletedInitialization = true }
+        updatePreferences(updated)
+        if mode == .local {
+            firstUseOnboardingState = .hidden
+            _ = await reloadProfiles(force: true, automatic: false)
+            if preferences.hasCompletedInitialization, preferences.dataMode == .local {
+                scheduleAutosubmitStatusRefresh()
+            }
+        } else {
+            firstUseOnboardingState = normalizedUsername.isEmpty
+                ? .usernameEntry(message: nil)
+                : .verifying(username: normalizedUsername)
+            if !normalizedUsername.isEmpty {
+                handleOnboardingProfileResult(await reloadProfiles(force: true, automatic: false))
+            }
+        }
+    }
+
+    func selectDataMode(_ mode: DashboardDataMode) async {
+        guard !isResetting, !isPerformingOperation else { return }
+        guard preferences.hasCompletedInitialization else {
+            await selectInitialMode(mode)
+            return
+        }
+        guard preferences.dataMode != mode else { return }
+        invalidateProfileRefresh()
+        var updated = preferences
+        updated.dataMode = mode
+        updated.hasCompletedInitialization = true
+        preferences = updated
+        preferencesStore.save(updated)
+        cacheSavedAt = fetchedAtBySource[mode]
+        if let cached = cachedProfiles[selectedPeriod] {
+            profileState = .loaded(cached.data)
+            identityProfile = cached.data
+        } else {
+            profileState = .idle
+            identityProfile = nil
+        }
+        loadErrorMessage = nil
+        sourceWarningMessage = nil
+        clearAutomaticFailureBackoff()
+        persistCurrentSnapshot()
+        if mode == .online {
+            reconcileInitialOnboardingState()
+        } else {
+            firstUseOnboardingState = .hidden
+        }
+        let result = await reloadProfiles(force: false, automatic: false)
+        if mode == .online { handleOnboardingProfileResult(result) }
+    }
+
     func selectPeriod(_ period: ProfilePeriod) async {
         guard selectedPeriod != period else { return }
         selectedPeriod = period
-        if let cached = cachedProfiles[period], matchesUsername(cached.data.username) {
+        if let cached = cachedProfiles[period], matchesCurrentSource(cached.data) {
             profileState = .loaded(cached.data)
             identityProfile = cached.data
         } else {
@@ -328,7 +417,8 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func load() async {
-        guard !isLoadingServices, !operation.isRunning else { return }
+        guard preferences.hasCompletedInitialization,
+              !isLoadingServices, !operation.isRunning else { return }
         isLoadingServices = true
         defer { isLoadingServices = false }
         if autosubmitState.loadedValue == nil { autosubmitState = .loading }
@@ -341,12 +431,22 @@ final class DashboardViewModel: ObservableObject {
             recordAutosubmitError(error)
         }
 
-        let shouldLoadProfiles = !normalizedUsername.isEmpty
+        let shouldLoadProfiles = preferences.hasCompletedInitialization
+            && (preferences.dataMode == .local || !normalizedUsername.isEmpty)
         if let context, shouldLoadProfiles {
-            async let profiles = reloadProfiles(force: false, automatic: true)
-            async let status = reloadAutosubmit(context: context)
-            let (profileResult, _) = await (profiles, status)
-            handleOnboardingProfileResult(profileResult)
+            if preferences.dataMode == .local {
+                let profileResult = await reloadProfiles(force: false, automatic: true)
+                if preferences.hasCompletedInitialization, !isResetting,
+                   (try? commandContext(for: preferences)) == context {
+                    _ = await reloadAutosubmit(context: context)
+                }
+                handleOnboardingProfileResult(profileResult)
+            } else {
+                async let profiles = reloadProfiles(force: false, automatic: true)
+                async let status = reloadAutosubmit(context: context)
+                let (profileResult, _) = await (profiles, status)
+                handleOnboardingProfileResult(profileResult)
+            }
         } else if let context {
             _ = await reloadAutosubmit(context: context)
         } else if shouldLoadProfiles {
@@ -437,7 +537,7 @@ final class DashboardViewModel: ObservableObject {
         guard !operation.isRunning else { return }
         switch firstUseOnboardingState {
         case .verifying, .submitting: return
-        case .discoveringIdentity, .usernameEntry, .firstSubmission, .hidden: break
+        case .modeSelection, .discoveringIdentity, .usernameEntry, .firstSubmission, .hidden: break
         }
 
         let normalized = username.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -508,25 +608,45 @@ final class DashboardViewModel: ObservableObject {
         }
     }
 
-    /// Uploads local usage once, then forces exactly one complete statistics batch.
+    /// Refreshes the selected source using its explicit panel semantics.
+    func refreshCurrentSourceFromPanel() async {
+        if preferences.dataMode == .online {
+            await submitUsageAndRefreshStatistics()
+        } else {
+            guard !operation.isRunning else { return }
+            beginOperation(.refreshingStatistics)
+            switch await reloadProfiles(force: true, automatic: false) {
+            case .updated:
+                completeOperation(.succeeded("本地统计读取完成。"))
+            case .superseded:
+                completeSilentOperation()
+            case let .profileNotFound(message), let .failed(message):
+                completeOperation(.failed(message))
+            }
+        }
+    }
+
+    /// Uploads local usage once, then forces exactly one online statistics batch.
     func submitUsageAndRefreshStatistics() async {
         guard !operation.isRunning, cursorConnectionState != .checking else { return }
         invalidateProfileRefresh()
         beginOperation(.submitting)
         submitErrorMessage = nil
+        onlineOperationErrorMessage = nil
         do {
             let context = try commandContext(for: preferences)
             let username = try resolvedUsername()
             try await cli.submit(context: context)
-            // An account switch while submit was suspended supersedes this operation.
-            guard matchesUsername(username) else {
+            // An account or CLI-context change while submit was suspended supersedes this operation.
+            guard matchesUsername(username), (try? commandContext(for: preferences)) == context else {
                 completeSilentOperation()
                 return
             }
-            switch await reloadProfiles(force: true, automatic: false) {
+            switch await reloadProfiles(force: true, automatic: false, source: .online) {
             case .updated:
                 completeOperation(.succeeded("用量已提交，统计读取完成。"))
             case let .profileNotFound(message), let .failed(message):
+                onlineOperationErrorMessage = message
                 completeOperation(.failed("用量已提交，但统计读取失败：\(message)"))
             case .superseded:
                 completeOperation(.succeeded("用量已提交。"))
@@ -545,14 +665,18 @@ final class DashboardViewModel: ObservableObject {
         _ = await reloadProfiles(force: true, automatic: false)
     }
 
-    /// Reads one complete statistics batch without uploading anything.
+    /// Reads one complete online statistics batch without uploading anything.
     func refreshStatisticsNow() async {
         guard !operation.isRunning else { return }
+        onlineOperationErrorMessage = nil
         beginOperation(.refreshingStatistics)
-        switch await reloadProfiles(force: true, automatic: false) {
-        case .updated, .superseded:
+        switch await reloadProfiles(force: true, automatic: false, source: .online) {
+        case .updated:
+            completeSilentOperation()
+        case .superseded:
             completeSilentOperation()
         case let .profileNotFound(message), let .failed(message):
+            onlineOperationErrorMessage = message
             completeOperation(.failed(message))
         }
     }
@@ -570,7 +694,7 @@ final class DashboardViewModel: ObservableObject {
                 completeSilentOperation()
                 return
             }
-            async let profiles = reloadProfiles(force: true, automatic: false)
+            async let profiles = reloadProfiles(force: true, automatic: false, source: .online)
             async let status = reloadAutosubmit(context: context)
             let (profileResult, statusError) = await (profiles, status)
             if let error = profileResult.errorMessage {
@@ -599,32 +723,49 @@ final class DashboardViewModel: ObservableObject {
 
         let previousUsername = preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
         let accountChanged = previousUsername.caseInsensitiveCompare(normalized.username) != .orderedSame
+        let modeChanged = preferences.dataMode != normalized.dataMode
         let cliContextChanged = preferences.tokscaleVersion.trimmingCharacters(in: .whitespacesAndNewlines)
             != normalized.tokscaleVersion
             || preferences.npxPath.trimmingCharacters(in: .whitespacesAndNewlines) != normalized.npxPath
 
         if accountChanged {
             invalidateProfileRefresh()
-            cachedProfiles.removeAll()
-            profileState = .idle
-            identityProfile = nil
-            cacheSavedAt = nil
-            clearAutomaticFailureBackoff()
-            loadErrorMessage = nil
+            cachedProfilesBySource[.online] = [:]
+            fetchedAtBySource[.online] = nil
+            if preferences.dataMode == .online {
+                profileState = .idle
+                identityProfile = nil
+                cacheSavedAt = nil
+                clearAutomaticFailureBackoff()
+                loadErrorMessage = nil
+            }
         }
         if cliContextChanged {
             statusRequestID = UUID()
             invalidateCursorStatusCheck()
+            if preferences.dataMode == .local { invalidateProfileRefresh() }
         }
 
         preferences = normalized
         preferencesStore.save(normalized)
-        if accountChanged {
+        if modeChanged {
+            cacheSavedAt = fetchedAtBySource[normalized.dataMode]
+            if let cached = cachedProfiles[selectedPeriod] {
+                profileState = .loaded(cached.data)
+                identityProfile = cached.data
+            } else {
+                profileState = .idle
+                identityProfile = nil
+            }
+        }
+        if accountChanged && normalized.dataMode == .online {
             firstUseOnboardingState = normalized.username.isEmpty
                 ? .usernameEntry(message: nil)
                 : .verifying(username: normalized.username)
-            persistCurrentSnapshot()
         }
+        // Any account change must immediately persist a snapshot without the old account's
+        // online profiles, even when the visible source is local.
+        if accountChanged { persistCurrentSnapshot() }
         // A resolvable new CLI context makes the observed status stale, so reread status only.
         if cliContextChanged,
            let context = try? commandContext(for: normalized),
@@ -669,6 +810,52 @@ final class DashboardViewModel: ObservableObject {
         }
     }
 
+    func resetConfiguration(disableLaunchAtLogin: () throws -> Void) async -> Bool {
+        guard !isResetting, !operation.isRunning else { return false }
+        configurationResetErrorMessage = nil
+        isResetting = true
+        let shouldResumeBackgroundSynchronization = backgroundRefreshTask != nil
+        stopBackgroundSynchronization()
+        invalidateProfileRefresh()
+        statusRequestID = UUID()
+        autosubmitStatusTask?.cancel()
+        autosubmitStatusTask = nil
+        invalidateCursorStatusCheck()
+        do {
+            try disableLaunchAtLogin()
+            try preferencesStore.clear()
+            try cacheStore.clear()
+            cachedProfilesBySource.removeAll()
+            fetchedAtBySource.removeAll()
+            preferences = preferencesStore.load()
+            selectedPeriod = .all
+            profileState = .idle
+            identityProfile = nil
+            cacheSavedAt = nil
+            autosubmitState = .idle
+            autosubmitObservedAt = nil
+            loadErrorMessage = nil
+            sourceWarningMessage = nil
+            autosubmitLoadErrorMessage = nil
+            cacheWriteErrorMessage = nil
+            submitErrorMessage = nil
+            onlineOperationErrorMessage = nil
+            configurationResetErrorMessage = nil
+            firstUseOnboardingState = .modeSelection
+            operation = .succeeded("TokChan 配置已清空。")
+            isResetting = false
+            if shouldResumeBackgroundSynchronization { startStatisticsSchedulerIfNeeded() }
+            return true
+        } catch {
+            isResetting = false
+            if shouldResumeBackgroundSynchronization { startStatisticsSchedulerIfNeeded() }
+            let message = "清空配置失败：\(Self.message(for: error))"
+            configurationResetErrorMessage = message
+            operation = .failed(message)
+            return false
+        }
+    }
+
     func clearOperationMessage() {
         guard !operation.isRunning else { return }
         operation = .idle
@@ -696,7 +883,22 @@ final class DashboardViewModel: ObservableObject {
         operationPresentationGeneration = nil
     }
 
+    private func markInitializationComplete() {
+        guard !preferences.hasCompletedInitialization else { return }
+        preferences.hasCompletedInitialization = true
+        preferencesStore.save(preferences)
+        scheduleAutosubmitStatusRefresh()
+    }
+
     private func reconcileInitialOnboardingState() {
+        guard preferences.hasCompletedInitialization else {
+            firstUseOnboardingState = .modeSelection
+            return
+        }
+        guard preferences.dataMode == .online else {
+            firstUseOnboardingState = .hidden
+            return
+        }
         let username = normalizedUsername
         guard !username.isEmpty else {
             firstUseOnboardingState = .usernameEntry(message: nil)
@@ -714,6 +916,7 @@ final class DashboardViewModel: ObservableObject {
     private func reconcileOnboardingWithCompleteCache(username: String) {
         guard cacheSavedAt != nil, cacheIsComplete(for: username) else { return }
         if hasUsageInCompleteCache(for: username) {
+            markInitializationComplete()
             firstUseOnboardingState = .hidden
         } else if firstUseOnboardingState == .usernameEntry(message: nil) {
             // Keep an explicit edit flow stable while the user is changing accounts.
@@ -757,7 +960,7 @@ final class DashboardViewModel: ObservableObject {
                     message: "统计读取失败：\(message)"
                 )
             }
-        case .discoveringIdentity, .usernameEntry, .submitting, .hidden:
+        case .modeSelection, .discoveringIdentity, .usernameEntry, .submitting, .hidden:
             break
         }
     }
@@ -767,68 +970,109 @@ final class DashboardViewModel: ObservableObject {
         if profileState.loadedValue == nil { profileState = .idle }
     }
 
-    private func reloadProfiles(force: Bool, automatic: Bool) async -> ProfileReloadResult {
+    private func reloadProfiles(
+        force: Bool,
+        automatic: Bool,
+        source requestedSource: DashboardDataMode? = nil
+    ) async -> ProfileReloadResult {
+        if isResetting || firstUseOnboardingState == .modeSelection { return .superseded }
         if automatic, operation.isRunning { return .superseded }
+        let source = requestedSource ?? preferences.dataMode
         if force {
             invalidateProfileRefresh()
         } else if let profileRefreshTask {
             return await profileRefreshTask.value
         }
-        let username = preferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !username.isEmpty else {
-            // Background triggers stay silent until identity discovery supplies an account.
+        let requestPreferences = preferences
+        let username = requestPreferences.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        if source == .online, username.isEmpty {
             if automatic { return .superseded }
             let message = Self.message(for: TokscaleAPIError.invalidUsername)
-            loadErrorMessage = message
-            if profileState.loadedValue == nil { profileState = .failed(message) }
+            if source == preferences.dataMode {
+                loadErrorMessage = message
+                if profileState.loadedValue == nil { profileState = .failed(message) }
+            }
             return .failed(message)
         }
         let currentTime = now()
-        if !force, isFresh(at: currentTime) { return .superseded }
+        if !force, isFresh(at: currentTime, source: source) { return .superseded }
         if automatic, isInAutomaticBackoff(at: currentTime) { return .superseded }
 
         generation &+= 1
         let requestGeneration = generation
         let requestID = UUID()
         profileRequestID = requestID
-        isRefreshing = true
-        loadErrorMessage = nil
-        if profileState.loadedValue == nil { profileState = .loading }
+        if source == preferences.dataMode {
+            isRefreshing = true
+            loadErrorMessage = nil
+            if profileState.loadedValue == nil { profileState = .loading }
+        }
 
         let task = Task { [weak self] () -> ProfileReloadResult in
             guard let self else { return .superseded }
             do {
-                let batch = try await self.api.fetchDashboardBatch(username: username)
+                let reader: DashboardDataReading
+                let sourceRequest: DashboardSourceRequest
+                let requestContext: TokscaleCommandContext?
+                if source == .online {
+                    reader = self.onlineDataSource
+                    sourceRequest = .online(username: username)
+                    requestContext = nil
+                } else {
+                    let context = try self.commandContext(for: requestPreferences)
+                    reader = self.localDataSource
+                    sourceRequest = .local(context: context, now: currentTime)
+                    requestContext = context
+                }
+                let batch = try await reader.fetchDashboardBatch(sourceRequest)
+                guard batch.source == source,
+                      source == .local || batch.account?.caseInsensitiveCompare(username) == .orderedSame else {
+                    return .superseded
+                }
+                let profiles = batch.profiles
                 try Task.checkCancellation()
+                let sourceIsCurrentOrExplicit = source == self.preferences.dataMode || requestedSource != nil
+                let requestContextIsCurrent = source == .online
+                    ? self.matchesUsername(username)
+                    : (try? self.commandContext(for: self.preferences)) == requestContext
                 guard requestID == self.profileRequestID,
                       requestGeneration == self.generation,
-                      self.matchesUsername(username),
-                      batch.username.caseInsensitiveCompare(username) == .orderedSame else {
+                      sourceIsCurrentOrExplicit,
+                      requestContextIsCurrent else {
                     return .superseded
                 }
                 let fetchedAt = self.now()
-                self.cachedProfiles = Dictionary(uniqueKeysWithValues: batch.profiles.map {
+                self.cachedProfilesBySource[source] = Dictionary(uniqueKeysWithValues: profiles.map {
                     ($0.key, (data: $0.value, savedAt: fetchedAt))
                 })
-                self.cacheSavedAt = fetchedAt
-                self.identityProfile = batch.profiles[self.selectedPeriod] ?? batch.profiles[.all]
-                if let selected = batch.profiles[self.selectedPeriod] {
-                    self.profileState = .loaded(selected)
+                self.fetchedAtBySource[source] = fetchedAt
+                if source == self.preferences.dataMode {
+                    self.cacheSavedAt = fetchedAt
+                    self.identityProfile = profiles[self.selectedPeriod] ?? profiles[.all]
+                    if let selected = profiles[self.selectedPeriod] {
+                        self.profileState = .loaded(selected)
+                    }
+                    if source == .online { self.reconcileOnboardingWithCompleteCache(username: username) }
+                    self.sourceWarningMessage = batch.warnings.first
+                    self.clearAutomaticFailureBackoff()
                 }
-                self.reconcileOnboardingWithCompleteCache(username: username)
-                self.clearAutomaticFailureBackoff()
                 self.persistCurrentSnapshot()
                 return .updated
             } catch is CancellationError {
                 return .superseded
             } catch {
+                let requestPreferencesAreCurrent = source == .online
+                    ? self.matchesUsername(username)
+                    : Self.hasSameCLIContext(requestPreferences, self.preferences)
                 guard requestID == self.profileRequestID,
                       requestGeneration == self.generation,
-                      self.matchesUsername(username) else { return .superseded }
+                      requestPreferencesAreCurrent else { return .superseded }
                 if automatic { self.recordAutomaticFailure(at: self.now()) }
                 let message = Self.message(for: error)
-                self.loadErrorMessage = message
-                if self.profileState.loadedValue == nil { self.profileState = .failed(message) }
+                if source == self.preferences.dataMode {
+                    self.loadErrorMessage = message
+                    if self.profileState.loadedValue == nil { self.profileState = .failed(message) }
+                }
                 if Self.isProfileNotFound(error) { return .profileNotFound(message) }
                 return .failed(message)
             }
@@ -837,12 +1081,13 @@ final class DashboardViewModel: ObservableObject {
         let result = await task.value
         if requestID == profileRequestID {
             profileRefreshTask = nil
-            isRefreshing = false
+            if source == preferences.dataMode { isRefreshing = false }
         }
         return result
     }
 
     private func scheduleAutosubmitStatusRefresh() {
+        guard preferences.hasCompletedInitialization, !isResetting else { return }
         autosubmitStatusTask?.cancel()
         autosubmitStatusTask = Task { [weak self] in
             // Cancellation must be observed before launching npx, not only after it returns.
@@ -937,14 +1182,14 @@ final class DashboardViewModel: ObservableObject {
         isRefreshing = false
     }
 
-    private func isFresh(at date: Date) -> Bool {
-        guard cacheIsComplete, let cacheSavedAt else { return false }
-        let age = date.timeIntervalSince(cacheSavedAt)
+    private func isFresh(at date: Date, source: DashboardDataMode) -> Bool {
+        guard cacheIsComplete(source: source), let fetchedAt = fetchedAtBySource[source] else { return false }
+        let age = date.timeIntervalSince(fetchedAt)
         return age >= 0 && age < refreshInterval
     }
 
     private var cacheIsComplete: Bool {
-        cacheIsComplete(for: normalizedUsername)
+        cacheIsComplete(source: preferences.dataMode)
     }
 
     private var normalizedUsername: String {
@@ -952,10 +1197,19 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private func cacheIsComplete(for username: String) -> Bool {
-        Set(cachedProfiles.keys) == Set(ProfilePeriod.allCases)
-            && cachedProfiles.values.allSatisfy {
+        cacheIsComplete(source: .online)
+            && (cachedProfilesBySource[.online] ?? [:]).values.allSatisfy {
                 $0.data.username.caseInsensitiveCompare(username) == .orderedSame
             }
+    }
+
+    private func cacheIsComplete(source: DashboardDataMode) -> Bool {
+        Set(cachedProfilesBySource[source]?.keys.map { $0 } ?? []) == Set(ProfilePeriod.allCases)
+            && fetchedAtBySource[source] != nil
+    }
+
+    private func matchesCurrentSource(_ data: DashboardData) -> Bool {
+        preferences.dataMode == .local || matchesUsername(data.username)
     }
 
     private func startStatisticsSchedulerIfNeeded() {
@@ -978,11 +1232,12 @@ final class DashboardViewModel: ObservableObject {
     /// A rolled-back clock falls back to a full interval so the loop can never spin.
     private func nextAutomaticRefreshDelay() -> TimeInterval {
         if operation.isRunning { return 1 }
-        guard !normalizedUsername.isEmpty else { return refreshInterval }
+        guard preferences.hasCompletedInitialization,
+              preferences.dataMode == .local || !normalizedUsername.isEmpty else { return refreshInterval }
         let currentTime = now()
         var delay: TimeInterval = 0
-        if cacheIsComplete, let cacheSavedAt {
-            let age = currentTime.timeIntervalSince(cacheSavedAt)
+        if cacheIsComplete, let fetchedAt = fetchedAtBySource[preferences.dataMode] {
+            let age = currentTime.timeIntervalSince(fetchedAt)
             delay = age < 0 ? refreshInterval : max(refreshInterval - age, 0)
         }
         if let lastAutomaticFailure {
@@ -1039,11 +1294,13 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private func persistCurrentSnapshot() {
-        let entries = ProfilePeriod.allCases.compactMap { period -> CachedDashboardProfile? in
-            guard let cached = cachedProfiles[period] else { return nil }
-            return CachedDashboardProfile(data: cached.data, savedAt: cached.savedAt)
+        let entries = DashboardDataMode.allCases.flatMap { source in
+            ProfilePeriod.allCases.compactMap { period -> CachedDashboardProfile? in
+                guard let cached = cachedProfilesBySource[source]?[period] else { return nil }
+                return CachedDashboardProfile(data: cached.data, savedAt: cached.savedAt, source: source)
+            }
         }
-        let stableSavedAt = cacheSavedAt
+        let stableSavedAt = fetchedAtBySource.values.max()
             ?? entries.map(\.savedAt).max()
             ?? Date.distantPast
         let snapshot = DashboardCacheSnapshot(
@@ -1054,8 +1311,9 @@ final class DashboardViewModel: ObservableObject {
             selectedPeriod: selectedPeriod,
             username: preferences.username,
             generation: generation,
-            fetchedAt: cacheIsComplete ? cacheSavedAt : nil,
-            autosubmitObservedAt: autosubmitObservedAt
+            fetchedAt: fetchedAtBySource[.online],
+            autosubmitObservedAt: autosubmitObservedAt,
+            fetchedAtBySource: fetchedAtBySource
         )
         do {
             try cacheStore.save(snapshot)
@@ -1070,6 +1328,8 @@ final class DashboardViewModel: ObservableObject {
             username: preferences.username.trimmingCharacters(in: .whitespacesAndNewlines),
             tokscaleVersion: preferences.tokscaleVersion.trimmingCharacters(in: .whitespacesAndNewlines),
             npxPath: preferences.npxPath.trimmingCharacters(in: .whitespacesAndNewlines),
+            dataMode: preferences.dataMode,
+            hasCompletedInitialization: preferences.hasCompletedInitialization,
             statusTextEnabled: preferences.statusTextEnabled,
             statusTextTemplate: preferences.statusTextTemplate,
             statusTextPeriod: preferences.statusTextPeriod,
@@ -1077,6 +1337,13 @@ final class DashboardViewModel: ObservableObject {
             hiddenClientsEnabled: preferences.hiddenClientsEnabled,
             hiddenClientIDs: UserPreferences.normalizedClientIDs(preferences.hiddenClientIDs)
         )
+    }
+
+    private static func hasSameCLIContext(_ lhs: UserPreferences, _ rhs: UserPreferences) -> Bool {
+        lhs.tokscaleVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+            == rhs.tokscaleVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+            && lhs.npxPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                == rhs.npxPath.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func cursorLoginFallbackCommand(version: String) -> String {

@@ -166,6 +166,34 @@ struct DashboardData: Codable, Equatable {
     let updatedAt: Date?
     let clients: [ClientUsageGroup]
 
+    init(
+        period: ProfilePeriod,
+        dateRange: ProfileDateRange?,
+        breakdown: TokenBreakdown?,
+        username: String = "",
+        displayName: String = "本地模式",
+        avatarURL: URL? = nil,
+        rank: Int? = nil,
+        totalTokens: Double,
+        totalCost: Double,
+        activeDays: Int = 0,
+        updatedAt: Date?,
+        clients: [ClientUsageGroup]
+    ) {
+        self.period = period
+        self.dateRange = dateRange
+        self.breakdown = breakdown
+        self.username = username
+        self.displayName = displayName
+        self.avatarURL = avatarURL
+        self.rank = rank
+        self.totalTokens = totalTokens
+        self.totalCost = totalCost
+        self.activeDays = activeDays
+        self.updatedAt = updatedAt
+        self.clients = clients
+    }
+
     init(response: PublicProfileResponse) {
         period = response.period ?? .all
         dateRange = response.dateRange
@@ -212,7 +240,7 @@ struct DashboardData: Codable, Equatable {
         return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
 
-    private static func aggregateClients(
+    static func aggregateClients(
         from contributions: [ProfileContribution],
         profileTotalTokens: Double
     ) -> [ClientUsageGroup] {
