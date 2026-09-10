@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/macos/index.md", "reason": "Full macOS quality checklist entry point for the final verification pass"}
+{"file": ".trellis/spec/macos/data-persistence.md", "reason": "Verify backward-compatible defaultPeriod decoding, clear() coverage, untouched snapshot schema, and that panel open issues zero requests and zero cache writes"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "Verify the Display-tab section, segmented picker, immediate persistence, and popover presentation contracts"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "Assess whether unit, view-model, and UI evidence actually covers AC1-AC8, including the UI-test skip caveat"}
+{"file": ".trellis/spec/macos/quality-guidelines.md", "reason": "Review Swift quality, accessibility identifiers, and user-facing error/copy wording"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Confirm selectPeriod and the panel-open reset cannot drift and that no duplicate scope logic remains"}
