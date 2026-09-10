@@ -92,6 +92,20 @@ final class TokChanUITests: XCTestCase {
         let hiddenClientsEnabled = application.switches["hidden-clients-enabled"]
         XCTAssertTrue(hideZeroCostModels.exists)
         XCTAssertTrue(hiddenClientsEnabled.exists)
+
+        let periodPicker = application.popUpButtons["default-period"]
+        XCTAssertTrue(periodPicker.waitForExistence(timeout: 3))
+        XCTAssertEqual(periodPicker.value as? String, "日")
+
+        func selectPeriodFromMenu(_ title: String) -> Bool {
+            periodPicker.click()
+            let item = application.menuItems[title]
+            guard item.waitForExistence(timeout: 3) else { return false }
+            item.click()
+            return waitUntil(timeout: 3) { periodPicker.value as? String == title }
+        }
+        XCTAssertTrue(selectPeriodFromMenu("周"))
+        XCTAssertTrue(selectPeriodFromMenu("日"))
         if isToggleOn(hideZeroCostModels) {
             hideZeroCostModels.click()
             XCTAssertTrue(waitUntil(timeout: 3) { !self.isToggleOn(hideZeroCostModels) })

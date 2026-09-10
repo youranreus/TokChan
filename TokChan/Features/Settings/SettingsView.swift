@@ -332,6 +332,20 @@ struct SettingsView: View {
 
     private var displaySettings: some View {
         Form {
+            Section("时间范围") {
+                Picker("默认时间范围", selection: preferenceBinding(\UserPreferences.defaultPeriod)) {
+                    ForEach(ProfilePeriod.allCases) { period in
+                        Text(period.title).tag(period)
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityIdentifier("default-period")
+
+                Text("打开面板时回到该时间范围。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("模型明细") {
                 Toggle(
                     "隐藏开销为 0 的模型",

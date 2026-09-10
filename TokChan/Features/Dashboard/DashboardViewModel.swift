@@ -300,12 +300,22 @@ final class DashboardViewModel: ObservableObject {
         _ = await reloadProfiles(force: false, automatic: true)
     }
 
+    /// Applies the configured default scope ahead of the popover becoming visible.
+    ///
+    /// Called before `NSPopover.show` so the first rendered frame already carries the configured
+    /// scope; the previously restored snapshot scope is never drawn. Idempotent, and free of
+    /// requests, cache writes, and scheduler changes.
+    func panelWillAppear() {
+        applyCachedPeriod(preferences.defaultPeriod, clearIdentityWhenUnavailable: true)
+    }
+
     func panelDidAppear() {
         guard !isPanelVisible else { return }
         #if DEBUG
         panelAppearanceCount += 1
         #endif
         isPanelVisible = true
+        panelWillAppear()
     }
 
     func panelDidDisappear() {
@@ -405,12 +415,7 @@ final class DashboardViewModel: ObservableObject {
 
     func selectPeriod(_ period: ProfilePeriod) async {
         guard selectedPeriod != period else { return }
-        selectedPeriod = period
-        if let cached = cachedProfiles[period], matchesCurrentSource(cached.data) {
-            profileState = .loaded(cached.data)
-            identityProfile = cached.data
-        } else {
-            profileState = .loading
+        if !applyCachedPeriod(period, clearIdentityWhenUnavailable: false) {
             _ = await reloadProfiles(force: false, automatic: true)
         }
         persistCurrentSnapshot()
@@ -828,7 +833,7 @@ final class DashboardViewModel: ObservableObject {
             cachedProfilesBySource.removeAll()
             fetchedAtBySource.removeAll()
             preferences = preferencesStore.load()
-            selectedPeriod = .all
+            selectedPeriod = preferences.defaultPeriod
             profileState = .idle
             identityProfile = nil
             cacheSavedAt = nil
@@ -1212,6 +1217,28 @@ final class DashboardViewModel: ObservableObject {
         preferences.dataMode == .local || matchesUsername(data.username)
     }
 
+    /// Applies `period` using only the in-memory batch.
+    ///
+    /// Never issues a Tokscale request, writes a cache snapshot, or touches the refresh schedule.
+    /// When the batch has no profile for the current source, the scope shows its loading state and
+    /// waits for the application-level scheduler instead of fabricating an independent request.
+    /// - Returns: `true` when the in-memory batch supplied the profile for `period`.
+    @discardableResult
+    private func applyCachedPeriod(
+        _ period: ProfilePeriod,
+        clearIdentityWhenUnavailable: Bool
+    ) -> Bool {
+        selectedPeriod = period
+        if let cached = cachedProfiles[period], matchesCurrentSource(cached.data) {
+            profileState = .loaded(cached.data)
+            identityProfile = cached.data
+            return true
+        }
+        profileState = .loading
+        if clearIdentityWhenUnavailable { identityProfile = nil }
+        return false
+    }
+
     private func startStatisticsSchedulerIfNeeded() {
         guard backgroundRefreshTask == nil else { return }
         backgroundRefreshTask = Task { [weak self, sleep] in
@@ -1335,7 +1362,8 @@ final class DashboardViewModel: ObservableObject {
             statusTextPeriod: preferences.statusTextPeriod,
             hideZeroCostModels: preferences.hideZeroCostModels,
             hiddenClientsEnabled: preferences.hiddenClientsEnabled,
-            hiddenClientIDs: UserPreferences.normalizedClientIDs(preferences.hiddenClientIDs)
+            hiddenClientIDs: UserPreferences.normalizedClientIDs(preferences.hiddenClientIDs),
+            defaultPeriod: preferences.defaultPeriod
         )
     }
 

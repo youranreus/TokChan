@@ -22,6 +22,7 @@ struct UserPreferences: Equatable {
     var hiddenClientIDs: Set<String>
     var dataMode: DashboardDataMode
     var hasCompletedInitialization: Bool
+    var defaultPeriod: ProfilePeriod
 
     init(
         username: String,
@@ -34,7 +35,8 @@ struct UserPreferences: Equatable {
         statusTextPeriod: ProfilePeriod = .day,
         hideZeroCostModels: Bool = false,
         hiddenClientsEnabled: Bool = false,
-        hiddenClientIDs: Set<String> = []
+        hiddenClientIDs: Set<String> = [],
+        defaultPeriod: ProfilePeriod = .day
     ) {
         self.username = username
         self.tokscaleVersion = tokscaleVersion
@@ -47,6 +49,7 @@ struct UserPreferences: Equatable {
         self.hideZeroCostModels = hideZeroCostModels
         self.hiddenClientsEnabled = hiddenClientsEnabled
         self.hiddenClientIDs = Self.normalizedClientIDs(hiddenClientIDs)
+        self.defaultPeriod = defaultPeriod
     }
 
     static func normalizedClientIDs(_ clientIDs: Set<String>) -> Set<String> {
@@ -88,11 +91,12 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
         static let hiddenClientIDs = "hiddenClientIDs"
         static let dataMode = "dashboardDataMode"
         static let hasCompletedInitialization = "hasCompletedInitialization"
+        static let defaultPeriod = "defaultPeriod"
 
         static let all = [
             username, tokscaleVersion, npxPath, statusTextEnabled, statusTextTemplate,
             statusTextPeriod, hideZeroCostModels, hiddenClientsEnabled, hiddenClientIDs,
-            dataMode, hasCompletedInitialization
+            dataMode, hasCompletedInitialization, defaultPeriod
         ]
     }
 
@@ -116,7 +120,9 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
                 .flatMap(ProfilePeriod.init(rawValue:)) ?? .day,
             hideZeroCostModels: defaults.object(forKey: Key.hideZeroCostModels) as? Bool ?? false,
             hiddenClientsEnabled: defaults.object(forKey: Key.hiddenClientsEnabled) as? Bool ?? false,
-            hiddenClientIDs: Set(defaults.stringArray(forKey: Key.hiddenClientIDs) ?? [])
+            hiddenClientIDs: Set(defaults.stringArray(forKey: Key.hiddenClientIDs) ?? []),
+            defaultPeriod: defaults.string(forKey: Key.defaultPeriod)
+                .flatMap(ProfilePeriod.init(rawValue:)) ?? .day
         )
     }
 
@@ -131,6 +137,7 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
         defaults.set(preferences.statusTextPeriod.rawValue, forKey: Key.statusTextPeriod)
         defaults.set(preferences.hideZeroCostModels, forKey: Key.hideZeroCostModels)
         defaults.set(preferences.hiddenClientsEnabled, forKey: Key.hiddenClientsEnabled)
+        defaults.set(preferences.defaultPeriod.rawValue, forKey: Key.defaultPeriod)
         defaults.set(
             UserPreferences.normalizedClientIDs(preferences.hiddenClientIDs).sorted(),
             forKey: Key.hiddenClientIDs
