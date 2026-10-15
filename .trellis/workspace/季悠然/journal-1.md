@@ -565,3 +565,42 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 20: Cursor 提交前同步配置与验收收尾
+<!-- trellis-session: v=2 fp=d4cd212c09008585 -->
+
+**Date**: 2026-10-15
+**Task**: Cursor 提交前同步配置与验收收尾
+**Branch**: `master`
+
+### Summary
+
+定位 submit 隐式 Cursor 同步的短超时回退，新增默认关闭的显式提交前同步配置；完成人工验收、发布 fragment、规范更新及任务归档，未推送或发布。
+
+### Main Changes
+
+- 统一首次提交、提交并拉取及立即自动提交的可选 Cursor 前置同步；严格验证 JSON，失败阻断上传，保留取消与账号/CLI 上下文保护。
+- 即时持久化开关，沿用配置的 npx/版本，不影响 Tokscale 定时 autosubmit，不读取或修改上游凭据、缓存及调度设置。
+- 补充 release-notes/fragments/20261015-cursor-sync-before-submit.json 与验收记录，任务已归档；本地验收版未替换 /Applications/TokChan.app。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b2678b7` | feat: 增加提交前 Cursor 同步配置 |
+| `b2134a0` | docs: 补充 Cursor 提交前同步发布片段与验收记录 |
+
+### Testing
+
+- [OK] 独立审查无发现；298 项单元测试通过；unsigned Release arm64/x86_64 构建通过。
+- [OK] 5 项自动 UI 测试因 SystemUIServer 未暴露菜单项而跳过，不计为通过；用户对本地 ad-hoc 签名 Debug 版人工验收反馈无问题。
+- [OK] 8 项发布说明测试、git diff --check 与 task.py validate 通过；集成规范超过注入长度限制，实施和审查已完整读取。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 未经另行授权不推送或发布；如需恢复正式版，退出本地 Debug 实例后打开 /Applications/TokChan.app。
