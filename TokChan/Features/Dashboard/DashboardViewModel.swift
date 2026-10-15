@@ -109,6 +109,8 @@ final class DashboardViewModel: ObservableObject {
         }
     }
 
+    // Changes to account/CLI settings invalidate an upload even if the settings later change back.
+    private var uploadContextRevision: UInt64 = 0
     private var generation: UInt64 = 0
     private var profileRequestID = UUID()
     private var statusRequestID = UUID()
@@ -570,13 +572,18 @@ final class DashboardViewModel: ObservableObject {
         invalidateProfileRefresh()
         beginOperation(.submitting)
         defer { completeSilentOperation() }
+        let capturedPreferences = preferences
+        let revision = uploadContextRevision
         firstUseOnboardingState = .submitting(username: username)
         do {
-            let context = try commandContext(for: preferences)
+            let context = try await prepareExplicitUpload(preferences: capturedPreferences, revision: revision)
             try await cli.submit(context: context)
-            guard matchesUsername(username) else { return }
+            guard uploadIsCurrent(capturedPreferences, revision: revision), !Task.isCancelled else {
+                restoreFirstSubmissionIfNeeded(username: username)
+                return
+            }
             let result = await reloadProfiles(force: true, automatic: false)
-            guard matchesUsername(username) else { return }
+            guard uploadIsCurrent(capturedPreferences, revision: revision), !Task.isCancelled else { return }
             switch result {
             case .updated:
                 if case .firstSubmission = firstUseOnboardingState {
@@ -600,7 +607,11 @@ final class DashboardViewModel: ObservableObject {
                 break
             }
         } catch {
-            guard matchesUsername(username) else { return }
+            guard uploadIsCurrent(capturedPreferences, revision: revision),
+                  !Task.isCancelled, !(error is CancellationError) else {
+                restoreFirstSubmissionIfNeeded(username: username)
+                return
+            }
             firstUseOnboardingState = .firstSubmission(
                 username: username,
                 message: "提交失败：\(Self.message(for: error))"
@@ -633,12 +644,13 @@ final class DashboardViewModel: ObservableObject {
         beginOperation(.submitting)
         submitErrorMessage = nil
         onlineOperationErrorMessage = nil
+        let capturedPreferences = preferences
+        let revision = uploadContextRevision
         do {
-            let context = try commandContext(for: preferences)
-            let username = try resolvedUsername()
+            _ = try resolvedUsername()
+            let context = try await prepareExplicitUpload(preferences: capturedPreferences, revision: revision)
             try await cli.submit(context: context)
-            // An account or CLI-context change while submit was suspended supersedes this operation.
-            guard matchesUsername(username), (try? commandContext(for: preferences)) == context else {
+            guard uploadIsCurrent(capturedPreferences, revision: revision), !Task.isCancelled else {
                 completeSilentOperation()
                 return
             }
@@ -652,8 +664,12 @@ final class DashboardViewModel: ObservableObject {
                 completeOperation(.succeeded("用量已提交。"))
             }
         } catch {
-            // The status menu can run this with the popover closed, so the banner may never
-            // be shown; diagnostics keep the failure discoverable.
+            guard uploadIsCurrent(capturedPreferences, revision: revision),
+                  !Task.isCancelled, !(error is CancellationError) else {
+                completeSilentOperation()
+                return
+            }
+            // Diagnostics retain failures even when the originating popover is closed.
             let message = Self.message(for: error)
             submitErrorMessage = message
             completeOperation(.failed(message))
@@ -685,18 +701,23 @@ final class DashboardViewModel: ObservableObject {
         guard !operation.isRunning, cursorConnectionState != .checking else { return }
         invalidateProfileRefresh()
         beginOperation(.runningAutosubmit)
+        let capturedPreferences = preferences
+        let revision = uploadContextRevision
         do {
-            let context = try commandContext(for: preferences)
-            let username = try resolvedUsername()
+            _ = try resolvedUsername()
+            let context = try await prepareExplicitUpload(preferences: capturedPreferences, revision: revision)
             try await cli.runAutosubmitNow(context: context)
-            // A CLI or account change while the run was suspended supersedes this operation.
-            guard matchesUsername(username), (try? commandContext(for: preferences)) == context else {
+            guard uploadIsCurrent(capturedPreferences, revision: revision), !Task.isCancelled else {
                 completeSilentOperation()
                 return
             }
             async let profiles = reloadProfiles(force: true, automatic: false, source: .online)
             async let status = reloadAutosubmit(context: context)
             let (profileResult, statusError) = await (profiles, status)
+            guard uploadIsCurrent(capturedPreferences, revision: revision), !Task.isCancelled else {
+                completeSilentOperation()
+                return
+            }
             if let error = profileResult.errorMessage {
                 completeOperation(.failed("自动提交已完成，但统计读取失败：\(error)"))
             } else if let statusError {
@@ -704,7 +725,14 @@ final class DashboardViewModel: ObservableObject {
             } else {
                 completeOperation(.succeeded("自动提交已完成。"))
             }
-        } catch { completeOperation(.failed(Self.message(for: error))) }
+        } catch {
+            guard uploadIsCurrent(capturedPreferences, revision: revision),
+                  !Task.isCancelled, !(error is CancellationError) else {
+                completeSilentOperation()
+                return
+            }
+            completeOperation(.failed(Self.message(for: error)))
+        }
     }
 
     /// Reads autosubmit status only; it never touches statistics freshness or the cache batch.
@@ -728,6 +756,7 @@ final class DashboardViewModel: ObservableObject {
             != normalized.tokscaleVersion
             || preferences.npxPath.trimmingCharacters(in: .whitespacesAndNewlines) != normalized.npxPath
 
+        if accountChanged || cliContextChanged { uploadContextRevision &+= 1 }
         if accountChanged {
             invalidateProfileRefresh()
             cachedProfilesBySource[.online] = [:]
@@ -1283,6 +1312,52 @@ final class DashboardViewModel: ObservableObject {
         return saved
     }
 
+    private struct CursorPreflightFailure: LocalizedError {
+        let underlying: Error
+        var errorDescription: String? {
+            if let error = underlying as? TokscaleCLIError {
+                switch error {
+                case .invalidCursorSyncResult, .cursorSyncFailed: return error.errorDescription
+                default: break
+                }
+            }
+            let detail = String(DashboardViewModel.message(for: underlying).prefix(4_000))
+            return "Cursor 同步失败，未提交用量。请检查 Cursor 登录和 Tokscale 设置后重试。\n\(detail)"
+        }
+    }
+
+    private func uploadIsCurrent(_ captured: UserPreferences, revision: UInt64) -> Bool {
+        revision == uploadContextRevision
+            && matchesUsername(captured.username)
+            && Self.hasSameCLIContext(captured, preferences)
+    }
+
+    private func prepareExplicitUpload(
+        preferences captured: UserPreferences,
+        revision: UInt64
+    ) async throws -> TokscaleCommandContext {
+        try Task.checkCancellation()
+        let context: TokscaleCommandContext
+        do {
+            context = try commandContext(for: captured)
+            if captured.syncCursorBeforeSubmit {
+                try await cli.syncCursor(context: context)
+            }
+        } catch {
+            if error is CancellationError { throw error }
+            if captured.syncCursorBeforeSubmit { throw CursorPreflightFailure(underlying: error) }
+            throw error
+        }
+        try Task.checkCancellation()
+        guard uploadIsCurrent(captured, revision: revision) else { throw CancellationError() }
+        return context
+    }
+
+    private func restoreFirstSubmissionIfNeeded(username: String) {
+        guard matchesUsername(username), case .submitting = firstUseOnboardingState else { return }
+        firstUseOnboardingState = .firstSubmission(username: username, message: nil)
+    }
+
     private func commandContext(for preferences: UserPreferences) throws -> TokscaleCommandContext {
         guard TokscaleCommandBuilder.isValidVersion(preferences.tokscaleVersion) else {
             throw TokscaleCLIError.invalidVersion
@@ -1330,6 +1405,7 @@ final class DashboardViewModel: ObservableObject {
             npxPath: preferences.npxPath.trimmingCharacters(in: .whitespacesAndNewlines),
             dataMode: preferences.dataMode,
             hasCompletedInitialization: preferences.hasCompletedInitialization,
+            syncCursorBeforeSubmit: preferences.syncCursorBeforeSubmit,
             statusTextEnabled: preferences.statusTextEnabled,
             statusTextTemplate: preferences.statusTextTemplate,
             statusTextPeriod: preferences.statusTextPeriod,
@@ -1360,7 +1436,7 @@ final class DashboardViewModel: ObservableObject {
         return false
     }
 
-    private static func message(for error: Error) -> String {
+    nonisolated private static func message(for error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 }

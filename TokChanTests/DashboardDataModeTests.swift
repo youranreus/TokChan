@@ -479,6 +479,7 @@ private actor SuspendedModeLocalSource: DashboardDataReading {
 }
 
 private struct ModeCLI: TokscaleCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws { await events.add("cursor-sync") }
     let events: ModeEventRecorder
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "online-user" }
     func loginCursor(context: TokscaleCommandContext) async throws {}
@@ -493,6 +494,7 @@ private struct ModeCLI: TokscaleCLIService {
 }
 
 private struct StatusRecordingModeCLI: TokscaleCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws { await events.add("cursor-sync") }
     let events: ModeEventRecorder
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "online-user" }
     func loginCursor(context: TokscaleCommandContext) async throws {}

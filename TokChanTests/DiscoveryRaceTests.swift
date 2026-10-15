@@ -113,6 +113,7 @@ final class DiscoveryRaceTests: XCTestCase {
 }
 
 private actor DiscoveryCLI: TokscaleCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws { throw TokscaleCLIError.cursorSyncFailed }
     private var discovery: CheckedContinuation<String, Error>?
     private var arrival: CheckedContinuation<Void, Never>?
     private var discoveries = 0

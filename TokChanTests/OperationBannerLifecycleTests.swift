@@ -71,6 +71,7 @@ final class OperationBannerLifecycleTests: XCTestCase {
 }
 
 private struct FailingSubmitCLI: TokscaleCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws { throw TokscaleCLIError.cursorSyncFailed }
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
     func loginCursor(context: TokscaleCommandContext) async throws {}
     func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus { .valid }
@@ -84,6 +85,7 @@ private struct FailingSubmitCLI: TokscaleCLIService {
 }
 
 private actor SuspendedSubmitCLI: TokscaleCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws { throw TokscaleCLIError.cursorSyncFailed }
     private var submitContinuation: CheckedContinuation<Void, Never>?
     private var arrivalContinuation: CheckedContinuation<Void, Never>?
     private var submitStarted = false
@@ -118,6 +120,7 @@ private actor SuspendedSubmitCLI: TokscaleCLIService {
 }
 
 private actor SuspendedFailingSubmitCLI: TokscaleCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws { throw TokscaleCLIError.cursorSyncFailed }
     private var submitContinuation: CheckedContinuation<Void, Error>?
     private var arrivalContinuation: CheckedContinuation<Void, Never>?
     private var submitStarted = false

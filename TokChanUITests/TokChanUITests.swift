@@ -149,6 +149,40 @@ final class TokChanUITests: XCTestCase {
         XCTAssertFalse(updateButton.isEnabled)
     }
 
+    func testCursorSyncToggleSavesWithoutApplyAndSurvivesSettingsReopen() throws {
+        let application = XCUIApplication()
+        application.launchArguments = ["--ui-testing"]
+        application.launch()
+        defer { application.terminate() }
+        let systemUI = XCUIApplication(bundleIdentifier: "com.apple.systemuiserver")
+        let statusItem = systemUI.menuBars.statusItems["TokChan"]
+        guard statusItem.waitForExistence(timeout: 10) else {
+            throw XCTSkip("SystemUIServer did not expose menu bar items; Cursor sync Settings gate unverified")
+        }
+        statusItem.rightClick()
+        application.menuItems["设置…"].click()
+        let toggle = application.switches["sync-cursor-before-submit"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertFalse(isToggleOn(toggle))
+        let help = application.staticTexts["sync-cursor-before-submit-help"]
+        XCTAssertTrue(help.exists)
+        XCTAssertEqual(help.label, "仅影响 TokChan 发起的提交和立即运行自动提交，不影响 Tokscale 定时自动提交。同步失败时不会提交。")
+        toggle.click()
+        XCTAssertTrue(waitUntil(timeout: 3) { self.isToggleOn(toggle) })
+        XCTAssertFalse(application.buttons["apply-autosubmit-settings"].exists)
+        application.toolbars.buttons["自动提交"].click()
+        XCTAssertTrue(application.buttons["apply-autosubmit-settings"].waitForExistence(timeout: 3))
+        application.toolbars.buttons["常规"].click()
+        XCTAssertTrue(isToggleOn(toggle))
+        application.windows.firstMatch.buttons[XCUIIdentifierCloseWindow].click()
+        statusItem.rightClick()
+        application.menuItems["设置…"].click()
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertTrue(isToggleOn(toggle))
+        toggle.click()
+        XCTAssertTrue(waitUntil(timeout: 3) { !self.isToggleOn(toggle) })
+    }
+
     func testCheckForUpdatesIsDisabledWhileUpdaterIsBusy() throws {
         let application = XCUIApplication()
         application.launchArguments = ["--ui-testing", "--updater-busy"]

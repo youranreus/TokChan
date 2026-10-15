@@ -1,0 +1,8 @@
+{"file":".trellis/spec/macos/index.md","reason":"full affected layer check"}
+{"file":".trellis/spec/macos/tokscale-integration.md","reason":"audit opt-in command sequencing and unchanged scheduler/login/read boundaries"}
+{"file":".trellis/spec/macos/cursor-pre-submit-sync.md","reason":"strict preflight JSON, failure blocking, revision and scope checks"}
+{"file":".trellis/spec/macos/data-persistence.md","reason":"missing-key false, normalization and reset checks"}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"offline complete unit/UI and race checks"}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"strict result validation, bounded errors and cancellation safety"}
+{"file":".trellis/spec/macos/swiftui-guidelines.md","reason":"Settings native control and scope text"}
+{"file":".trellis/tasks/10-15-cursor-sync-before-submit/research/entry-points-and-contract.md","reason":"all three explicit upload entry points and no global CLI assumptions"}

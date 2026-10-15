@@ -22,6 +22,7 @@ struct UserPreferences: Equatable {
     var hiddenClientIDs: Set<String>
     var dataMode: DashboardDataMode
     var hasCompletedInitialization: Bool
+    var syncCursorBeforeSubmit: Bool
 
     init(
         username: String,
@@ -29,6 +30,7 @@ struct UserPreferences: Equatable {
         npxPath: String,
         dataMode: DashboardDataMode = .online,
         hasCompletedInitialization: Bool = true,
+        syncCursorBeforeSubmit: Bool = false,
         statusTextEnabled: Bool = false,
         statusTextTemplate: String = "{token} · {cost}",
         statusTextPeriod: ProfilePeriod = .day,
@@ -41,6 +43,7 @@ struct UserPreferences: Equatable {
         self.npxPath = npxPath
         self.dataMode = dataMode
         self.hasCompletedInitialization = hasCompletedInitialization
+        self.syncCursorBeforeSubmit = syncCursorBeforeSubmit
         self.statusTextEnabled = statusTextEnabled
         self.statusTextTemplate = statusTextTemplate
         self.statusTextPeriod = statusTextPeriod
@@ -88,11 +91,12 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
         static let hiddenClientIDs = "hiddenClientIDs"
         static let dataMode = "dashboardDataMode"
         static let hasCompletedInitialization = "hasCompletedInitialization"
+        static let syncCursorBeforeSubmit = "syncCursorBeforeSubmit"
 
         static let all = [
             username, tokscaleVersion, npxPath, statusTextEnabled, statusTextTemplate,
             statusTextPeriod, hideZeroCostModels, hiddenClientsEnabled, hiddenClientIDs,
-            dataMode, hasCompletedInitialization
+            dataMode, hasCompletedInitialization, syncCursorBeforeSubmit
         ]
     }
 
@@ -109,6 +113,7 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
             npxPath: defaults.string(forKey: Key.npxPath) ?? "",
             dataMode: defaults.string(forKey: Key.dataMode).flatMap(DashboardDataMode.init(rawValue:)) ?? .local,
             hasCompletedInitialization: defaults.object(forKey: Key.hasCompletedInitialization) as? Bool ?? false,
+            syncCursorBeforeSubmit: defaults.object(forKey: Key.syncCursorBeforeSubmit) as? Bool ?? false,
             statusTextEnabled: defaults.object(forKey: Key.statusTextEnabled) as? Bool ?? false,
             statusTextTemplate: defaults.string(forKey: Key.statusTextTemplate)
                 ?? UserPreferences.defaultStatusTextTemplate,
@@ -126,6 +131,7 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
         defaults.set(preferences.npxPath, forKey: Key.npxPath)
         defaults.set(preferences.dataMode.rawValue, forKey: Key.dataMode)
         defaults.set(preferences.hasCompletedInitialization, forKey: Key.hasCompletedInitialization)
+        defaults.set(preferences.syncCursorBeforeSubmit, forKey: Key.syncCursorBeforeSubmit)
         defaults.set(preferences.statusTextEnabled, forKey: Key.statusTextEnabled)
         defaults.set(preferences.statusTextTemplate, forKey: Key.statusTextTemplate)
         defaults.set(preferences.statusTextPeriod.rawValue, forKey: Key.statusTextPeriod)

@@ -10,6 +10,7 @@ enum TokscaleCommand: Equatable {
     case whoami
     case cursorLogin
     case cursorStatus
+    case cursorSync
     case submit
     case autosubmitStatus
     case configureAutosubmit(AutosubmitConfiguration)
@@ -33,6 +34,8 @@ enum TokscaleCommandBuilder {
             arguments += ["cursor", "login"]
         case .cursorStatus:
             arguments += ["cursor", "status"]
+        case .cursorSync:
+            arguments += ["cursor", "sync", "--json"]
         case .submit:
             arguments += ["submit"]
         case .autosubmitStatus:
@@ -328,6 +331,7 @@ protocol TokscaleCLIService {
     func whoAmI(context: TokscaleCommandContext) async throws -> String
     func loginCursor(context: TokscaleCommandContext) async throws
     func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus
+    func syncCursor(context: TokscaleCommandContext) async throws
     func submit(context: TokscaleCommandContext) async throws
     func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus
     func configureAutosubmit(
@@ -347,6 +351,8 @@ enum TokscaleCLIError: LocalizedError {
     case failed(exitCode: Int32, message: String)
     case autosubmitCompatibilityCleanupFailed(exitCode: Int32?, message: String)
     case autosubmitCompatibilityStateCleanupFailed(exitCode: Int32?, message: String)
+    case invalidCursorSyncResult
+    case cursorSyncFailed
     case invalidStatusJSON(Error)
     case invalidPricingJSON(Error)
     case unsupportedPricing(version: String, detail: String)
@@ -376,6 +382,10 @@ enum TokscaleCLIError: LocalizedError {
                 return "自动提交状态清理失败（Tokscale 退出码为 \(exitCode)）：\(message)"
             }
             return "自动提交状态清理失败：\(message)"
+        case .invalidCursorSyncResult:
+            return "Cursor 同步失败，未提交用量。无法识别同步结果，请检查 Tokscale 版本后重试。"
+        case .cursorSyncFailed:
+            return "Cursor 同步失败，未提交用量。一个或多个账号未能完成同步，请检查 Cursor 登录后重试。"
         case let .invalidStatusJSON(error):
             return "无法读取自动提交状态：\(error.localizedDescription)"
         case let .invalidPricingJSON(error):
@@ -389,6 +399,12 @@ enum TokscaleCLIError: LocalizedError {
 }
 
 final class TokscaleCLIClient: TokscaleCLIService, CustomPricingCLIService {
+    private struct CursorSyncResponse: Decodable {
+        let synced: Bool
+        let rows: Int
+        let error: String?
+    }
+
     private struct PricingOverridesResponse: Decodable {
         let path: String
     }
@@ -433,6 +449,19 @@ final class TokscaleCLIClient: TokscaleCLIService, CustomPricingCLIService {
 
     func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus {
         CursorSessionStatusParser().parse(try await run(.cursorStatus, context: context))
+    }
+
+    func syncCursor(context: TokscaleCommandContext) async throws {
+        let output = try await run(.cursorSync, context: context)
+        let response: CursorSyncResponse
+        do {
+            response = try decoder.decode(CursorSyncResponse.self, from: Data(output.stdout.utf8))
+        } catch {
+            // Do not expose raw JSON or account diagnostics from the response.
+            throw TokscaleCLIError.invalidCursorSyncResult
+        }
+        guard response.rows >= 0 else { throw TokscaleCLIError.invalidCursorSyncResult }
+        guard response.synced, response.error == nil else { throw TokscaleCLIError.cursorSyncFailed }
     }
 
     func submit(context: TokscaleCommandContext) async throws {

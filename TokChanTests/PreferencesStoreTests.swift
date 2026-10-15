@@ -13,6 +13,7 @@ final class PreferencesStoreTests: XCTestCase {
             npxPath: "/opt/homebrew/bin/npx",
             dataMode: .local,
             hasCompletedInitialization: true,
+            syncCursorBeforeSubmit: true,
             statusTextEnabled: true,
             statusTextTemplate: "今日 {token}，成本 {cost}",
             statusTextPeriod: .month,
@@ -24,6 +25,7 @@ final class PreferencesStoreTests: XCTestCase {
         store.save(expected)
 
         XCTAssertEqual(store.load(), expected)
+        XCTAssertEqual(UserDefaultsPreferencesStore(defaults: defaults).load(), expected)
         XCTAssertEqual(defaults.stringArray(forKey: "hiddenClientIDs"), ["codex", "cursor", "zed"])
         XCTAssertNil(defaults.string(forKey: "apiToken"))
     }
@@ -39,12 +41,30 @@ final class PreferencesStoreTests: XCTestCase {
         XCTAssertEqual(preferences.username, "existing-user")
         XCTAssertEqual(preferences.dataMode, .local)
         XCTAssertFalse(preferences.hasCompletedInitialization)
+        XCTAssertFalse(preferences.syncCursorBeforeSubmit)
+        XCTAssertFalse(UserPreferences.defaults.syncCursorBeforeSubmit)
         XCTAssertFalse(preferences.statusTextEnabled)
         XCTAssertEqual(preferences.statusTextTemplate, UserPreferences.defaultStatusTextTemplate)
         XCTAssertEqual(preferences.statusTextPeriod, .day)
         XCTAssertFalse(preferences.hideZeroCostModels)
         XCTAssertFalse(preferences.hiddenClientsEnabled)
         XCTAssertTrue(preferences.hiddenClientIDs.isEmpty)
+    }
+
+    func testClearRemovesCursorSyncKeyAndRestoresDefaultWithoutTouchingOtherKeys() throws {
+        let suiteName = "TokChanTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = UserDefaultsPreferencesStore(defaults: defaults)
+        var preferences = UserPreferences.defaults
+        preferences.syncCursorBeforeSubmit = true
+        defaults.set("retained", forKey: "unowned-key")
+        store.save(preferences)
+        XCTAssertTrue(defaults.bool(forKey: "syncCursorBeforeSubmit"))
+        try store.clear()
+        XCTAssertNil(defaults.object(forKey: "syncCursorBeforeSubmit"))
+        XCTAssertFalse(UserDefaultsPreferencesStore(defaults: defaults).load().syncCursorBeforeSubmit)
+        XCTAssertEqual(defaults.string(forKey: "unowned-key"), "retained")
     }
 
     func testHiddenClientIDsAreTrimmedDeduplicatedAndEmptyValuesAreDropped() throws {

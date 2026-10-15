@@ -28,6 +28,10 @@ No persistence requirement exists yet. Choose the smallest durable storage that 
 
 Keep `statusTextEnabled`, `statusTextTemplate`, and `statusTextPeriod` in `UserPreferences` through `UserDefaultsPreferencesStore`; they are small user choices, not dashboard cache fields. Missing keys decode as `false`, `{token} · {cost}`, and `.day`; an unknown period raw value also falls back to `.day`. Preserve template bytes as entered, including empty strings and unknown placeholders. Persist General control changes immediately through `DashboardViewModel.updatePreferences(_:)`; this local update must not submit usage, configure autosubmit, or fetch profile/status data. Round-trip all keys in tests and assert old stores remain compatible.
 
+## Scenario: Cursor pre-submit sync preference
+
+Persist `syncCursorBeforeSubmit` as an owned UserDefaults Boolean with missing-key/default value false. Include it in preference construction, normalization, save/load, and configuration reset; do not add it to dashboard snapshots or Tokscale autosubmit drafts. Toggling only persists/publishes preferences and starts no external work. The complete behavior and test contract is [Cursor Pre-submit Sync](./cursor-pre-submit-sync.md).
+
 ## Scenario: Dashboard display-filter preferences
 
 ### 1. Scope / Trigger

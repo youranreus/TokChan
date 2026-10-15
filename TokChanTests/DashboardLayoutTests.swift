@@ -156,6 +156,7 @@ final class DashboardLayoutTests: XCTestCase {
 }
 
 private actor SuspendedLayoutCursorCLI: TokscaleCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws { throw TokscaleCLIError.cursorSyncFailed }
     private var loginContinuation: CheckedContinuation<Void, Never>?
     private var arrivalContinuation: CheckedContinuation<Void, Never>?
     private var loginStarted = false

@@ -2343,6 +2343,7 @@ private func scopedFixture(
 }
 
 private final class FakeCLI: TokscaleCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws { await recorder.append("cursor-sync") }
     let recorder: EventRecorder
     var submitError: Error?
     let statusError: Error?
@@ -2410,6 +2411,7 @@ private final class FakeCLI: TokscaleCLIService {
 }
 
 private actor SuspendedCursorLoginCLI: TokscaleCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws { await recorder.append("cursor-sync") }
     private let recorder: EventRecorder
     private var loginContinuation: CheckedContinuation<Void, Never>?
     private var arrivalContinuation: CheckedContinuation<Void, Never>?
@@ -2454,6 +2456,7 @@ private actor SuspendedCursorLoginCLI: TokscaleCLIService {
 }
 
 private actor SuspendedCursorStatusCLI: TokscaleCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws { await recorder.append("cursor-sync") }
     private let recorder: EventRecorder
     private var statusContinuation: CheckedContinuation<CursorSessionStatus, Never>?
     private var arrivalContinuation: CheckedContinuation<Void, Never>?
@@ -2489,6 +2492,7 @@ private actor SuspendedCursorStatusCLI: TokscaleCLIService {
 }
 
 private actor ContextChangingCursorStatusCLI: TokscaleCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws { await recorder.append("cursor-sync") }
     private let recorder: EventRecorder
     private var firstContinuation: CheckedContinuation<CursorSessionStatus, Never>?
     private var firstArrival: CheckedContinuation<Void, Never>?
@@ -2539,6 +2543,7 @@ private actor ContextChangingCursorStatusCLI: TokscaleCLIService {
 }
 
 private actor ControlledStatusCLI: TokscaleCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws { throw TokscaleCLIError.cursorSyncFailed }
     private var statusContinuation: CheckedContinuation<AutosubmitStatus, Error>?
     private var arrivalContinuation: CheckedContinuation<Void, Never>?
     private var statusRequested = false
@@ -2582,6 +2587,7 @@ private actor ControlledStatusCLI: TokscaleCLIService {
 }
 
 private actor SuspendedPushCLI: TokscaleCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws { await recorder.append("cursor-sync") }
     private let recorder: EventRecorder
     private var submitContinuation: CheckedContinuation<Void, Never>?
     private var arrivalContinuation: CheckedContinuation<Void, Never>?
@@ -2625,6 +2631,7 @@ private actor SuspendedPushCLI: TokscaleCLIService {
 }
 
 private actor SuspendedMutationCLI: TokscaleCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws { await recorder.append("cursor-sync") }
     enum Kind { case configure, run }
 
     private let recorder: EventRecorder

@@ -71,6 +71,7 @@ struct PreviewLocalDashboardDataSource: DashboardDataReading {
 }
 
 struct PreviewCLIService: TokscaleCLIService, CustomPricingCLIService {
+    func syncCursor(context: TokscaleCommandContext) async throws {}
     func whoAmI(context: TokscaleCommandContext) async throws -> String { "youranreus" }
     func loginCursor(context: TokscaleCommandContext) async throws {}
     func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus { .valid }

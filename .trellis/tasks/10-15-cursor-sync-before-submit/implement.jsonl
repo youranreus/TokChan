@@ -1,0 +1,9 @@
+{"file":".trellis/spec/macos/index.md","reason":"macOS architecture and spec routing"}
+{"file":".trellis/spec/macos/tokscale-integration.md","reason":"versioned npx, process errors, explicit upload and automatic-path invariants"}
+{"file":".trellis/spec/macos/cursor-pre-submit-sync.md","reason":"implemented strict preflight contract and default-off scope"}
+{"file":".trellis/spec/macos/data-persistence.md","reason":"UserDefaults defaults, immediate persistence and configuration reset"}
+{"file":".trellis/spec/macos/state-management.md","reason":"main-actor state and injected service boundaries"}
+{"file":".trellis/spec/macos/swiftui-guidelines.md","reason":"native Settings toggle and view composition"}
+{"file":".trellis/spec/macos/testing-guidelines.md","reason":"offline fake-runner and view-model event tests"}
+{"file":".trellis/spec/macos/quality-guidelines.md","reason":"error handling, cancellation, accessibility"}
+{"file":".trellis/tasks/10-15-cursor-sync-before-submit/research/entry-points-and-contract.md","reason":"runtime evidence, entry-point audit and JSON preflight constraints"}

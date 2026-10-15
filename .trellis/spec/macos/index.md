@@ -19,6 +19,7 @@ TokChan is a macOS 13 menu-bar app with a SwiftUI `App`/`Settings` scene, an App
 | [Testing Guidelines](./testing-guidelines.md) | Unit, view-model, and UI test expectations | Baseline |
 | [Service Management](./service-management.md) | `SMAppService.mainApp` launch-at-login boundary, status reconciliation, and safe testing | Active |
 | [Tokscale Integration](./tokscale-integration.md) | Public profile API, versioned npx commands, autosubmit, GUI PATH behavior | Active |
+| [Cursor Pre-submit Sync](./cursor-pre-submit-sync.md) | Opt-in explicit sync before uploads, strict JSON result validation, and scheduler exclusions | Active |
 | [Build, Self-Update, and Release Workflow](./release-workflow.md) | Sparkle runtime/feed, nested signing, version, DMG/ZIP assets, GitHub Release/Pages ordering, validation, and rollback contracts | Active |
 
 ## Default technology choices

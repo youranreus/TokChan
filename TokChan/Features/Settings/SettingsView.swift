@@ -271,6 +271,17 @@ struct SettingsView: View {
                 )
             }
 
+            Section {
+                Toggle("提交前同步 Cursor", isOn: preferenceBinding(\UserPreferences.syncCursorBeforeSubmit))
+                    .toggleStyle(.switch)
+                    .disabled(viewModel.isPerformingOperation)
+                    .accessibilityIdentifier("sync-cursor-before-submit")
+                Text("仅影响 TokChan 发起的提交和立即运行自动提交，不影响 Tokscale 定时自动提交。同步失败时不会提交。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("sync-cursor-before-submit-help")
+            }
+
             Section("状态栏文案") {
                 Toggle("显示用量摘要", isOn: preferenceBinding(\UserPreferences.statusTextEnabled))
                     .accessibilityIdentifier("status-text-enabled")

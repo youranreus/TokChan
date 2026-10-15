@@ -14,6 +14,7 @@ GET https://tokscale.ai/api/users/{username}?period=all|week|month
 npx --yes tokscale@<version> whoami
 npx --yes tokscale@<version> cursor login
 npx --yes tokscale@<version> cursor status
+npx --yes tokscale@<version> cursor sync --json
 npx --yes tokscale@<version> submit
 npx --yes tokscale@<version> autosubmit status --json
 npx --yes tokscale@<version> autosubmit enable --interval <Nm> [filters]
@@ -36,6 +37,7 @@ protocol TokscaleCLIService {
     func whoAmI(context: TokscaleCommandContext) async throws -> String
     func loginCursor(context: TokscaleCommandContext) async throws
     func cursorStatus(context: TokscaleCommandContext) async throws -> CursorSessionStatus
+    func syncCursor(context: TokscaleCommandContext) async throws
     func submit(context: TokscaleCommandContext) async throws
     func autosubmitStatus(context: TokscaleCommandContext) async throws -> AutosubmitStatus
     func configureAutosubmit(_ configuration: AutosubmitConfiguration,
@@ -63,6 +65,7 @@ protocol TokscaleCLIService {
 - Profile reloads return an explicit updated/failed/superseded outcome to mutation callers; do not infer their success from a shared error cleared by another request. Re-resolve CLI context after suspended identity discovery, since Settings may have changed npx/version.
 - Switching scope is a pure projection from the latest complete batch; it neither submits, fetches one remote period, nor reads/modifies autosubmit. Guard batch requests by generation and account, but do not invalidate a batch merely because selection changed.
 - Status-item presentation uses the configured all/day/week/month projection from the same complete cache. It never initiates a request. The status menu exposes exactly two manual transfer actions: submit-and-refresh runs `submit` followed by one forced `fetchDashboardBatch`, and refresh-only runs `fetchDashboardBatch` alone. There is no submit-only action, because a bare `submit` leaves the visible numbers unchanged and reads as a no-op.
+- Optional explicit upload preflight: when `syncCursorBeforeSubmit` is enabled, all TokChan upload entry points first run one validated `cursor sync --json` using the captured npx/version context. Failure blocks upload and follow-ups; the default-off setting preserves existing sequences. This includes onboarding and run-now but excludes external scheduled autosubmit and every read-only/login/configuration path. The full executable contract is [Cursor Pre-submit Sync](./cursor-pre-submit-sync.md).
 - Automatic paths are read-only by construction. A statistics tick, app-start synchronization, or wake evaluation must record zero `cursor login`, `submit`, `autosubmit run`, `configure`, and `disable` events. Only an explicit user action may mutate.
 - Autosubmit status is status-only and event-driven: app start, a Settings window transition from hidden to visible, a manual status retry, a successful configure/disable, a successful run-now, and a resolvable npx/version change. A statistics tick, wake, or Dashboard open/close must not read it, and a status-only retry must not pull statistics alongside it.
 - General Settings bindings call `updatePreferences(_:)` with the latest complete preference value. Normalize username, Tokscale version, and npx path edges, but preserve status-template bytes. This operation only saves `UserDefaults` and publishes preferences: it performs zero CLI commands and zero profile/status requests. A real case-insensitive account change invalidates the profile generation and immediately persists a snapshot without the old profiles; version/npx changes invalidate only an in-flight autosubmit-status result and retain the profile batch.
@@ -195,7 +198,7 @@ extension DashboardViewModel {
 - With no saved username, launch directly into editable username setup and execute zero `whoami` calls. Only `discoverIdentity()` may invoke `whoami`, after the user clicks “识别本机登录”. A successful discovery saves the normalized username before exactly one complete-batch verification; failure returns to editable setup with recoverable feedback. Duplicate discovery clicks start no second process, and a Settings username or CLI-context edit that wins while `whoami` is suspended must not be overwritten by the late result or error.
 - Manual username confirmation uses `updatePreferences(_:)` for normalization, persistence, cache isolation, and generation invalidation, then forces exactly one complete profile batch. Blank input starts no service work.
 - On first verification only, typed `TokscaleAPIError.profileNotFound` means no submitted profile and advances to first submission. Other API failures stay recoverable in username setup. Never classify by matching localized error text.
-- First submission performs exactly one `submit` followed by exactly one forced complete batch for the same captured username. If the username changes while submit is suspended, the old operation must not fetch for or mutate the new account.
+- After the optional [Cursor preflight](./cursor-pre-submit-sync.md) succeeds, first submission performs exactly one `submit` followed by exactly one forced complete batch for the same captured username. If the username changes while submit is suspended, the old operation must not fetch for or mutate the new account.
 - Submission hides onboarding only after a same-account complete batch reports `.all.totalTokens > 0`. Zero Tokens, 404, or delayed server visibility keeps step two visible with retry/edit guidance and never auto-submits again.
 - While onboarding discovery, verification, or submission is active, disable both status-menu transfer actions through the shared operation-busy projection. Keep ordinary loaded-dashboard refresh, stale-cache retention, and diagnostics semantics unchanged.
 - Render onboarding inside the existing 380×680 Dashboard root with native controls and local card backgrounds. AppKit's `NSPopover` remains the sole root-background owner. The username field and both large account actions share one visual height; the two actions use equal flexible columns and full-width labels while preserving primary/default versus secondary styling.
