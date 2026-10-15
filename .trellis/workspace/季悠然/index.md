@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
+- **Total Sessions**: 21
 - **Last Active**: 2026-10-15
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~606 | Active |
+| `journal-1.md` | ~649 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,7 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
-| 20 | 2026-10-15 | Cursor 提交前同步配置与验收收尾 | `b2678b7`, `b2134a0` | `master` |
+| 21 | 2026-10-15 | Cursor 提交前同步配置与验收收尾 | `b2678b7`, `b2134a0` | `master` |
+| 20 | 2026-09-11 | 面板默认时间范围配置实现与验证 | `8737328`, `4eee327`, `af2a082`, `14c6bee` | `feat/default-period-preference` |
 | 19 | 2026-09-10 | 本地与在线数据模式切换实现与验证 | `ff28d45` | `feat/local-online-data-mode` |
 | 16 | 2026-09-09 | 改进新手引导与 Cursor 登录 | `8597274`, `5e7f93c` | `feat/onboarding-agent-login` |
 | 15 | 2026-09-09 | 统一后台刷新与提交状态 | `1a67a65`, `16241a2`, `fee4e12` | `master` |

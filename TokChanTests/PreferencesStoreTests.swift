@@ -19,7 +19,8 @@ final class PreferencesStoreTests: XCTestCase {
             statusTextPeriod: .month,
             hideZeroCostModels: true,
             hiddenClientsEnabled: true,
-            hiddenClientIDs: ["zed", "cursor", "codex"]
+            hiddenClientIDs: ["zed", "cursor", "codex"],
+            defaultPeriod: .month
         )
 
         store.save(expected)
@@ -27,6 +28,7 @@ final class PreferencesStoreTests: XCTestCase {
         XCTAssertEqual(store.load(), expected)
         XCTAssertEqual(UserDefaultsPreferencesStore(defaults: defaults).load(), expected)
         XCTAssertEqual(defaults.stringArray(forKey: "hiddenClientIDs"), ["codex", "cursor", "zed"])
+        XCTAssertEqual(defaults.string(forKey: "defaultPeriod"), "month")
         XCTAssertNil(defaults.string(forKey: "apiToken"))
     }
 
@@ -49,6 +51,42 @@ final class PreferencesStoreTests: XCTestCase {
         XCTAssertFalse(preferences.hideZeroCostModels)
         XCTAssertFalse(preferences.hiddenClientsEnabled)
         XCTAssertTrue(preferences.hiddenClientIDs.isEmpty)
+        XCTAssertEqual(preferences.defaultPeriod, .day)
+    }
+
+    func testDefaultPeriodRoundTripAndStoreContract() throws {
+        let suiteName = "TokChanTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = UserDefaultsPreferencesStore(defaults: defaults)
+
+        store.save(UserPreferences(
+            username: "youranreus",
+            tokscaleVersion: "latest",
+            npxPath: "",
+            defaultPeriod: .week
+        ))
+        XCTAssertEqual(defaults.string(forKey: "defaultPeriod"), "week")
+        XCTAssertEqual(store.load().defaultPeriod, .week)
+
+        try store.clear()
+        XCTAssertNil(defaults.string(forKey: "defaultPeriod"))
+        XCTAssertEqual(store.load().defaultPeriod, .day)
+    }
+
+    func testDefaultPeriodFallsBackToDayWhenMissingOrUnknown() throws {
+        let suiteName = "TokChanTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = UserDefaultsPreferencesStore(defaults: defaults)
+
+        XCTAssertEqual(store.load().defaultPeriod, .day)
+
+        defaults.set("quarter", forKey: "defaultPeriod")
+        XCTAssertEqual(store.load().defaultPeriod, .day)
+
+        defaults.set("all", forKey: "defaultPeriod")
+        XCTAssertEqual(store.load().defaultPeriod, .all)
     }
 
     func testClearRemovesCursorSyncKeyAndRestoresDefaultWithoutTouchingOtherKeys() throws {

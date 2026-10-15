@@ -1522,6 +1522,212 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(events.filter { $0 == "fetch" }.count, 1)
     }
 
+    // MARK: - Default panel period preference
+
+    func testPanelOpenAppliesConfiguredDefaultPeriodFromMemoryBatchWithoutSideEffects() async throws {
+        let recorder = EventRecorder()
+        let cache = InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate))
+        let preferences = InMemoryPreferences(value: UserPreferences(
+            username: "youranreus",
+            tokscaleVersion: "latest",
+            npxPath: "",
+            defaultPeriod: .week
+        ))
+        let model = makeViewModel(recorder: recorder, cache: cache, preferences: preferences)
+
+        // Snapshot hydration owns the pre-panel scope; only the panel open applies the preference.
+        XCTAssertEqual(model.selectedPeriod, .all)
+        let savesBefore = cache.saveCount
+
+        model.panelDidAppear()
+        // Drain the main-actor queue so a regression that spawns an async refresh cannot be missed.
+        for _ in 0..<10 { await Task.yield() }
+
+        XCTAssertEqual(model.selectedPeriod, .week)
+        XCTAssertEqual(model.profileState.loadedValue?.period, .week)
+        XCTAssertEqual(model.identityProfile?.period, .week)
+        XCTAssertEqual(cache.saveCount, savesBefore)
+        let events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testPanelWillAppearAppliesConfiguredPeriodBeforeThePanelIsCountedAsVisible() async throws {
+        let recorder = EventRecorder()
+        let cache = InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate))
+        let preferences = InMemoryPreferences(value: UserPreferences(
+            username: "youranreus",
+            tokscaleVersion: "latest",
+            npxPath: "",
+            defaultPeriod: .week
+        ))
+        let model = makeViewModel(recorder: recorder, cache: cache, preferences: preferences)
+        let appearancesBefore = model.panelAppearanceCount
+        let savesBefore = cache.saveCount
+
+        // Runs before `NSPopover.show`, so the scope must settle without counting an appearance.
+        model.panelWillAppear()
+        for _ in 0..<10 { await Task.yield() }
+
+        XCTAssertEqual(model.selectedPeriod, .week)
+        XCTAssertEqual(model.profileState.loadedValue?.period, .week)
+        XCTAssertEqual(model.identityProfile?.period, .week)
+        XCTAssertEqual(model.panelAppearanceCount, appearancesBefore)
+        XCTAssertEqual(cache.saveCount, savesBefore)
+        let events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
+
+        // The post-show hook repeats the same application idempotently.
+        model.panelDidAppear()
+        XCTAssertEqual(model.panelAppearanceCount, appearancesBefore + 1)
+        XCTAssertEqual(model.selectedPeriod, .week)
+        XCTAssertEqual(model.profileState.loadedValue?.period, .week)
+        XCTAssertEqual(cache.saveCount, savesBefore)
+    }
+
+    func testPanelOpenOnStaleCacheNeverSpawnsAnAutomaticReload() async throws {
+        let recorder = EventRecorder()
+        let cache = InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate))
+        let preferences = InMemoryPreferences(value: UserPreferences(
+            username: "youranreus",
+            tokscaleVersion: "latest",
+            npxPath: "",
+            defaultPeriod: .week
+        ))
+        let model = makeViewModel(
+            recorder: recorder,
+            cache: cache,
+            preferences: preferences,
+            now: { self.referenceDate.addingTimeInterval(301) }
+        )
+        let savesBefore = cache.saveCount
+
+        model.panelDidAppear()
+        // The snapshot is stale, so an automatic reload would really fetch: yield long enough for
+        // a regression that spawns `reloadProfiles(automatic: true)` to run and record events.
+        for _ in 0..<10 { await Task.yield() }
+
+        XCTAssertEqual(model.selectedPeriod, .week)
+        XCTAssertEqual(model.profileState.loadedValue?.period, .week)
+        XCTAssertEqual(cache.saveCount, savesBefore)
+        let events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testSelectPeriodCacheMissKeepsVisibleIdentityAndIssuesOneBatchRead() async throws {
+        let api = ControlledBatchAPI()
+        let recorder = EventRecorder()
+        let batch = try makeBatch(username: "youranreus")
+        let allProfile = try XCTUnwrap(batch.profiles[.all])
+        let partialSnapshot = DashboardCacheSnapshot(
+            profile: allProfile,
+            autosubmit: nil,
+            savedAt: referenceDate,
+            profiles: [CachedDashboardProfile(data: allProfile, savedAt: referenceDate)],
+            username: "youranreus",
+            fetchedAt: referenceDate
+        )
+        let model = DashboardViewModel(
+            api: api,
+            cli: FakeCLI(recorder: recorder),
+            preferencesStore: standardPreferences(),
+            npxLocator: FakeNpxLocator(),
+            cacheStore: InMemoryCache(snapshot: partialSnapshot),
+            now: { self.referenceDate }
+        )
+        XCTAssertEqual(model.selectedPeriod, .all)
+        XCTAssertEqual(model.profileState.loadedValue?.period, .all)
+        XCTAssertEqual(model.identityProfile?.period, .all)
+
+        let switchTask = Task { await model.selectPeriod(.week) }
+        await api.waitForRequest(username: "youranreus")
+
+        XCTAssertEqual(model.selectedPeriod, .week)
+        XCTAssertNil(model.profileState.loadedValue)
+        if case .loading = model.profileState {
+            // Expected: an uncached scope shows loading while the single batch read is in flight.
+        } else {
+            XCTFail("Expected loading state, got \(model.profileState)")
+        }
+        // Legacy selectPeriod behavior keeps the previously visible identity instead of clearing it.
+        XCTAssertEqual(model.identityProfile?.period, .all)
+        let requestCount = await api.requestCount()
+        XCTAssertEqual(requestCount, 1)
+
+        await api.resolve(username: "youranreus")
+        await switchTask.value
+
+        XCTAssertEqual(model.profileState.loadedValue?.period, .week)
+        XCTAssertEqual(model.identityProfile?.period, .week)
+        let finalRequestCount = await api.requestCount()
+        XCTAssertEqual(finalRequestCount, 1)
+    }
+
+    func testPanelReopenDiscardsManualPeriodSwitchInFavorOfPreference() async throws {
+        let recorder = EventRecorder()
+        let cache = InMemoryCache(snapshot: try completeSnapshot(fetchedAt: referenceDate))
+        let preferences = InMemoryPreferences(value: UserPreferences(
+            username: "youranreus",
+            tokscaleVersion: "latest",
+            npxPath: "",
+            defaultPeriod: .week
+        ))
+        let model = makeViewModel(recorder: recorder, cache: cache, preferences: preferences)
+
+        model.panelDidAppear()
+        XCTAssertEqual(model.selectedPeriod, .week)
+
+        await model.selectPeriod(.month)
+        XCTAssertEqual(model.selectedPeriod, .month)
+        XCTAssertEqual(model.profileState.loadedValue?.period, .month)
+
+        model.panelDidDisappear()
+        let savesBefore = cache.saveCount
+        model.panelDidAppear()
+
+        XCTAssertEqual(model.selectedPeriod, .week)
+        XCTAssertEqual(model.profileState.loadedValue?.period, .week)
+        XCTAssertEqual(cache.saveCount, savesBefore)
+    }
+
+    func testPanelOpenWithoutConfiguredPeriodInBatchShowsLoadingAndRecordsNoEvents() async throws {
+        let recorder = EventRecorder()
+        let batch = try makeBatch(username: "youranreus")
+        let allProfile = try XCTUnwrap(batch.profiles[.all])
+        let partialSnapshot = DashboardCacheSnapshot(
+            profile: allProfile,
+            autosubmit: nil,
+            savedAt: referenceDate,
+            profiles: [CachedDashboardProfile(data: allProfile, savedAt: referenceDate)],
+            username: "youranreus",
+            fetchedAt: referenceDate
+        )
+        let cache = InMemoryCache(snapshot: partialSnapshot)
+        let preferences = InMemoryPreferences(value: UserPreferences(
+            username: "youranreus",
+            tokscaleVersion: "latest",
+            npxPath: "",
+            defaultPeriod: .week
+        ))
+        let model = makeViewModel(recorder: recorder, cache: cache, preferences: preferences)
+        let savesBefore = cache.saveCount
+
+        model.panelDidAppear()
+        // Drain the main-actor queue so a regression that spawns an async refresh cannot be missed.
+        for _ in 0..<10 { await Task.yield() }
+
+        XCTAssertEqual(model.selectedPeriod, .week)
+        XCTAssertNil(model.profileState.loadedValue)
+        if case .loading = model.profileState {
+            // Expected: wait for the application-level scheduler instead of issuing a request.
+        } else {
+            XCTFail("Expected loading state, got \(model.profileState)")
+        }
+        XCTAssertNil(model.identityProfile)
+        XCTAssertEqual(cache.saveCount, savesBefore)
+        let events = await recorder.snapshot()
+        XCTAssertTrue(events.isEmpty)
+    }
+
     func testBackgroundSchedulerSleepsForTheRemainingFreshnessWindow() async throws {
         let clock = TestClock(referenceDate.addingTimeInterval(240))
         let sleeper = ManualSleeper()
@@ -2180,12 +2386,13 @@ final class DashboardViewModelTests: XCTestCase {
         recorder: EventRecorder = EventRecorder(),
         api: TokscaleAPIService? = nil,
         cache: InMemoryCache = InMemoryCache(),
+        preferences: InMemoryPreferences? = nil,
         now: @escaping () -> Date = Date.init
     ) -> DashboardViewModel {
         DashboardViewModel(
             api: api ?? FakeAPI(recorder: recorder),
             cli: FakeCLI(recorder: recorder),
-            preferencesStore: standardPreferences(),
+            preferencesStore: preferences ?? standardPreferences(),
             npxLocator: FakeNpxLocator(),
             cacheStore: cache,
             now: now

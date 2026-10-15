@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/macos/index.md", "reason": "TokChan macOS package conventions, project shape, and pre-development checklist"}
+{"file": ".trellis/spec/macos/data-persistence.md", "reason": "UserPreferences/UserDefaults compatibility rules, missing-key fallbacks, and the Dashboard snapshot cache contract that panel open must not start or accelerate scheduling"}
+{"file": ".trellis/spec/macos/state-management.md", "reason": "Observable view-model boundaries, injected persistence/clock for tests, and derived-state rules for selectedPeriod"}
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "Native Settings TabView page rules, immediate preference bindings with no Save footer, and the 380x680 dashboard picker/popover contracts"}
+{"file": ".trellis/spec/macos/testing-guidelines.md", "reason": "Required unit/view-model/UI test expectations, event-count assertions, and the rule that panel open changes no schedule"}
+{"file": ".trellis/spec/macos/quality-guidelines.md", "reason": "Swift naming, access control, accessibility identifiers, and localization-ready strings"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Share one scope-apply helper between selectPeriod and the panel-open reset instead of duplicating profile-state logic"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace the preference value across UserPreferences, DashboardViewModel state, SettingsView, and the cache boundary without leaking responsibilities"}
