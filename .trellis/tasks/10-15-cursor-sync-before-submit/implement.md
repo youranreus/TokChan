@@ -1,6 +1,6 @@
 # Implementation plan
 
-Status: implementation approved by the user's “开始” after the final summary; task started. Code and independent review complete. Unit/build checks passed; five UI tests skipped because SystemUIServer did not expose the status item, so the UI gate remains unverified. See verification.md. No commit or archive yet.
+Status: implementation and feature commit approved; committed as `b2678b7`. Independent review, 298 unit tests and unsigned Release builds passed. Five automated UI tests remain skipped due to SystemUIServer visibility; the user subsequently accepted the local signed Debug build with “没问题，继续后续流程，记得记录fragment”. Manual acceptance is complete. Release fragment and closeout bookkeeping are being prepared; see verification.md.
 
 ## Ordered checklist
 

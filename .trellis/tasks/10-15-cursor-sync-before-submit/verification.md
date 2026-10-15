@@ -23,11 +23,12 @@ Temporary log paths are local session evidence and are not committed artifacts.
 
 Added `.trellis/spec/macos/cursor-pre-submit-sync.md` with command/JSON fields, default-off preference, failure matrix, revision/cancellation guard, test assertions, scheduler exclusions and wrong/correct examples. Linked it from the macOS index, integration, persistence, SwiftUI and testing guides. Previous command-count contracts are default-off sequences extended by this explicit opt-in exception.
 
-## Remaining gate
+## Manual acceptance and commit status
 
-UI acceptance is not verified; do not interpret skipped UI tests as passed. On an interactive desktop, use the Debug offline UI-test fixture and verify:
-1. General Settings shows “提交前同步 Cursor” near Agent connection, off by default, with explicit scheduled-autosubmit exclusion and failure-stop copy.
-2. Toggling saves without Autosubmit Apply and survives Settings close/reopen.
-3. The control is disabled during explicit work and fits the window in light/dark appearance.
+The feature was committed with user approval as `b2678b7 feat: 增加提交前 Cursor 同步配置` (29 files). No push or release was performed.
 
-The task is not archived and no commit has been made. Commit approval and UI verification remain separate user actions.
+An ad-hoc signed local Debug app was built and its signature verified. The installed app process was stopped and the local build opened with the user's existing preferences; `/Applications/TokChan.app` was not replaced. This was not an offline UI-test launch, so user-initiated submissions could upload real usage. The assistant did not initiate an upload.
+
+The user completed manual acceptance and replied “没问题，继续后续流程，记得记录fragment”. This closes the manual UI acceptance gate. The five automated UI tests remain skipped, not passed; the user's acceptance does not change the automated results above.
+
+Release fragment: `release-notes/fragments/20261015-cursor-sync-before-submit.json`. The user approved the grouped follow-up documentation/fragment commit, task archive and session journal with “行”. Eight release-notes tests, `git diff --check` and task context validation passed before closeout. No push or release is authorized.

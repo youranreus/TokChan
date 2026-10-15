@@ -1,4 +1,4 @@
-# Proposed commit (awaiting user approval)
+# Commit plan and closeout
 
 1. `feat: 增加提交前 Cursor 同步配置`
 
@@ -39,6 +39,19 @@ Planning and verification artifacts:
 - .trellis/tasks/10-15-cursor-sync-before-submit/verification.md
 - .trellis/tasks/10-15-cursor-sync-before-submit/commit-plan.md
 
-Unrecognized dirty files: none. No archive or journal bookkeeping is mixed into this work commit. Do not commit automatically; the user's implementation approval is not commit approval. No push/amend.
+The user approved the feature commit above; it landed as `b2678b7`. No archive or journal bookkeeping was mixed into it. Validation: 298 unit tests and unsigned Release builds passed. Five automated UI tests remain skipped; subsequent user acceptance of the local Debug app closes the manual gate, not the automated tests.
 
-Validation: 298 unit tests passed; unsigned Release build passed. Five UI tests skipped because SystemUIServer did not expose the status item; UI acceptance remains unverified and documented in verification.md. Committing does not mark this gate complete or archive the task.
+## Follow-up plan (approved by the user's “行”)
+
+1. `docs: 补充 Cursor 提交前同步发布片段与验收记录`
+   - release-notes/fragments/20261015-cursor-sync-before-submit.json
+   - .trellis/tasks/10-15-cursor-sync-before-submit/prd.md
+   - .trellis/tasks/10-15-cursor-sync-before-submit/implement.md
+   - .trellis/tasks/10-15-cursor-sync-before-submit/verification.md
+   - .trellis/tasks/10-15-cursor-sync-before-submit/commit-plan.md
+2. `chore(task): archive 10-15-cursor-sync-before-submit`
+   - Archive the current task using the Trellis script after the work commit.
+3. `chore: record journal`
+   - Record the feature and follow-up work commit hashes in the developer journal.
+
+Unrecognized dirty files: none at preparation. No amend, push or release. The archive/journal scripts own their bookkeeping commits.
