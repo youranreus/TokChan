@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
-- **Last Active**: 2026-10-15
+- **Total Sessions**: 22
+- **Last Active**: 2026-11-20
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~649 | Active |
+| `journal-1.md` | ~675 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-11-20 | 贴边浮窗验收与交付 | `7c5a0f1` | `feature/edge-floating-panel` |
 | 21 | 2026-10-15 | Cursor 提交前同步配置与验收收尾 | `b2678b7`, `b2134a0` | `master` |
 | 20 | 2026-09-11 | 面板默认时间范围配置实现与验证 | `8737328`, `4eee327`, `af2a082`, `14c6bee` | `feat/default-period-preference` |
 | 19 | 2026-09-10 | 本地与在线数据模式切换实现与验证 | `ff28d45` | `feat/local-online-data-mode` |
