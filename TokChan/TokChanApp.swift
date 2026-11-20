@@ -27,7 +27,14 @@ final class TokChanApplicationDelegate: NSObject, NSApplicationDelegate {
             cli = previewCLI
             localDataSource = PreviewLocalDashboardDataSource()
             customPricingCLI = previewCLI
-            preferences = PreviewPreferencesStore()
+            let previewPreferences = PreviewPreferencesStore()
+            if CommandLine.arguments.contains("--edge-panel") {
+                var configuration = previewPreferences.load()
+                configuration.presentationMode = .edge
+                configuration.edgeLiquidGlassEnabled = CommandLine.arguments.contains("--liquid-glass")
+                previewPreferences.save(configuration)
+            }
+            preferences = previewPreferences
             npxLocator = PreviewNpxLocator()
             cacheStore = PreviewCacheStore()
             customPricingStore = PreviewCustomPricingStore()

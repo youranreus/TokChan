@@ -647,3 +647,29 @@
 ### Next Steps
 
 - 未经另行授权不推送或发布；如需恢复正式版，退出本地 Debug 实例后打开 /Applications/TokChan.app。
+
+
+## Session 22: 贴边浮窗验收与交付
+<!-- trellis-session: v=2 fp=72bcdb43e3049a56 -->
+
+**Date**: 2026-11-20
+**Task**: 贴边浮窗验收与交付
+**Branch**: `feature/edge-floating-panel`
+
+### Summary
+
+完整用量面板支持左右贴边、悬停展开、拖拽定位和大头针固定，支持液态玻璃和可输入的收起宽度。用户已验收通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7c5a0f1` | feat: 增加可拖拽的贴边用量浮窗 |
+
+### Testing
+
+- [OK] 浮窗几何、焦点和偏好回归通过；磨砂和玻璃的桌面交互通过。宽度直接输入 32、回车并切换设置页的测试连续通过三轮。
+
+### Status
+
+[OK] **Completed**

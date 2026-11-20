@@ -8,8 +8,19 @@ enum DashboardDataMode: String, Codable, CaseIterable, Identifiable {
     var title: String { self == .local ? "本地" : "在线" }
 }
 
+enum DashboardPresentationMode: String, CaseIterable, Identifiable {
+    case menuBar
+    case edge
+
+    var id: String { rawValue }
+    var title: String { self == .menuBar ? "菜单栏浮窗" : "贴边浮窗" }
+}
+
 struct UserPreferences: Equatable {
     static let defaultStatusTextTemplate = "{token} · {cost}"
+
+    static let defaultEdgePeekWidth = 7
+    static let edgePeekWidthRange = 1...64
 
     var username: String
     var tokscaleVersion: String
@@ -24,6 +35,9 @@ struct UserPreferences: Equatable {
     var hasCompletedInitialization: Bool
     var syncCursorBeforeSubmit: Bool
     var defaultPeriod: ProfilePeriod
+    var presentationMode: DashboardPresentationMode
+    var edgePeekWidth: Int
+    var edgeLiquidGlassEnabled: Bool
 
     init(
         username: String,
@@ -38,7 +52,10 @@ struct UserPreferences: Equatable {
         hideZeroCostModels: Bool = false,
         hiddenClientsEnabled: Bool = false,
         hiddenClientIDs: Set<String> = [],
-        defaultPeriod: ProfilePeriod = .day
+        defaultPeriod: ProfilePeriod = .day,
+        presentationMode: DashboardPresentationMode = .menuBar,
+        edgePeekWidth: Int = UserPreferences.defaultEdgePeekWidth,
+        edgeLiquidGlassEnabled: Bool = false
     ) {
         self.username = username
         self.tokscaleVersion = tokscaleVersion
@@ -53,6 +70,9 @@ struct UserPreferences: Equatable {
         self.hiddenClientsEnabled = hiddenClientsEnabled
         self.hiddenClientIDs = Self.normalizedClientIDs(hiddenClientIDs)
         self.defaultPeriod = defaultPeriod
+        self.presentationMode = presentationMode
+        self.edgePeekWidth = min(max(edgePeekWidth, Self.edgePeekWidthRange.lowerBound), Self.edgePeekWidthRange.upperBound)
+        self.edgeLiquidGlassEnabled = edgeLiquidGlassEnabled
     }
 
     static func normalizedClientIDs(_ clientIDs: Set<String>) -> Set<String> {
@@ -96,11 +116,15 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
         static let hasCompletedInitialization = "hasCompletedInitialization"
         static let syncCursorBeforeSubmit = "syncCursorBeforeSubmit"
         static let defaultPeriod = "defaultPeriod"
+        static let presentationMode = "dashboardPresentationMode"
+        static let edgePeekWidth = "edgePeekWidth"
+        static let edgeLiquidGlassEnabled = "edgeLiquidGlassEnabled"
 
         static let all = [
             username, tokscaleVersion, npxPath, statusTextEnabled, statusTextTemplate,
             statusTextPeriod, hideZeroCostModels, hiddenClientsEnabled, hiddenClientIDs,
-            dataMode, hasCompletedInitialization, syncCursorBeforeSubmit, defaultPeriod
+            dataMode, hasCompletedInitialization, syncCursorBeforeSubmit, defaultPeriod,
+            presentationMode, edgePeekWidth, edgeLiquidGlassEnabled
         ]
     }
 
@@ -127,7 +151,11 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
             hiddenClientsEnabled: defaults.object(forKey: Key.hiddenClientsEnabled) as? Bool ?? false,
             hiddenClientIDs: Set(defaults.stringArray(forKey: Key.hiddenClientIDs) ?? []),
             defaultPeriod: defaults.string(forKey: Key.defaultPeriod)
-                .flatMap(ProfilePeriod.init(rawValue:)) ?? .day
+                .flatMap(ProfilePeriod.init(rawValue:)) ?? .day,
+            presentationMode: defaults.string(forKey: Key.presentationMode)
+                .flatMap(DashboardPresentationMode.init(rawValue:)) ?? .menuBar,
+            edgePeekWidth: defaults.object(forKey: Key.edgePeekWidth) as? Int ?? UserPreferences.defaultEdgePeekWidth,
+            edgeLiquidGlassEnabled: defaults.bool(forKey: Key.edgeLiquidGlassEnabled)
         )
     }
 
@@ -144,6 +172,9 @@ final class UserDefaultsPreferencesStore: PreferencesStoring {
         defaults.set(preferences.hideZeroCostModels, forKey: Key.hideZeroCostModels)
         defaults.set(preferences.hiddenClientsEnabled, forKey: Key.hiddenClientsEnabled)
         defaults.set(preferences.defaultPeriod.rawValue, forKey: Key.defaultPeriod)
+        defaults.set(preferences.presentationMode.rawValue, forKey: Key.presentationMode)
+        defaults.set(preferences.edgePeekWidth, forKey: Key.edgePeekWidth)
+        defaults.set(preferences.edgeLiquidGlassEnabled, forKey: Key.edgeLiquidGlassEnabled)
         defaults.set(
             UserPreferences.normalizedClientIDs(preferences.hiddenClientIDs).sorted(),
             forKey: Key.hiddenClientIDs

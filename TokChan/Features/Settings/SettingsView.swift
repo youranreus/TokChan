@@ -343,6 +343,24 @@ struct SettingsView: View {
 
     private var displaySettings: some View {
         Form {
+            Picker("展示方式", selection: preferenceBinding(\UserPreferences.presentationMode)) {
+                ForEach(DashboardPresentationMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("dashboard-presentation-mode")
+
+            if viewModel.preferences.presentationMode == .edge {
+                EdgePeekWidthField(width: preferenceBinding(\UserPreferences.edgePeekWidth))
+            }
+
+            if #available(macOS 26.0, *), viewModel.preferences.presentationMode == .edge {
+                Toggle("液态玻璃", isOn: preferenceBinding(\UserPreferences.edgeLiquidGlassEnabled))
+                    .toggleStyle(.switch)
+                    .accessibilityIdentifier("edge-liquid-glass-enabled")
+            }
+
             Section("时间范围") {
                 Picker("默认时间范围", selection: preferenceBinding(\UserPreferences.defaultPeriod)) {
                     ForEach(ProfilePeriod.allCases) { period in
@@ -733,5 +751,40 @@ struct SettingsView: View {
             updated.npxPath = url.path
             viewModel.updatePreferences(updated)
         }
+    }
+}
+
+private struct EdgePeekWidthField: View {
+    @Binding var width: Int
+    @State private var draft: String?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack {
+            Text("收起时露出宽度")
+            Spacer()
+            TextField("收起时露出宽度", text: Binding(
+                get: { draft ?? String(width) },
+                set: { draft = $0 }
+            ))
+            .labelsHidden()
+            .multilineTextAlignment(.trailing)
+            .frame(width: 72)
+            .focused($focused)
+            .onSubmit(commit)
+            .accessibilityIdentifier("edge-peek-width")
+            Text("pt").foregroundStyle(.secondary)
+        }
+        .onChange(of: focused) { if !$0 { commit() } }
+        .onDisappear(perform: commit)
+    }
+
+    private func commit() {
+        guard let draft else { return }
+        if let value = Int(draft.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            let range = UserPreferences.edgePeekWidthRange
+            width = min(max(value, range.lowerBound), range.upperBound)
+        }
+        self.draft = nil
     }
 }

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/macos/swiftui-guidelines.md", "reason": "窗口宿主、展示生命周期和设置交互"}
+{"file": ".trellis/spec/macos/data-persistence.md", "reason": "偏好兼容与统计刷新边界"}

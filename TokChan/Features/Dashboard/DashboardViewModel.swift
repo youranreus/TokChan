@@ -1439,7 +1439,10 @@ final class DashboardViewModel: ObservableObject {
             hideZeroCostModels: preferences.hideZeroCostModels,
             hiddenClientsEnabled: preferences.hiddenClientsEnabled,
             hiddenClientIDs: UserPreferences.normalizedClientIDs(preferences.hiddenClientIDs),
-            defaultPeriod: preferences.defaultPeriod
+            defaultPeriod: preferences.defaultPeriod,
+            presentationMode: preferences.presentationMode,
+            edgePeekWidth: preferences.edgePeekWidth,
+            edgeLiquidGlassEnabled: preferences.edgeLiquidGlassEnabled
         )
     }
 

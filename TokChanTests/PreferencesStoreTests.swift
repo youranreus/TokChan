@@ -20,7 +20,10 @@ final class PreferencesStoreTests: XCTestCase {
             hideZeroCostModels: true,
             hiddenClientsEnabled: true,
             hiddenClientIDs: ["zed", "cursor", "codex"],
-            defaultPeriod: .month
+            defaultPeriod: .month,
+            presentationMode: .edge,
+            edgePeekWidth: 23,
+            edgeLiquidGlassEnabled: true
         )
 
         store.save(expected)
@@ -52,6 +55,33 @@ final class PreferencesStoreTests: XCTestCase {
         XCTAssertFalse(preferences.hiddenClientsEnabled)
         XCTAssertTrue(preferences.hiddenClientIDs.isEmpty)
         XCTAssertEqual(preferences.defaultPeriod, .day)
+        XCTAssertEqual(preferences.presentationMode, .menuBar)
+        XCTAssertEqual(preferences.edgePeekWidth, 7)
+        XCTAssertFalse(preferences.edgeLiquidGlassEnabled)
+    }
+
+    func testUnknownAndClearedPresentationModeFallBackToMenuBar() throws {
+        let suiteName = "TokChanTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = UserDefaultsPreferencesStore(defaults: defaults)
+
+        defaults.set("unknown", forKey: "dashboardPresentationMode")
+        XCTAssertEqual(store.load().presentationMode, .menuBar)
+
+        var preferences = UserPreferences.defaults
+        preferences.presentationMode = .edge
+        preferences.edgePeekWidth = 32
+        preferences.edgeLiquidGlassEnabled = true
+        store.save(preferences)
+        try store.clear()
+
+        XCTAssertNil(defaults.object(forKey: "dashboardPresentationMode"))
+        XCTAssertNil(defaults.object(forKey: "edgePeekWidth"))
+        XCTAssertEqual(store.load().edgePeekWidth, 7)
+        XCTAssertNil(defaults.object(forKey: "edgeLiquidGlassEnabled"))
+        XCTAssertFalse(store.load().edgeLiquidGlassEnabled)
+        XCTAssertEqual(store.load().presentationMode, .menuBar)
     }
 
     func testDefaultPeriodRoundTripAndStoreContract() throws {
