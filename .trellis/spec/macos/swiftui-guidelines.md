@@ -24,12 +24,12 @@
 
 ### Status-item and popover ownership
 
-The application delegate must retain exactly one coordinator that owns one `NSStatusItem`, one `.transient` `NSPopover`, and one hosting controller for the 380×680 `DashboardView`. Do not use `MenuBarExtra(.window)`, assign a persistent `statusItem.menu`, or add a global event monitor.
+The application delegate must retain exactly one coordinator that owns one `NSStatusItem`, one `.transient` `NSPopover`, and a lazily created edge-panel host. Both hosts render the complete 380×680 `DashboardView` with the application’s shared model. Do not use `MenuBarExtra(.window)`, assign a persistent `statusItem.menu`, or add a global event monitor.
 For the `LSUIElement` app, activate `NSApplication` immediately before showing a previously hidden transient popover, then make the newly created popover window key. Activation alone does not guarantee that the status-item-anchored window becomes key; without both steps, AppKit may not establish outside-click dismissal even though `behavior == .transient`. Closing an already shown popover must not activate the app or change key-window state. Keep the `activate → show → makeKey` / close orchestration injectable and test its exact ordering; do not replace this with local or global event monitors.
 
 Let AppKit's `NSPopover` remain the only root-background owner. `DashboardView` must not paint an opaque full-bounds background or add a second SwiftUI/AppKit material layer; otherwise the content rectangle no longer matches the system-rendered arrow in light and dark appearances. Local card and banner backgrounds remain appropriate.
 
-Route status-button mouse-up events explicitly: left-click toggles the existing popover; right-click closes it first, builds an `NSMenu` from current model state, temporarily assigns it to `statusItem.menu`, and calls the status button's `performClick`. Clear the assignment when menu tracking ends so left-click remains the popover action. Do not use `popUpContextMenu` or coordinate-positioned `NSMenu.popUp`: the required surface is a native status-item menu, anchored and highlighted by AppKit. The status menu owns diagnostics, Settings, and Quit, and is rebuilt on every secondary click so freshness and diagnostics are not startup snapshots.
+Route status-button mouse-up events by the incoming `UserPreferences.presentationMode`. In menu-bar mode, left-click toggles the popover. In edge mode, it reveals the docked panel idempotently. Right-click closes the transient popover if shown, builds an `NSMenu` from current model state, temporarily assigns it to `statusItem.menu`, and calls the status button's `performClick`. Clear the assignment when menu tracking ends so left-click remains the popover action. Do not use `popUpContextMenu` or coordinate-positioned `NSMenu.popUp`: the required surface is a native status-item menu, anchored and highlighted by AppKit. The status menu owns diagnostics, Settings, and Quit, and is rebuilt on every secondary click so freshness and diagnostics are not startup snapshots.
 
 
 ### Scenario: Configurable status-item usage text and manual transfer actions
@@ -120,7 +120,13 @@ viewModel.$preferences.sink { [weak self] incoming in
     self.updateStatusItem(with: self.viewModel.statusItemTitle(for: incoming))
 }
 ```
-Only `NSPopoverDelegate.popoverDidShow` and `popoverDidClose` may call `DashboardViewModel.panelDidAppear()` and `panelDidDisappear()`. The status-item coordinator additionally calls `panelWillAppear()` inside the `show:` action, immediately before `popover.show(...)`; that call performs no visibility bookkeeping and exists only so the popover's first frame already shows the configured scope. `DashboardView` must not duplicate those callbacks with `onAppear`/`onDisappear`; SwiftUI view lifecycle is not authoritative popover visibility.
+The active window host owns Dashboard visibility. In menu-bar mode, AppKit delegate callbacks report appearance and disappearance. Switching modes also ends any reported popover appearance before enabling the edge host. In edge mode, only exposing or withdrawing the full content changes Dashboard visibility. Keep callbacks paired across animations, repeated reveals and mode switches. Apply the default scope through `panelWillAppear()` before showing content. SwiftUI view creation, hover tracking and the collapsed handle are independent of the model's visibility lifecycle.
+
+The edge host defaults to the system popover material. On macOS 26 and later, `edgeLiquidGlassEnabled` selects SwiftUI regular Liquid Glass in a 16-point rounded rectangle across the dashboard and grip. Apply the native effect directly to the content. Hover preserves keyboard focus. In glass mode, clicking the panel or its status item activates the app and makes the panel key. Compare the focused appearance with both the reference app and its window focused, capturing each separately. Remove the popover material while glass is enabled. Reduce Transparency selects a solid semantic background. Keep the dashboard and controls mounted while switching materials.
+
+The display picker persists one `DashboardPresentationMode` in `dashboardPresentationMode`. Missing and unrecognized values select `.menuBar`. Verify preference round-trip and reset, menu-bar clicks in both modes, and switching away from a pinned panel with a single Dashboard visible.
+
+Keep the collapsed width editable as a numeric text field. Commit its full draft on Return or when editing ends, then constrain the saved value to 1–64 pt. Intermediate keystrokes must not overwrite the saved preference.
 
 ### Native preferences toolbar
 

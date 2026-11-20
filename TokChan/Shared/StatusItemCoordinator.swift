@@ -190,6 +190,9 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
     private let statusItem: NSStatusItem
     private let popover: NSPopover
     private let hostingController: NSHostingController<AnyView>
+    private var presentationMode: DashboardPresentationMode = .menuBar
+    private var edgePanel: EdgeDashboardPanel?
+    private var popoverReportedVisible = false
     private var transientStatusMenu: NSMenu?
     private var cancellables: Set<AnyCancellable> = []
 
@@ -239,6 +242,13 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
                 )
             }
             .store(in: &cancellables)
+        // Window ordering and dashboard lifecycle callbacks must run after the Settings update.
+        viewModel.$preferences
+            .map(\.presentationMode)
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] mode in self?.setPresentationMode(mode) }
+            .store(in: &cancellables)
         viewModel.$profileState
             .sink { [weak self] _ in self?.synchronizeStatusItem() }
             .store(in: &cancellables)
@@ -249,10 +259,34 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
+    private func setPresentationMode(_ mode: DashboardPresentationMode) {
+        guard mode != presentationMode else { return }
+        presentationMode = mode
+        switch mode {
+        case .menuBar:
+            edgePanel?.disable()
+        case .edge:
+            if popover.isShown { popover.close() }
+            // AppKit can finish dismissing the old popover after the new host is visible.
+            endPopoverPresentation()
+            if edgePanel == nil { edgePanel = EdgeDashboardPanel(viewModel: viewModel) }
+            edgePanel?.enable()
+        }
+    }
+
     @objc private func statusButtonPressed(_ sender: NSStatusBarButton) {
         guard let event = NSApplication.shared.currentEvent else { return }
-        switch StatusItemClickAction.action(for: event.type) {
+        handleStatusButtonAction(StatusItemClickAction.action(for: event.type))
+    }
+
+    func handleStatusButtonAction(_ action: StatusItemClickAction) {
+        guard let sender = statusItem.button else { return }
+        switch action {
         case .toggleDashboard:
+            if presentationMode == .edge {
+                edgePanel?.expand()
+                return
+            }
             DashboardPopoverAction(
                 isShown: popover.isShown,
                 activate: { NSApplication.shared.activate(ignoringOtherApps: true) },
@@ -277,10 +311,18 @@ final class NSStatusItemCoordinator: NSObject, NSPopoverDelegate, NSMenuDelegate
     }
 
     func popoverDidShow(_ notification: Notification) {
+        guard presentationMode == .menuBar, popover.isShown else { return }
+        popoverReportedVisible = true
         viewModel.panelDidAppear()
     }
 
     func popoverDidClose(_ notification: Notification) {
+        endPopoverPresentation()
+    }
+
+    private func endPopoverPresentation() {
+        guard popoverReportedVisible else { return }
+        popoverReportedVisible = false
         viewModel.panelDidDisappear()
     }
 
